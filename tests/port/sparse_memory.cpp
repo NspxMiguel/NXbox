@@ -14,6 +14,30 @@ void Require(bool condition, const char *message) {
     std::exit(1);
   }
 }
+#ifdef _MSC_VER
+bool WriteFaultPropagates(void *address) {
+  __try {
+    *static_cast<volatile unsigned char *>(address) = 42;
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+                  ? EXCEPTION_EXECUTE_HANDLER
+                  : EXCEPTION_CONTINUE_SEARCH) {
+    return true;
+  }
+  return false;
+}
+
+bool ExecuteFaultPropagates(void *address) {
+  __try {
+    reinterpret_cast<void (*)()>(address)();
+  } __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION
+                  ? EXCEPTION_EXECUTE_HANDLER
+                  : EXCEPTION_CONTINUE_SEARCH) {
+    return true;
+  }
+  return false;
+}
+#endif
+
 std::size_t Committed(void *base, std::size_t size) {
   std::size_t total = 0;
   auto *cursor = static_cast<unsigned char *>(base);
@@ -60,6 +84,20 @@ int main() {
   }
   Require(Committed(allocation, size) == 3 * 65536,
           "Sparse commit footprint is incorrect");
+#ifdef _MSC_VER
+  DWORD old_protection = 0;
+  Require(VirtualProtect(allocation, 4096, PAGE_READONLY, &old_protection) !=
+              FALSE,
+          "Read-only protection failed");
+  Require(WriteFaultPropagates(allocation),
+          "Write protection fault was swallowed");
+  Require(VirtualProtect(allocation, 4096, PAGE_READWRITE, &old_protection) !=
+              FALSE,
+          "Write protection restore failed");
+  bytes[0] = 0xC3; // x64 RET, still in non-executable data storage.
+  Require(ExecuteFaultPropagates(allocation),
+          "Execute protection fault was swallowed");
+#endif
   auto *second =
       static_cast<unsigned char *>(Common::SparseMemory::Allocate(1));
   Require(second != nullptr, "Second reservation failed");
