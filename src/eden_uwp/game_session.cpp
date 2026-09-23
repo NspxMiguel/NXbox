@@ -36,9 +36,11 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     SCOPE_EXIT {
         Common::Input::UnregisterInputFactory("nxbox");
     };
+    std::atomic<bool> guest_exited{false};
     Core::System system{};
     system.Initialize();
     system.ApplySettings();
+    system.RegisterExitCallback([&] { guest_exited.store(true, std::memory_order_release); });
     system.SetContentProvider(std::make_unique<FileSys::ContentProviderUnion>());
     system.SetFilesystem(std::make_shared<FileSys::RealVfsFilesystem>());
     system.GetFileSystemController().CreateFactories(*system.GetFilesystem());
@@ -50,6 +52,11 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
         Diagnostic("GAME_LOAD_FAILED status=" + std::to_string(static_cast<int>(result)));
         return;
     }
+    SCOPE_EXIT {
+        void(system.Pause());
+        system.ShutdownMainProcess();
+        Diagnostic("GAME_STOPPED");
+    };
     Kernel::Svc::SetDebugStringObserver([](std::string_view message) {
         if (message.starts_with("NXBOX_PADDLE_"))
             Diagnostic(std::string(message));
@@ -64,7 +71,8 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     auto* controller = system.HIDCore().GetEmulatedControllerByIndex(0);
     auto measured_at = std::chrono::steady_clock::now();
     auto measured_frames = window.FrameCount();
-    while (!closed.load(std::memory_order_acquire)) {
+    while (!closed.load(std::memory_order_acquire) &&
+           !guest_exited.load(std::memory_order_acquire)) {
         gamepad->Poll(*controller);
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
@@ -79,9 +87,6 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
-    void(system.Pause());
-    system.ShutdownMainProcess();
-    Diagnostic("GAME_STOPPED");
 }
 } // namespace
 
