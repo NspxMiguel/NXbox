@@ -19,6 +19,8 @@ jobs:
   build:
     runs-on: windows-2025
     timeout-minutes: 90
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
@@ -26,6 +28,7 @@ jobs:
         with:
           path: .cache/cpm
           key: uwp-cpm-${{ runner.os }}-${{ hashFiles('cpmfile.json', '**/cpmfile.json') }}
+      - uses: Mozilla-Actions/sccache-action@v0.0.11
       - name: Check sparse memory on Windows
         run: |
           cmake -S tests/port -B build-port-tests
@@ -53,3 +56,4 @@ jobs:
             build-uwp/CMakeFiles/CMakeConfigureLog.yaml
             build-uwp/configure.log
             build-uwp/build.log
+            build-uwp/frontend.log
