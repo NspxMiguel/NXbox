@@ -105,6 +105,8 @@ def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
         shutil.copy2(ROOT / "homebrew/jit-smoke/LICENSE.libnx.md", notices / "libnx-LICENSE.md")
     else:
         shutil.copy2(executable.parent / "Mesa-LICENSE.rst", notices / "Mesa-LICENSE.rst")
+        for name in ["DXC-LICENSE-MS.txt", "DXC-LICENSE-LLVM.txt"]:
+            shutil.copy2(executable.parent / name, notices / name)
 
 
 def sdk_tool(name: str) -> Path:

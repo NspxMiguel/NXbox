@@ -89,6 +89,15 @@ struct Mesa {
 
   void Initialize(const CoreWindow &window) {
     _putenv_s("GALLIUM_DRIVER", "d3d12");
+    Log("loading packaged DXIL validator");
+    const auto validator = LoadPackagedLibrary(L"dxil.dll", 0);
+    if (!validator) {
+      throw std::runtime_error("Cannot load DXIL validator: " +
+                               std::to_string(GetLastError()));
+    }
+    // Keep the validator loaded for the process lifetime; Mesa also acquires
+    // it.
+    Log("DXIL validator loaded");
     Log("loading packaged Mesa");
     library = LoadPackagedLibrary(L"opengl32.dll", 0);
     if (!library) {

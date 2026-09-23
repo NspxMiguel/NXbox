@@ -14,6 +14,8 @@ jobs:
         run: tools\nxbox\build-graphics.cmd
       - name: Prepare pinned Mesa runtime
         run: python tools/nxbox/prepare_mesa.py --output build-graphics
+      - name: Prepare shader validator
+        run: python tools/nxbox/prepare_dxil.py --output build-graphics
       - name: Test package staging
         run: python -m unittest discover -s tests/port -p test_package.py -v
       - name: Package graphics probe

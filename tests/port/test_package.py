@@ -49,6 +49,8 @@ class PackageTests(unittest.TestCase):
 
     def test_graphics_probe_has_separate_identity_and_license(self):
         (self.root / "Mesa-LICENSE.rst").write_text("Mesa license fixture")
+        for name in ["DXC-LICENSE-MS.txt", "DXC-LICENSE-LLVM.txt"]:
+            (self.root / name).write_text("DXC license fixture")
         package.stage(self.exe, self.destination, "0.1.4.0", "graphics")
         tree = ET.parse(self.destination / "AppxManifest.xml")
         identity = tree.find(f"{{{package.FOUNDATION}}}Identity")
