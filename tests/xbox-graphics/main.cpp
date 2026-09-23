@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Standalone Mesa/UWP compatibility probe; its presentation rate is not game
 // FPS.
+#include "common/sparse_memory.h"
 #include <windows.h>
 
 #include <array>
@@ -34,6 +35,29 @@ void Log(const std::string &message) noexcept {
   } catch (...) {
     OutputDebugStringA("NXbox graphics diagnostic file unavailable\n");
   }
+}
+
+void CheckSparseMemory() {
+  constexpr std::size_t size = std::size_t{4} << 30;
+  const auto before = Windows::System::MemoryManager::AppMemoryUsage();
+  void *allocation = Common::SparseMemory::Allocate(size);
+  if (!allocation)
+    throw std::runtime_error("Sparse memory reservation failed");
+  volatile auto *bytes = static_cast<unsigned char *>(allocation);
+  const bool zero = bytes[0] == 0 && bytes[size - 1] == 0;
+  bytes[0] = 19;
+  bytes[size / 2] = 23;
+  bytes[size - 1] = 29;
+  const bool stored =
+      bytes[0] == 19 && bytes[size / 2] == 23 && bytes[size - 1] == 29;
+  const auto after = Windows::System::MemoryManager::AppMemoryUsage();
+  const bool released = Common::SparseMemory::Free(allocation);
+  if (!zero || !stored || !released ||
+      (after > before && after - before > 8 * 1024 * 1024)) {
+    throw std::runtime_error("Sparse memory validation failed");
+  }
+  Log("SPARSE_MEMORY_PASS reserved=" + std::to_string(size) + " usage_before=" +
+      std::to_string(before) + " usage_after=" + std::to_string(after));
 }
 
 struct PixelFormat {
@@ -328,6 +352,7 @@ struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
       Log("memory_limit=" +
           std::to_string(
               Windows::System::MemoryManager::AppMemoryUsageLimit()));
+      CheckSparseMemory();
       Mesa mesa;
       mesa.Initialize(window);
       Log("context ready; beginning presentation");
