@@ -55,7 +55,9 @@ def write_icon(path: Path, size: int):
     )
 
 
-def stage(executable: Path, destination: Path, version: str):
+def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
+    if kind not in {"cpu", "graphics"}:
+        raise ValueError("Unknown diagnostic kind")
     if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", version) or any(
         int(p) > 65535 for p in version.split(".")
     ):
@@ -79,7 +81,8 @@ def stage(executable: Path, destination: Path, version: str):
     # Copy runtime libraries only from the actual executable's output directory.
     for library in executable.parent.glob("*.dll"):
         shutil.copy2(library, destination / library.name)
-    shutil.copy2(payload, destination / "boot.nro")
+    if kind == "cpu":
+        shutil.copy2(payload, destination / "boot.nro")
     for name, size in [
         ("StoreLogo", 50),
         ("Square44x44Logo", 44),
@@ -88,12 +91,20 @@ def stage(executable: Path, destination: Path, version: str):
         write_icon(destination / "Assets" / f"{name}.png", size)
     manifest = (ROOT / "dist/nxbox/AppxManifest.xml").read_text()
     manifest = manifest.replace('Version="0.1.0.0"', f'Version="{version}"')
+    if kind == "graphics":
+        manifest = manifest.replace("NSPX.NXbox", "NSPX.NXbox.GraphicsProbe")
+        manifest = manifest.replace("NXbox.App", "NXbox.GraphicsProbe")
+        manifest = manifest.replace(">NXbox<", ">NXbox Graphics Probe<")
+        manifest = manifest.replace('DisplayName="NXbox"', 'DisplayName="NXbox Graphics Probe"')
     ET.fromstring(manifest)
     (destination / "AppxManifest.xml").write_text(manifest, encoding="utf-8")
     notices = destination / "Notices"
     notices.mkdir()
     shutil.copy2(ROOT / "LICENSE.txt", notices / "Eden-LICENSE.txt")
-    shutil.copy2(ROOT / "homebrew/jit-smoke/LICENSE.libnx.md", notices / "libnx-LICENSE.md")
+    if kind == "cpu":
+        shutil.copy2(ROOT / "homebrew/jit-smoke/LICENSE.libnx.md", notices / "libnx-LICENSE.md")
+    else:
+        shutil.copy2(executable.parent / "Mesa-LICENSE.rst", notices / "Mesa-LICENSE.rst")
 
 
 def sdk_tool(name: str) -> Path:
@@ -115,14 +126,15 @@ def main():
     parser.add_argument("--version", default="0.1.0.0")
     parser.add_argument("--output", type=Path, default=Path("out"))
     parser.add_argument("--stage-only", action="store_true")
+    parser.add_argument("--kind", choices=["cpu", "graphics"], default="cpu")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     staging = args.output / "package"
-    stage(args.exe, staging, args.version)
+    stage(args.exe, staging, args.version, args.kind)
     if args.stage_only:
         print(f"Staged NXbox {args.version}: {staging}")
         return
-    package = (args.output / f"NXbox_{args.version}_x64.appx").resolve()
+    package = (args.output / f"NXbox_{args.kind}_{args.version}_x64.appx").resolve()
     subprocess.run(
         [
             str(sdk_tool("makeappx")),

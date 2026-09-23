@@ -1,0 +1,31 @@
+name: Xbox graphics probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile standalone probe
+        shell: cmd
+        run: tools\nxbox\build-graphics.cmd
+      - name: Prepare pinned Mesa runtime
+        run: python tools/nxbox/prepare_mesa.py --output build-graphics
+      - name: Test package staging
+        run: python -m unittest discover -s tests/port -p test_package.py -v
+      - name: Package graphics probe
+        env:
+          NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
+          NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
+        run:
+          python tools/nxbox/package_uwp.py --exe build-graphics/nxbox-graphics.exe --version
+          "0.1.${{ github.run_number }}.0" --kind graphics --output out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nxbox-graphics-probe
+          retention-days: 14
+          if-no-files-found: error
+          path: out/*.appx

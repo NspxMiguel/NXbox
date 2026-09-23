@@ -47,6 +47,15 @@ class PackageTests(unittest.TestCase):
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), (size, size))
 
+    def test_graphics_probe_has_separate_identity_and_license(self):
+        (self.root / "Mesa-LICENSE.rst").write_text("Mesa license fixture")
+        package.stage(self.exe, self.destination, "0.1.4.0", "graphics")
+        tree = ET.parse(self.destination / "AppxManifest.xml")
+        identity = tree.find(f"{{{package.FOUNDATION}}}Identity")
+        self.assertEqual(identity.attrib["Name"], "NSPX.NXbox.GraphicsProbe")
+        self.assertFalse((self.destination / "boot.nro").exists())
+        self.assertTrue((self.destination / "Notices/Mesa-LICENSE.rst").is_file())
+
     def test_rejects_stale_staging_directory(self):
         self.destination.mkdir()
         with self.assertRaises(FileExistsError):
