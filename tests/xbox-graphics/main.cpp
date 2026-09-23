@@ -193,9 +193,12 @@ layout(local_size_x=64) in;
 layout(std430,binding=0) buffer Result { uint values[]; };
 void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
 )";
+    Log("compute: creating shader");
     const unsigned shader = create_shader(0x91B9);
     source(shader, 1, &code, nullptr);
+    Log("compute: compiling shader");
     compile(shader);
+    Log("compute: compiled shader call returned");
     int compiled = 0;
     shader_iv(shader, 0x8B81, &compiled);
     if (!compiled) {
@@ -208,7 +211,9 @@ void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
     }
     const unsigned program = create_program();
     attach(program, shader);
+    Log("compute: linking program");
     link(program);
+    Log("compute: linked program call returned");
     delete_shader(shader);
     int linked = 0;
     program_iv(program, 0x8B82, &linked);
@@ -224,11 +229,15 @@ void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
     gen_buffers(1, &buffer);
     bind_buffer(0x90D2, buffer);
     std::array<unsigned, 64> result{};
+    Log("compute: allocating storage");
     buffer_data(0x90D2, sizeof(result), result.data(), 0x88E8);
     bind_base(0x90D2, 0, buffer);
     use(program);
+    Log("compute: dispatching");
     dispatch(1, 1, 1);
+    Log("compute: dispatched");
     barrier(0x00000200);
+    Log("compute: reading storage");
     read(0x90D2, 0, sizeof(result), result.data());
     delete_buffers(1, &buffer);
     use(0);
@@ -270,7 +279,7 @@ struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
               Windows::System::MemoryManager::AppMemoryUsageLimit()));
       Mesa mesa;
       mesa.Initialize(window);
-      mesa.CheckCompute();
+      Log("context ready; beginning presentation");
       const auto clear_color =
           mesa.Function<void(WINAPI *)(float, float, float, float)>(
               "glClearColor");
@@ -304,6 +313,10 @@ struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
         }
         if (error() != 0) {
           throw std::runtime_error("OpenGL error during presentation");
+        }
+        if (frames == 0) {
+          Log("FIRST_PRESENT_PASS");
+          mesa.CheckCompute();
         }
         ++frames;
       }
