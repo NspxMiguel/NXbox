@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 
+#include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Storage.h>
@@ -21,12 +22,16 @@ using namespace Windows::ApplicationModel::Core;
 using namespace Windows::UI::Core;
 
 namespace {
-void Log(const std::string &message) {
-  const auto path = to_string(
-      Windows::Storage::ApplicationData::Current().LocalFolder().Path());
-  std::ofstream(path + "\\graphics-probe.txt", std::ios::app)
-      << message << '\n';
+void Log(const std::string &message) noexcept {
   OutputDebugStringA((message + "\n").c_str());
+  try {
+    const auto path = to_string(
+        Windows::Storage::ApplicationData::Current().LocalFolder().Path());
+    std::ofstream(path + "\\graphics-probe.txt", std::ios::app)
+        << message << '\n';
+  } catch (...) {
+    OutputDebugStringA("NXbox graphics diagnostic file unavailable\n");
+  }
 }
 
 struct PixelFormat {
