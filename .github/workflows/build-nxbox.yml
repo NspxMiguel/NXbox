@@ -13,7 +13,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: nxbox-uwp-${{ github.ref }}
+  group: nxbox-uwp-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: true
 jobs:
   build:

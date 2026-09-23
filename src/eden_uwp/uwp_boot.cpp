@@ -19,6 +19,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <string_view>
@@ -36,6 +37,7 @@
 #include "video_core/gpu.h"
 
 #include "eden_uwp/headless_emu_window.h"
+#include "eden_uwp/game_session.h"
 
 namespace EdenXbox {
 
@@ -189,6 +191,18 @@ struct BootView : implements<BootView, IFrameworkViewSource, IFrameworkView> {
         // activated, responsive app.
         CoreWindow window = CoreWindow::GetForCurrentThread();
         window.Activate();
+
+        const auto install_path =
+            Windows::ApplicationModel::Package::Current().InstalledLocation().Path();
+        const auto game_path = winrt::to_string(install_path) + "\\game.nro";
+        if (std::filesystem::exists(game_path)) {
+            try {
+                EdenXbox::RunGameView(window, game_path);
+            } catch (const std::exception& error) {
+                WriteDiag(std::string("Graphics startup failed: ") + error.what());
+            }
+            return;
+        }
 
         std::atomic<bool> done{false};
         std::thread worker([&done]() {

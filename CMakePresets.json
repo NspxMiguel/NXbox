@@ -21,7 +21,7 @@
         "ENABLE_LIBUSB": "OFF",
         "ENABLE_WEB_SERVICE": "OFF",
         "USE_DISCORD_PRESENCE": "OFF",
-        "ENABLE_OPENGL": "OFF",
+        "ENABLE_OPENGL": "ON",
         "YUZU_TESTS": "OFF",
         "DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT": "ON",
         "DYNARMIC_UWP_APPCONTAINER": "ON"
