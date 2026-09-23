@@ -12,11 +12,18 @@
 
 #include "common/assert.h"
 #include "common/virtual_buffer.h"
+#if defined(YUZU_UWP_APPCONTAINER)
+#include "common/sparse_memory.h"
+#endif
 
 namespace Common {
 
 void* AllocateMemoryPages(std::size_t size) noexcept {
-#ifdef _WIN32
+#if defined(YUZU_UWP_APPCONTAINER)
+    // A 39-bit page table has 4 GiB of entries. Eagerly committing it alone
+    // consumes most of Xbox's process budget, even when almost all entries are zero.
+    void* base = SparseMemory::Allocate(size);
+#elif defined(_WIN32)
     void* base = VirtualAlloc(nullptr, size, MEM_COMMIT, PAGE_READWRITE);
 #else
     void* base = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0);
@@ -30,7 +37,9 @@ void* AllocateMemoryPages(std::size_t size) noexcept {
 void FreeMemoryPages(void* base, [[maybe_unused]] std::size_t size) noexcept {
     if (!base)
         return;
-#ifdef _WIN32
+#if defined(YUZU_UWP_APPCONTAINER)
+    ASSERT(SparseMemory::Free(base));
+#elif defined(_WIN32)
     ASSERT(VirtualFree(base, 0, MEM_RELEASE));
 #else
     ASSERT(munmap(base, size) == 0);

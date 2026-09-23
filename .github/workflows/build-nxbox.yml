@@ -26,6 +26,11 @@ jobs:
         with:
           path: .cache/cpm
           key: uwp-cpm-${{ runner.os }}-${{ hashFiles('cpmfile.json', '**/cpmfile.json') }}
+      - name: Check sparse memory on Windows
+        run: |
+          cmake -S tests/port -B build-port-tests
+          cmake --build build-port-tests --config Release --parallel 2
+          ctest --test-dir build-port-tests -C Release --output-on-failure
       - name: Prepare shader compiler
         run: python tools/nxbox/prepare_host_tools.py
       - name: Configure and build

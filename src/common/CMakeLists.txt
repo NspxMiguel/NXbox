@@ -257,6 +257,7 @@ endif()
 # path is active for the console target. Desktop builds are unaffected.
 if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     target_compile_definitions(common PRIVATE YUZU_UWP_APPCONTAINER=1)
+    target_sources(common PRIVATE sparse_memory.cpp sparse_memory.h)
     # path_util.cpp resolves the user dir to the app's ApplicationData LocalFolder via
     # C++/WinRT (Windows.Storage); WindowsApp.lib provides the WinRT activation runtime.
     target_link_libraries(common PRIVATE WindowsApp.lib)

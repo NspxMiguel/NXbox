@@ -3,11 +3,13 @@ on:
   push:
     paths:
       - "src/common/demand_commit.h"
+      - "src/common/sparse_memory.*"
       - "tests/port/**"
       - ".github/workflows/port-tests.yml"
   pull_request:
     paths:
       - "src/common/demand_commit.h"
+      - "src/common/sparse_memory.*"
       - "tests/port/**"
       - ".github/workflows/port-tests.yml"
   workflow_dispatch:

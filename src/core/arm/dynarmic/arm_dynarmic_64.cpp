@@ -251,12 +251,8 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
     config.wall_clock_cntpct = m_uses_wall_clock;
     config.enable_cycle_counting = !m_uses_wall_clock;
 
-    // UWP's W^X implementation keeps writable and executable cache storage.
-    // Four 512 MiB caches can consume 4 GiB, leaving too little of Xbox's 5 GiB
-    // process budget for the guest heap. Bound each core's cache to 128 MiB.
-#if defined(YUZU_UWP_APPCONTAINER)
-    config.code_cache_size = std::uint32_t(128_MiB);
-#elif defined(ARCHITECTURE_arm64) || defined(__sun__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__OpenBSD__)
+    // Code cache size
+#if defined(ARCHITECTURE_arm64) || defined(__sun__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__OpenBSD__)
     config.code_cache_size = std::uint32_t(128_MiB);
 #else
     config.code_cache_size = std::uint32_t(512_MiB);
