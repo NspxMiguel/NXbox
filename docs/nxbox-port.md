@@ -102,3 +102,34 @@ Known inherited risks still need investigation: read/write protection faults on 
 backing pages, global demand-commit state lifetime, static dependency CRT/import compatibility, and
 timeout/shutdown behavior when a guest fails to stop. The initial execute-fault fix does not resolve
 those separately.
+
+## Performance acceptance
+
+The requested minimum is 30 FPS, with 60 FPS or higher as the target where the game supports it.
+This is a requirement to measure, not an achieved result. Record the title/update, emulator
+revision, resolution, mods, upscaler, shader-cache state, measurement duration, average FPS, 1% low
+and frame-time distribution. Use completed guest frames per host wall-clock second. Do not
+substitute UI refresh rate, a clear-screen benchmark, the guest clock, or generated frames. Validate
+input, audio, saving/loading and sustained play alongside performance.
+
+## Standalone graphics investigation
+
+`tests/xbox-graphics` builds independently of the emulator. It probes the
+[aerisarn Mesa UWP port](https://github.com/aerisarn/mesa-uwp), inspired by the
+[worleydl UWP GL sample](https://github.com/worleydl/uwp_gl_sample). The pinned release is
+`alpha-2-resfix`, source revision `15acdd7ea2b9dcdd62f26fe86b88280d79efc46b`; its archive checksum
+is checked by `tools/nxbox/prepare_mesa.py` and its license accompanies the package.
+
+The probe checks an OpenGL 4.6 core context, compute-shader storage-buffer readback, clear-color
+readback and presentation. It uses a separate package identity, `NSPX.NXbox.GraphicsProbe`, and logs
+to `LocalState/graphics-probe.txt`. Passing it would establish a driver path only, not working
+Switch GPU emulation.
+
+The initial signed probe installed on Series X, but activation returned `0x8027025B` before any app
+log or crash dump appeared. A second iteration fixes the view source's COM apartment and adds
+startup diagnostics. Console validation is ongoing. The emulator core still awaits its first
+successful Windows build.
+
+`homebrew/paddle-test` supplies an original interactive NRO for subsequent guest rendering and
+controller tests without keys. Its source compiles with devkitA64; it has not yet been played
+through NXbox.
