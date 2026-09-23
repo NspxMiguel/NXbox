@@ -1,8 +1,8 @@
-name: Build NXbox UWP
+name: Build NXbox for Xbox Series X
 on:
   workflow_dispatch:
   push:
-    branches: [port/xbox-series-x]
+    branches: [main, port/xbox-series-x]
     paths:
       - "src/**"
       - "CMakeLists.txt"
