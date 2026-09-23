@@ -1,6 +1,6 @@
 # NXbox: Xbox Series X port workbench
 
-This is an experimental local continuation of Eden's UWP work. **No Switch game has been booted on
+This is an experimental continuation of Eden's UWP work. **No Switch game has been booted on
 Miguel's Xbox by this project. No installable package has been produced.** The null-renderer
 frontend cannot display gameplay.
 
@@ -13,9 +13,6 @@ frontend cannot display gameplay.
   Original copyright and GPL notices are retained.
 - Local branch: `port/xbox-series-x`. This checkout is independent of `../XboxDev`; no console
   installations or changes to that project have been made.
-- Upstream's `CLAUDE.md` references a contributor's Windows coordination directory. That directory
-  is not present here. This document records this independent workspace, not membership in that
-  external team.
 
 ## Product requirements
 
@@ -50,8 +47,8 @@ target, **not a compatibility claim or a promise to run every game**.
    data backing could repeatedly commit read/write pages and retry an instruction that still could
    not execute.
 4. Add standalone regression tests without downloading the emulator dependency graph, plus a
-   portable CI workflow. This workflow is prepared locally; it has not been published or run on
-   GitHub.
+   portable CI workflow. The workflow is published on GitHub; the Windows build is still being
+   brought up.
 
 The policy tests cover first/last pages, chunk boundaries, out-of-range access, execute access,
 missing reservations, overflow and every byte in a 132 KiB sample reservation. They do **not**
@@ -79,8 +76,8 @@ clang++ -std=c++20 -Wall -Wextra -Werror -pedantic \
 
 1. **Windows compile/link:** follow [UWP build setup](uwp_build.md), but use CMake **3.31 or newer**
    (the root build requires it). Build `eden-uwp`, not just `core`. The preset and older upstream
-   guide currently advertise 3.25; the root requirement wins. No Windows build was performed in this
-   Mac session.
+   guide currently advertise 3.25; the root requirement wins. Windows CI is running on GitHub; a
+   successful emulator build is not yet established.
 2. **Package and boot:** add a separate package identity, codeGeneration capability, assets and a
    reproducible homebrew NRO that emits the sentinel; sign and inspect imports. The imported branch
    contains the frontend but no complete packaging pipeline. Coordinate console time before
