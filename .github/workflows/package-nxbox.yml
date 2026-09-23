@@ -1,0 +1,75 @@
+name: Package NXbox diagnostic
+on:
+  workflow_run:
+    workflows: [Build NXbox for Xbox Series X]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Successful main-branch build run ID
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  package:
+    if:
+      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - name: Validate source build
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.build_run || github.event.workflow_run.id }}
+        shell: pwsh
+        run: |
+          if ($env:SOURCE_RUN -notmatch '^\d+$') { throw 'Invalid build run ID' }
+          $run = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:SOURCE_RUN" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read source build' }
+          if ($run.conclusion -ne 'success' -or $run.head_branch -ne 'main' -or
+              $run.head_repository.full_name -ne $env:GITHUB_REPOSITORY -or
+              $run.path -ne '.github/workflows/build-nxbox.yml' -or
+              $run.event -notin @('push', 'workflow_dispatch')) {
+            throw 'Only successful, trusted main-branch NXbox builds may be packaged'
+          }
+          "run_id=$env:SOURCE_RUN" >> $env:GITHUB_OUTPUT
+          "revision=$($run.head_sha)" >> $env:GITHUB_OUTPUT
+      - uses: actions/download-artifact@v4
+        with:
+          name: nxbox-uwp-build
+          path: build-artifact
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+      - name: Test package staging
+        run: python -m unittest discover -s tests/port -p test_package.py -v
+      - name: Sign diagnostic package
+        env:
+          NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
+          NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
+          SOURCE_REVISION: ${{ steps.source.outputs.revision }}
+        shell: pwsh
+        run: |
+          $executables = @(Get-ChildItem build-artifact -Recurse -Filter eden-uwp.exe)
+          if ($executables.Count -ne 1) { throw 'Expected exactly one built UWP executable' }
+          python tools/nxbox/package_uwp.py --exe $executables[0].FullName --version "0.1.$env:GITHUB_RUN_NUMBER.0" --output out
+          if ($LASTEXITCODE -ne 0) { throw 'Package creation failed' }
+          @{
+            emulatorRevision = $env:SOURCE_REVISION
+            packagingRevision = (git rev-parse HEAD)
+            diagnosticOnly = $true
+          } | ConvertTo-Json | Set-Content out/build-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nxbox-diagnostic
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            out/*.appx
+            out/build-info.json
