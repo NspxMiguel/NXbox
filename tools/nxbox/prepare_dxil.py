@@ -23,7 +23,12 @@ def main():
     if hashlib.sha256(archive.read_bytes()).hexdigest() != SHA256:
         raise RuntimeError("DXC release checksum mismatch")
     with zipfile.ZipFile(archive) as bundle:
-        (args.output / "dxil.dll").write_bytes(bundle.read("bin\\x64\\dxil.dll"))
+        validator = next(
+            member
+            for member in bundle.infolist()
+            if member.filename.replace("\\", "/") == "bin/x64/dxil.dll"
+        )
+        (args.output / "dxil.dll").write_bytes(bundle.read(validator))
         for name in ["LICENSE-MS.txt", "LICENSE-LLVM.txt"]:
             (args.output / f"DXC-{name}").write_bytes(bundle.read(name))
     archive.unlink()
