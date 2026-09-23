@@ -56,7 +56,7 @@ def write_icon(path: Path, size: int):
 
 
 def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
-    if kind not in {"cpu", "graphics"}:
+    if kind not in {"cpu", "graphics", "game"}:
         raise ValueError("Unknown diagnostic kind")
     if not re.fullmatch(r"\d+\.\d+\.\d+\.\d+", version) or any(
         int(p) > 65535 for p in version.split(".")
@@ -83,6 +83,14 @@ def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
         shutil.copy2(library, destination / library.name)
     if kind == "cpu":
         shutil.copy2(payload, destination / "boot.nro")
+    elif kind == "game":
+        game = ROOT / "homebrew/paddle-test/fixtures/game.nro"
+        if game.read_bytes()[16:20] != b"NRO0":
+            raise ValueError("Guest game fixture is invalid")
+        for name in ("opengl32.dll", "libgallium_wgl.dll", "libglapi.dll", "dxil.dll"):
+            if not (destination / name).is_file():
+                raise FileNotFoundError(f"Missing game runtime: {name}")
+        shutil.copy2(game, destination / "game.nro")
     for name, size in [
         ("StoreLogo", 50),
         ("Square44x44Logo", 44),
@@ -101,9 +109,9 @@ def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
     notices = destination / "Notices"
     notices.mkdir()
     shutil.copy2(ROOT / "LICENSE.txt", notices / "Eden-LICENSE.txt")
-    if kind == "cpu":
+    if kind in {"cpu", "game"}:
         shutil.copy2(ROOT / "homebrew/jit-smoke/LICENSE.libnx.md", notices / "libnx-LICENSE.md")
-    else:
+    if kind in {"graphics", "game"}:
         shutil.copy2(executable.parent / "Mesa-LICENSE.rst", notices / "Mesa-LICENSE.rst")
         for name in ["DXC-LICENSE-MS.txt", "DXC-LICENSE-LLVM.txt"]:
             shutil.copy2(executable.parent / name, notices / name)
@@ -128,7 +136,7 @@ def main():
     parser.add_argument("--version", default="0.1.0.0")
     parser.add_argument("--output", type=Path, default=Path("out"))
     parser.add_argument("--stage-only", action="store_true")
-    parser.add_argument("--kind", choices=["cpu", "graphics"], default="cpu")
+    parser.add_argument("--kind", choices=["cpu", "graphics", "game"], default="cpu")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
     staging = args.output / "package"

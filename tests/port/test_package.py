@@ -58,6 +58,25 @@ class PackageTests(unittest.TestCase):
         self.assertFalse((self.destination / "boot.nro").exists())
         self.assertTrue((self.destination / "Notices/Mesa-LICENSE.rst").is_file())
 
+    def test_game_payload_requires_graphics_runtime(self):
+        with self.assertRaises(FileNotFoundError):
+            package.stage(self.exe, self.destination, "0.2.0.0", "game")
+
+    def test_game_payload_retains_emulator_identity_and_licenses(self):
+        for name in ["opengl32.dll", "libgallium_wgl.dll", "libglapi.dll", "dxil.dll"]:
+            (self.root / name).write_bytes(b"runtime fixture")
+        for name in ["Mesa-LICENSE.rst", "DXC-LICENSE-MS.txt", "DXC-LICENSE-LLVM.txt"]:
+            (self.root / name).write_text("license fixture")
+        package.stage(self.exe, self.destination, "0.2.0.0", "game")
+        tree = ET.parse(self.destination / "AppxManifest.xml")
+        self.assertEqual(
+            tree.find(f"{{{package.FOUNDATION}}}Identity").attrib["Name"], "NSPX.NXbox"
+        )
+        self.assertEqual((self.destination / "game.nro").read_bytes()[16:20], b"NRO0")
+        self.assertFalse((self.destination / "boot.nro").exists())
+        self.assertTrue((self.destination / "Notices/libnx-LICENSE.md").is_file())
+        self.assertTrue((self.destination / "Notices/Mesa-LICENSE.rst").is_file())
+
     def test_rejects_stale_staging_directory(self):
         self.destination.mkdir()
         with self.assertRaises(FileExistsError):

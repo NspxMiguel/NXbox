@@ -6,6 +6,10 @@
 #include <string.h>
 #include <switch.h>
 
+// Keep this diagnostic independent of the guest loader's maximum heap
+// allowance.
+size_t __nx_heap_size = 128 * 1024 * 1024;
+
 enum {
   WIDTH = 640,
   HEIGHT = 360,

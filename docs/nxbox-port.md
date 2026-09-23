@@ -1,8 +1,30 @@
 # NXbox: Xbox Series X port workbench
 
-This is an experimental continuation of Eden's UWP work. **No Switch game has been booted on
-Miguel's Xbox by this project. No installable package has been produced.** The null-renderer
-frontend cannot display gameplay.
+This is an experimental continuation of Eden's UWP work. Signed CPU and graphics diagnostics
+have been installed and executed on the Xbox Series X. **No playable guest game or commercial-game
+FPS has been demonstrated yet.** The gameplay frontend is undergoing its first Windows build.
+
+## Console evidence (2026-09-23)
+
+- CPU package `0.1.2.0`, built from emulator run `35920737218` and packaged by `35926296025`,
+  completed `RunHeadlessBoot` with status 0. That status requires observing
+  `EDEN_XBOX_JIT_ALIVE` from the guest through the SVC observer, followed by shutdown.
+- Graphics package `0.1.6.0`, run `35926298987`, passed clear-color pixel readback,
+  first presentation and all 64 compute-shader storage-buffer results. Mesa reported
+  OpenGL 4.6 on `D3D12 (SraKmd_arden)`; the measured application memory limit was 5 GiB.
+  It completed 3,590 presentations in 60.009536 seconds. **This is a clear-screen driver
+  test, not gameplay FPS.**
+- Adding the packaged DXIL validator resolved the initial pipeline-creation crash. A later
+  shared-context test (`0.1.7.0`) exited while activating the context on a worker thread.
+  The pinned Mesa UWP shim calls `CoreWindow::GetForCurrentThread()` for window lookup;
+  the worker-safe source patch and build are under validation.
+- An earlier CPU crash reached `Kernel::KPageTableBase::SetHeapSize` while zeroing the guest
+  heap. Windows eagerly committed the 4 GiB host page table. The new UWP sparse allocator
+  reserves its address range and commits touched chunks; Windows integration CI verifies
+  a 4 GiB reservation with only three 64 KiB chunks committed, including concurrent first
+  touches. Xbox validation of that allocator is still pending.
+- The JIT uses one reserved code cache with protection transitions; it does not require
+  duplicate writable/executable cache buffers. The temporary cache cap was reverted.
 
 ## Source provenance
 
@@ -11,8 +33,7 @@ frontend cannot display gameplay.
 - The `src/eden_uwp` frontend was imported from the same repository's `feature/uwp-boot-appx`,
   commit `5b146f9a5ec3cffad462cf986c6c284df58bf316`. It was missing from the development snapshot.
   Original copyright and GPL notices are retained.
-- Local branch: `port/xbox-series-x`. This checkout is independent of `../XboxDev`; no console
-  installations or changes to that project have been made.
+- Local branch: `port/xbox-series-x`. This checkout is independent of `../XboxDev`; console diagnostics use separate NXbox package identities and do not modify Nativra.
 
 ## Product requirements
 
@@ -47,12 +68,11 @@ target, **not a compatibility claim or a promise to run every game**.
    data backing could repeatedly commit read/write pages and retry an instruction that still could
    not execute.
 4. Add standalone regression tests without downloading the emulator dependency graph, plus a
-   portable CI workflow. The workflow is published on GitHub; the Windows build is still being
-   brought up.
+   portable CI workflow. The Windows emulator build and portable tests have passed; renderer integration is ongoing.
 
 The policy tests cover first/last pages, chunk boundaries, out-of-range access, execute access,
-missing reservations, overflow and every byte in a 132 KiB sample reservation. They do **not**
-exercise Windows virtual memory, the exception handler, Dynarmic or the Xbox runtime.
+missing reservations, overflow and every byte in a 132 KiB sample reservation. A separate Windows-only integration executable exercises real reservations, commits, concurrent
+first-touch faults and release. Neither test suite alone proves Xbox runtime compatibility.
 
 ## Reproduce local validation
 
@@ -74,21 +94,12 @@ clang++ -std=c++20 -Wall -Wextra -Werror -pedantic \
 
 ## Next gates, in order
 
-1. **Windows compile/link:** follow [UWP build setup](uwp_build.md), but use CMake **3.31 or newer**
-   (the root build requires it). Build `eden-uwp`, not just `core`. The preset and older upstream
-   guide currently advertise 3.25; the root requirement wins. Windows CI is running on GitHub; a
-   successful emulator build is not yet established.
-2. **Package and boot:** add a separate package identity, codeGeneration capability, assets and a
-   reproducible homebrew NRO that emits the sentinel; sign and inspect imports. The imported branch
-   contains the frontend but no complete packaging pipeline. Coordinate console time before
-   launching it while XboxDev is being tested.
-3. **Measure CPU and memory on the Series X:** capture the guest sentinel and actual application
-   memory limit. XboxDev's local `docs/VEREDITO.md` reports a successful RW-to-RX JIT probe
-   returning 42 on this console on 2026-09-19. That is useful prior evidence, not proof that
-   Dynarmic works. The
-   [Microsoft resource guide](https://learn.microsoft.com/en-us/previous-versions/windows/uwp/xbox-apps/system-resource-allocation)
-   distinguishes app and game budgets; measure with MemoryManager instead of assuming all physical
-   RAM is available.
+1. **Windows compile/link:** passed for the CPU frontend; repeat with the OpenGL gameplay frontend.
+   Use CMake 3.31 or newer and the documented UWP compiler environment.
+2. **Package and boot:** passed for the signed CPU and standalone graphics diagnostics. Preserve
+   identity and user data when updating a future launcher.
+3. **CPU and memory:** the JIT guest sentinel passed. Validate sparse page-table storage on-console
+   before measuring the larger guest workload; the measured application budget is 5 GiB.
 4. **Graphics:** implement and validate the Switch GPU backend for Direct3D, including shader
    translation, synchronization, texture formats and presentation. The base currently contains
    Vulkan/OpenGL/null renderers, not a working D3D12 renderer. A triangle alone will not establish
@@ -126,9 +137,8 @@ to `LocalState/graphics-probe.txt`. Passing it would establish a driver path onl
 Switch GPU emulation.
 
 The initial signed probe installed on Series X, but activation returned `0x8027025B` before any app
-log or crash dump appeared. A second iteration fixes the view source's COM apartment and adds
-startup diagnostics. Console validation is ongoing. The emulator core still awaits its first
-successful Windows build.
+log or crash dump appeared. The MTA apartment initialization and activation handler fixed startup. Packaged DXIL fixed the
+subsequent pipeline crash; the validated results and remaining worker-context issue are listed above.
 
 `homebrew/paddle-test` supplies an original interactive NRO for subsequent guest rendering and
 controller tests without keys. Its source compiles with devkitA64; it has not yet been played

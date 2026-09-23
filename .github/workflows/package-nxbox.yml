@@ -10,6 +10,15 @@ on:
         description: Successful main-branch build run ID
         required: true
         type: string
+      kind:
+        description: Diagnostic payload
+        type: choice
+        options: [cpu, game]
+        default: cpu
+      mesa_run:
+        description: Successful patched Mesa build run ID (required for game)
+        type: string
+        required: false
 permissions:
   contents: read
   actions: read
@@ -54,11 +63,20 @@ jobs:
           NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
           NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
           SOURCE_REVISION: ${{ steps.source.outputs.revision }}
+          PACKAGE_KIND: ${{ inputs.kind || 'cpu' }}
+          MESA_RUN: ${{ inputs.mesa_run }}
+          GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $executables = @(Get-ChildItem build-artifact -Recurse -Filter eden-uwp.exe)
           if ($executables.Count -ne 1) { throw 'Expected exactly one built UWP executable' }
-          python tools/nxbox/package_uwp.py --exe $executables[0].FullName --version "0.1.$env:GITHUB_RUN_NUMBER.0" --output out
+          if ($env:PACKAGE_KIND -eq 'game') {
+            python tools/nxbox/fetch_mesa_build.py --run "$env:MESA_RUN" --output $executables[0].DirectoryName
+            if ($LASTEXITCODE -ne 0) { throw 'Mesa runtime staging failed' }
+            python tools/nxbox/prepare_dxil.py --output $executables[0].DirectoryName
+            if ($LASTEXITCODE -ne 0) { throw 'DXIL runtime staging failed' }
+          }
+          python tools/nxbox/package_uwp.py --kind "$env:PACKAGE_KIND" --exe $executables[0].FullName --version "0.1.$env:GITHUB_RUN_NUMBER.0" --output out
           if ($LASTEXITCODE -ne 0) { throw 'Package creation failed' }
           @{
             emulatorRevision = $env:SOURCE_REVISION

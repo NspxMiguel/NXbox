@@ -1,8 +1,14 @@
 name: Xbox graphics probe
 on:
   workflow_dispatch:
+    inputs:
+      mesa_run:
+        description: Optional successful patched Mesa build run ID
+        required: false
+        type: string
 permissions:
   contents: read
+  actions: read
 jobs:
   build:
     runs-on: windows-2025
@@ -13,7 +19,14 @@ jobs:
         shell: cmd
         run: tools\nxbox\build-graphics.cmd
       - name: Prepare pinned Mesa runtime
+        if: inputs.mesa_run == ''
         run: python tools/nxbox/prepare_mesa.py --output build-graphics
+      - name: Prepare patched Mesa runtime
+        if: inputs.mesa_run != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MESA_RUN: ${{ inputs.mesa_run }}
+        run: python tools/nxbox/fetch_mesa_build.py --run "$env:MESA_RUN" --output build-graphics
       - name: Prepare shader validator
         run: python tools/nxbox/prepare_dxil.py --output build-graphics
       - name: Test package staging

@@ -38,7 +38,7 @@ jobs:
           retention-days: 14
           path: |
             mesa-install/**
-            .cache/mesa/LICENSE.rst
+            .cache/mesa/docs/license.rst
             .cache/mesa/src/gallium/winsys/uwp/gdi_uwp.cpp
             .cache/mesa/build-nxbox/meson-logs/**
             .cache/mesa/build-nxbox/**/*.pdb
