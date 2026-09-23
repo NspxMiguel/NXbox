@@ -22,7 +22,9 @@ FPS has been demonstrated yet.** The gameplay frontend is undergoing its first W
   heap. Windows eagerly committed the 4 GiB host page table. The new UWP sparse allocator
   reserves its address range and commits touched chunks; Windows integration CI verifies
   a 4 GiB reservation with only three 64 KiB chunks committed, including concurrent first
-  touches. Xbox validation of that allocator is still pending.
+  touches. Standalone Xbox package `0.1.8.0` also passed: reported usage increased from
+  4,460,544 to 4,677,632 bytes while reserving 4 GiB and touching the three regions.
+  Full-core validation of the allocator remains in progress.
 - The JIT uses one reserved code cache with protection transitions; it does not require
   duplicate writable/executable cache buffers. The temporary cache cap was reverted.
 
