@@ -4,11 +4,13 @@
 #include <windows.h>
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
@@ -150,6 +152,46 @@ struct Mesa {
       Log(std::string(name) + "=" +
           (value ? reinterpret_cast<const char *>(value) : "null"));
     }
+  }
+
+  void CheckWorkerContext(const CoreWindow &window) {
+    Log("worker: creating shared context on UI thread");
+    const auto create = Function<HANDLE(WINAPI *)(HDC, HANDLE, const int *)>(
+        "wglCreateContextAttribsARB");
+    constexpr int attributes[] = {0x2091, 4, 0x2092, 6, 0x9126, 1, 0};
+    HANDLE shared = create(dc, context, attributes);
+    if (!shared) {
+      throw std::runtime_error("Shared context creation failed");
+    }
+    std::atomic<bool> done{false};
+    std::exception_ptr failure;
+    std::thread worker([&] {
+      try {
+        init_apartment(apartment_type::multi_threaded);
+        Log("worker: activating shared context");
+        if (!make_current(dc, shared)) {
+          throw std::runtime_error("Worker context activation failed");
+        }
+        Log("worker: shared context active");
+        CheckCompute();
+        make_current(nullptr, nullptr);
+        uninit_apartment();
+      } catch (...) {
+        failure = std::current_exception();
+      }
+      done.store(true, std::memory_order_release);
+    });
+    while (!done.load(std::memory_order_acquire)) {
+      window.Dispatcher().ProcessEvents(
+          CoreProcessEventsOption::ProcessAllIfPresent);
+      Sleep(1);
+    }
+    worker.join();
+    delete_context(shared);
+    if (failure) {
+      std::rethrow_exception(failure);
+    }
+    Log("WORKER_CONTEXT_PASS");
   }
 
   void CheckCompute() {
@@ -326,6 +368,7 @@ struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
         if (frames == 0) {
           Log("FIRST_PRESENT_PASS");
           mesa.CheckCompute();
+          mesa.CheckWorkerContext(window);
         }
         ++frames;
       }
