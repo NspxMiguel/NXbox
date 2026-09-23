@@ -392,7 +392,7 @@ void Initialize() {
 #ifndef __OPENORBIS__
         using namespace Common::FS;
         const auto& log_dir = GetEdenPath(EdenPath::LogDir);
-        void(CreateDir(log_dir));
+        void(CreateDirs(log_dir));
         logging_instance->file_backend.emplace(log_dir / LOG_FILE);
 #endif
     }
