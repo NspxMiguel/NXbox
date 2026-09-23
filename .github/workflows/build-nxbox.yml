@@ -1,0 +1,42 @@
+name: Build NXbox UWP
+on:
+  workflow_dispatch:
+  push:
+    branches: [port/xbox-series-x]
+    paths:
+      - "src/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "cpmfile.json"
+      - "tools/nxbox/**"
+      - ".github/workflows/build-nxbox.yml"
+permissions:
+  contents: read
+concurrency:
+  group: nxbox-uwp-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: windows-2025
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .cache/cpm
+          key: uwp-cpm-${{ runner.os }}-${{ hashFiles('cpmfile.json', '**/cpmfile.json') }}
+      - name: Configure and build
+        shell: cmd
+        run: tools\nxbox\build-uwp.cmd
+      - name: Collect build evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxbox-uwp-build
+          retention-days: 7
+          path: |
+            build-uwp/bin/**
+            build-uwp/CMakeCache.txt
+            build-uwp/CMakeFiles/CMakeConfigureLog.yaml
+            build-uwp/configure.log
+            build-uwp/build.log

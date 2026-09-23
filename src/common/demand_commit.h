@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2026 SwitchXbox contributors
+// SPDX-FileCopyrightText: Copyright 2026 NXbox contributors
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 #pragma once

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SwitchXboxPortTests LANGUAGES CXX)
+project(NXboxPortTests LANGUAGES CXX)
 
 enable_testing()
 add_executable(demand-commit-tests demand_commit.cpp)

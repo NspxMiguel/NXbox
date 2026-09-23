@@ -64,3 +64,8 @@ artifacts
 /install*
 vulkansdk*.exe
 *.tar.zst
+
+# NXbox local build products and working notes
+/homebrew/**/build/
+/build-port-tests*/
+/PEDIDOS.md

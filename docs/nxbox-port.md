@@ -1,4 +1,4 @@
-# SwitchXbox: Xbox Series X port workbench
+# NXbox: Xbox Series X port workbench
 
 This is an experimental local continuation of Eden's UWP work. **No Switch game has been booted on
 Miguel's Xbox by this project. No installable package has been produced.** The null-renderer
