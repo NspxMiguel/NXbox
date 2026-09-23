@@ -246,7 +246,15 @@ void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
 struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
   bool closed = false;
   IFrameworkView CreateView() { return *this; }
-  void Initialize(const CoreApplicationView &) {}
+  void Initialize(const CoreApplicationView &view) {
+    Log("view Initialize");
+    view.Activated(
+        [](const auto &,
+           const Windows::ApplicationModel::Activation::IActivatedEventArgs &) {
+          Log("view Activated");
+          CoreWindow::GetForCurrentThread().Activate();
+        });
+  }
   void SetWindow(const CoreWindow &window) {
     window.Closed([this](const auto &, const auto &) { closed = true; });
   }
@@ -315,7 +323,16 @@ struct Probe : implements<Probe, IFrameworkViewSource, IFrameworkView> {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
-  init_apartment(apartment_type::single_threaded);
-  CoreApplication::Run(make<Probe>());
+  try {
+    init_apartment(apartment_type::multi_threaded);
+    Log("entry point initialized MTA");
+    CoreApplication::Run(make<Probe>());
+  } catch (const hresult_error &error) {
+    Log("FAIL startup WinRT " + to_string(error.message()));
+    return 1;
+  } catch (const std::exception &error) {
+    Log(std::string("FAIL startup ") + error.what());
+    return 1;
+  }
   return 0;
 }
