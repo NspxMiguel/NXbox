@@ -1,3 +1,5 @@
+> **SwitchXbox workbench:** Experimental Xbox Series X port. See [local status, validation and roadmap](docs/switchxbox-port.md). No playable Xbox build is available from this checkout.
+
 <!--
 # SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
 # SPDX-License-Identifier: GPL-3.0-or-later

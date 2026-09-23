@@ -274,6 +274,11 @@ if (ENABLE_QT)
     add_subdirectory(yuzu)
 endif()
 
+# The experimental Xbox frontend uses the null renderer for guest CPU validation.
+if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+    add_subdirectory(eden_uwp)
+endif()
+
 if (ENABLE_WEB_SERVICE)
     add_subdirectory(web_service)
 endif()

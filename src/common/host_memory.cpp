@@ -55,6 +55,7 @@
 
 #include "common/alignment.h"
 #include "common/assert.h"
+#include "common/demand_commit.h"
 #include "common/free_region_manager.h"
 #include "common/host_memory.h"
 #include "common/logging.h"
@@ -182,10 +183,10 @@ PFN_AddVectoredExceptionHandler g_pfn_add_veh{nullptr};
 PFN_RemoveVectoredExceptionHandler g_pfn_remove_veh{nullptr};
 void* g_backing_veh{nullptr};
 
-constexpr size_t BACKING_COMMIT_GRANULARITY = 64 * 1024; // commit in 64 KiB chunks to limit faults
-
 LONG NTAPI BackingDemandCommitHandler(EXCEPTION_POINTERS* ep) {
-    if (ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) {
+    if (ep == nullptr || ep->ExceptionRecord == nullptr ||
+        ep->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
+        ep->ExceptionRecord->NumberParameters < 2) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
     u8* const base = g_backing_base.load(std::memory_order_acquire);
@@ -193,16 +194,15 @@ LONG NTAPI BackingDemandCommitHandler(EXCEPTION_POINTERS* ep) {
     if (base == nullptr || g_pfn_virtual_alloc_from_app == nullptr) {
         return EXCEPTION_CONTINUE_SEARCH;
     }
-    const auto fault_addr =
-        reinterpret_cast<u8*>(ep->ExceptionRecord->ExceptionInformation[1]); // [1] = faulting address
-    if (fault_addr < base || fault_addr >= base + size) {
-        return EXCEPTION_CONTINUE_SEARCH; // not our backing — let other handlers run
+    const auto chunk = DemandCommit::GetChunk(reinterpret_cast<std::uintptr_t>(base), size,
+                                              ep->ExceptionRecord->ExceptionInformation[1],
+                                              ep->ExceptionRecord->ExceptionInformation[0]);
+    if (!chunk) {
+        return EXCEPTION_CONTINUE_SEARCH;
     }
-    const size_t offset = static_cast<size_t>(fault_addr - base);
-    const size_t chunk_offset = offset & ~(BACKING_COMMIT_GRANULARITY - 1);
-    const size_t chunk_len = (std::min)(BACKING_COMMIT_GRANULARITY, size - chunk_offset);
-    if (g_pfn_virtual_alloc_from_app(base + chunk_offset, chunk_len, MEM_COMMIT, PAGE_READWRITE)) {
-        return EXCEPTION_CONTINUE_EXECUTION; // page committed — retry the faulting access
+    if (g_pfn_virtual_alloc_from_app(base + chunk->offset, chunk->size, MEM_COMMIT,
+                                     PAGE_READWRITE)) {
+        return EXCEPTION_CONTINUE_EXECUTION;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }

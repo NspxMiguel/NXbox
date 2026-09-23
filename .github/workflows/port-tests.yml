@@ -1,0 +1,26 @@
+name: Port regression tests
+on:
+  push:
+    paths:
+      - "src/common/demand_commit.h"
+      - "tests/port/**"
+      - ".github/workflows/port-tests.yml"
+  pull_request:
+    paths:
+      - "src/common/demand_commit.h"
+      - "tests/port/**"
+      - ".github/workflows/port-tests.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  memory-policy:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S tests/port -B build-port-tests
+      - run: cmake --build build-port-tests --config Release --parallel 2
+      - run: ctest --test-dir build-port-tests -C Release --output-on-failure
