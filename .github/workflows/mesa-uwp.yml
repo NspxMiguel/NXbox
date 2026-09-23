@@ -1,0 +1,44 @@
+name: Build Mesa UWP for NXbox
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: aerisarn/mesa-uwp
+          ref: 15acdd7ea2b9dcdd62f26fe86b88280d79efc46b
+          path: .cache/mesa
+      - uses: actions/checkout@v4
+        with:
+          repository: aerisarn/meson
+          ref: d0a111134f032dcbfbc7b743a4bf811f99909868
+          path: .cache/meson
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare generator dependencies
+        run: |
+          python -m pip install mako==1.3.10 PyYAML==6.0.2 packaging==24.2 ply==3.11 ninja==1.11.1.4
+          choco install winflexbison3 --yes --no-progress
+          python tools/nxbox/patch_mesa_uwp.py .cache/mesa
+      - name: Compile Mesa with worker context support
+        shell: cmd
+        run: tools\nxbox\build-mesa.cmd
+      - name: Collect runtime and source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nxbox-mesa-uwp
+          retention-days: 14
+          path: |
+            mesa-install/**
+            .cache/mesa/LICENSE.rst
+            .cache/mesa/src/gallium/winsys/uwp/gdi_uwp.cpp
+            .cache/mesa/build-nxbox/meson-logs/**
+            .cache/mesa/build-nxbox/**/*.pdb
