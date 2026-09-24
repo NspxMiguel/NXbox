@@ -94,6 +94,11 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     system.GetCpuManager().OnGpuReady();
     void(system.Run());
     Diagnostic("GAME_RUNNING");
+    // The guest's own HID resource manager applies Settings::values.players lazily, on its first
+    // HID service call. Poll() runs immediately on the host thread regardless of guest timing, so
+    // without this the controller stays at its construction default (NpadStyleIndex::None,
+    // "Controller type 0 is not supported") until the guest happens to touch HID first.
+    system.HIDCore().ReloadInputDevices();
     auto* controller = system.HIDCore().GetEmulatedControllerByIndex(0);
     auto measured_at = std::chrono::steady_clock::now();
     auto measured_frames = window.FrameCount();
