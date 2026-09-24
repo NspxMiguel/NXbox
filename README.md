@@ -23,15 +23,16 @@ controller-first, minimal-setup experience as its goal.
 
 Results below were measured on an Xbox Series X in Dev Mode.
 
-| Area                     | Current state                                                      |
-| ------------------------ | ------------------------------------------------------------------ |
-| CPU (Dynarmic JIT)       | Original ARM64 homebrew executed and shut down cleanly on Xbox     |
-| Guest memory             | 4 GiB page table committed on demand; sparse probe passed on Xbox  |
-| OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox |
-| Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox          |
-| Game rendering and input | Frontend written; console validation pending                       |
-| Audio                    | Not implemented on Xbox (null backend)                             |
-| Game compatibility       | Unverified; no full-library compatibility claim                    |
+| Area                     | Current state                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| CPU (Dynarmic JIT)       | Original ARM64 homebrew executed and shut down cleanly on Xbox                 |
+| Guest memory             | 4 GiB page table committed on demand; sparse probe passed on Xbox              |
+| OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox             |
+| Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox                      |
+| Homebrew boot            | Original homebrew initializes all services and reaches its ready state on Xbox |
+| Game rendering and input | Display and controller response on Xbox still being validated                  |
+| Audio                    | Not implemented on Xbox (null backend)                                         |
+| Game compatibility       | Unverified; no full-library compatibility claim                                |
 
 The standalone probe presented about 60 clear frames per second. That is the driver's presentation
 rate, **not** game performance. No game FPS has been measured.
