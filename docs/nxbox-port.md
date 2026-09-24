@@ -86,12 +86,15 @@ has been demonstrated yet.** The gameplay frontend is undergoing its first Windo
   back to the known-working release config. Symbolizing this driver-internal crash needs either a
   genuine Windows debugging session (WinDbg with the Xbox devkit's own symbol path) or Microsoft's
   own tools, neither available here.
-- One unverified, cheap-to-test candidate for a future session: `d3d12_wgl_framebuffer_present`
-  (`d3d12_wgl_framebuffer_uwp.cpp`) unconditionally sets `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` and
-  calls `Present(0, DXGI_PRESENT_ALLOW_TEARING)` whenever `interval < 1`; Xbox's compositor has a
-  fixed refresh rate and may not support tearing presents at all. Patching that one call to always
-  use `Present(1, 0)` on Xbox (a small, local Mesa source patch through `patch_mesa_uwp.py`, not a
-  build configuration change) is a five-minute test that does not require a debug Mesa build.
+- Tested and ruled out: `d3d12_wgl_framebuffer_present` unconditionally set
+  `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` and called `Present(0, DXGI_PRESENT_ALLOW_TEARING)` whenever
+  `interval < 1`. `patch_mesa_uwp.py` now also patches that call to always
+  `Present(interval < 1 ? 1 : interval, 0)`, on the reasoning that Xbox's fixed-refresh compositor
+  may not support tearing presents. A fresh Mesa build with this patch was deployed and tested: the
+  crash is identical (`0xC00000FD` at `umd12ddi_arden.dll+0xab739`, one instruction from the earlier
+  `+0xab74f`) after the same 12 presented frames. The patch is kept anyway (vsync-always is the more
+  correct choice on a fixed-refresh console regardless), but it is not the cause and no further
+  present-flag changes should be tried on this theory.
 - A black screen in the other agent's app coincided with NXbox running. Two apps in the foreground
   on one console suspend each other. Test one app at a time.
 - Using sccache with embedded debug info reduced a full CI rebuild from about 60 to 18 minutes.
