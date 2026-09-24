@@ -40,13 +40,6 @@ static_assert(ServerSessionCountMax == 0x40,
               "ServerSessionCountMax isn't 0x40 somehow, this assert is a reminder that this will "
               "break lots of things");
 
-#ifdef _MSC_VER
-// FunctionInfoBase stores a HandlerFnP<ServiceFrameworkBase> while the class is still incomplete.
-// MSVC then picks the member-pointer size per translation unit, so the handler tables registered
-// by each service were read with a different stride. Fix one representation for every TU.
-class __multiple_inheritance ServiceFrameworkBase;
-#endif
-
 /**
  * This is an non-templated base of ServiceFramework to reduce code bloat and compilation times, it
  * is not meant to be used directly.
@@ -148,7 +141,10 @@ protected:
         /// @param expected_header_ request header in the command buffer which will trigger dispatch to this handler
         /// @param handler_callback_ member function in this service which will be called to handle the request
         /// @param name_ human-friendly name for the request. Used mostly for logging purposes.
-        constexpr FunctionInfoTyped(u32 expected_header_, HandlerFnP<T> handler_callback_, const char* name_)
+        // Not constexpr: MSVC constant-initializes static tables of these incorrectly when the
+        // handler is a converted member pointer, corrupting expected_header for every non-null
+        // entry. Dynamic initialization produces correct tables.
+        FunctionInfoTyped(u32 expected_header_, HandlerFnP<T> handler_callback_, const char* name_)
             : FunctionInfoBase{expected_header_, HandlerFnP<ServiceFrameworkBase>(handler_callback_), name_} {}
     };
     using FunctionInfo = FunctionInfoTyped<Self>;
