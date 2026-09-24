@@ -44,7 +44,7 @@ static_assert(ServerSessionCountMax == 0x40,
 // FunctionInfoBase stores a HandlerFnP<ServiceFrameworkBase> while the class is still incomplete.
 // MSVC then picks the member-pointer size per translation unit, so the handler tables registered
 // by each service were read with a different stride. Fix one representation for every TU.
-class __virtual_inheritance ServiceFrameworkBase;
+class __multiple_inheritance ServiceFrameworkBase;
 #endif
 
 /**
