@@ -15,24 +15,26 @@ controller-first, minimal-setup experience as its goal.
 [Build workflow](https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml) ·
 [Source provenance](#credits-and-lineage) · [License](LICENSE.txt)
 
-> **Early development. No playable Xbox release is available.** Core components run on a Series X in
-> Dev Mode, but no game has been displayed or measured yet. No commercial game has been validated on
-> Xbox by NXbox.
+> **Early development. No playable Xbox release is available.** The original homebrew boots,
+> connects the Xbox controller and presents real rendered frames on a Series X, then crashes inside
+> the Xbox system D3D12 driver after a fixed number of frames. No commercial game has been validated
+> on Xbox by NXbox.
 
 ## Where it stands
 
 Results below were measured on an Xbox Series X in Dev Mode.
 
-| Area                     | Current state                                                                  |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| CPU (Dynarmic JIT)       | Original ARM64 homebrew executed and shut down cleanly on Xbox                 |
-| Guest memory             | 4 GiB page table committed on demand; sparse probe passed on Xbox              |
-| OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox             |
-| Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox                      |
-| Homebrew boot            | Original homebrew initializes all services and reaches its ready state on Xbox |
-| Game rendering and input | Display and controller response on Xbox still being validated                  |
-| Audio                    | Not implemented on Xbox (null backend)                                         |
-| Game compatibility       | Unverified; no full-library compatibility claim                                |
+| Area                     | Current state                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------- |
+| CPU (Dynarmic JIT)       | Original ARM64 homebrew executed and shut down cleanly on Xbox                                                |
+| Guest memory             | 4 GiB page table committed on demand; sparse probe passed on Xbox                                             |
+| OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox                                            |
+| Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox                                                     |
+| Homebrew boot            | Initializes all services, connects the Xbox controller, reaches its ready state                               |
+| Game rendering           | Presents real frames on Xbox, then crashes inside the Xbox D3D12 driver; see [port notes](docs/nxbox-port.md) |
+| Game input               | Controller connects and is polled; not yet exercised through a full play session                              |
+| Audio                    | Not implemented on Xbox (null backend)                                                                        |
+| Game compatibility       | Unverified; no full-library compatibility claim                                                               |
 
 The standalone probe presented about 60 clear frames per second. That is the driver's presentation
 rate, **not** game performance. No game FPS has been measured.
