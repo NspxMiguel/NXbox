@@ -46,6 +46,30 @@ has been demonstrated yet.** The gameplay frontend is undergoing its first Windo
   pointers incorrectly. Pinning `ServiceFrameworkBase` to `__multiple_inheritance` changed nothing,
   so it was reverted. Removing `constexpr` makes the tables initialize at run time. Local package
   `0.1.16.2` then reached `NXBOX_PADDLE_READY` on the Xbox with no lookup misses.
+- With the service tables fixed, the first present still crashed: `0xC00000FD` (stack overflow) at a
+  return address inside `libgallium_wgl.dll`, with 936 repeats of the same six-frame cycle under
+  `wglSwapBuffers`. The Xbox executable's default thread stack is 1 MiB; `/STACK:16777216` on
+  `eden-uwp.exe` fixed that crash.
+- The guest's `Controller type 0 is not supported` on every `Connect()` call was a separate bug:
+  `Settings::values.players[0].controller_type` only becomes the guest's actual `NpadStyleIndex`
+  through `HIDCore::ReloadInputDevices()`, which desktop frontends call from their Qt/Android
+  settings UI and which the guest's own resource manager also calls, but lazily, on its first HID
+  service call. The gamepad poll loop runs immediately on the host thread and raced ahead of that,
+  so the controller stayed at its construction default (`NpadStyleIndex::None`). Calling
+  `ReloadInputDevices()` once before the poll loop fixed it.
+- With both of those fixed, the local package (`0.1.16.7`, built and packaged on the Windows PC in
+  under 30 seconds total) still exits with no process and no `GAME_PRESENT` line. A second crash
+  dump shows the same signature one level deeper: `0xC00000FD` again, now at a return address inside
+  `umd12ddi_arden.dll` (the Xbox D3D12 kernel driver), in a ~15,390-times-repeated 8-frame cycle
+  through `libgallium_wgl.dll` → `umd12ddi_arden.dll` → `D3D12Core.dll` → `libgallium_wgl.dll`, even
+  with the 16 MiB stack. The release Mesa build ships no PDB, so these addresses cannot be
+  attributed to a function; `tools/nxbox/build-mesa.cmd` now adds `-Ddebug=true` (keeps
+  `buildtype=release` optimization, adds symbols) and a debug Mesa build is running to symbolize
+  this properly instead of guessing at Mesa/driver internals from export-table proximity. One
+  candidate already read in the patched source: `d3d12_wgl_framebuffer_present`
+  (`d3d12_wgl_framebuffer_uwp.cpp`) unconditionally sets `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` and
+  calls `Present(0, DXGI_PRESENT_ALLOW_TEARING)` whenever `interval < 1`; this is unverified without
+  symbols and should not be treated as the cause until the debug build confirms it.
 - A black screen in the other agent's app coincided with NXbox running. Two apps in the foreground
   on one console suspend each other. Test one app at a time.
 - Using sccache with embedded debug info reduced a full CI rebuild from about 60 to 18 minutes.
