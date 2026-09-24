@@ -359,9 +359,9 @@ void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
     const auto delete_program =
         Function<void(WINAPI *)(unsigned)>("glDeleteProgram");
     unsigned failures = 0;
-    for (const auto &[name, code] : kEdenShaders) {
+    for (const auto &[name, stage, code] : kEdenShaders) {
       const std::string label(name);
-      const unsigned shader = create_shader(0x91B9);
+      const unsigned shader = create_shader(stage);
       const char *pointer = code.data();
       const int length = static_cast<int>(code.size());
       source(shader, 1, &pointer, &length);
