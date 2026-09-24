@@ -14,7 +14,7 @@ on:
         description: Diagnostic payload
         type: choice
         options: [cpu, game]
-        default: cpu
+        default: game
       mesa_run:
         description: Successful patched Mesa build run ID (required for game)
         type: string
@@ -63,8 +63,8 @@ jobs:
           NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
           NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
           SOURCE_REVISION: ${{ steps.source.outputs.revision }}
-          PACKAGE_KIND: ${{ inputs.kind || 'cpu' }}
-          MESA_RUN: ${{ inputs.mesa_run }}
+          PACKAGE_KIND: ${{ inputs.kind || 'game' }}
+          MESA_RUN: ${{ inputs.mesa_run || '35928958265' }}
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
