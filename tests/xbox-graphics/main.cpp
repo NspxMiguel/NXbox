@@ -2,6 +2,7 @@
 // Standalone Mesa/UWP compatibility probe; its presentation rate is not game
 // FPS.
 #include "common/sparse_memory.h"
+#include "eden_shaders.h"
 #include <windows.h>
 
 #include <array>
@@ -198,6 +199,7 @@ struct Mesa {
         }
         Log("worker: shared context active");
         CheckCompute();
+        CheckEdenShaders();
         make_current(nullptr, nullptr);
         uninit_apartment();
       } catch (...) {
@@ -324,6 +326,76 @@ void main() { uint i=gl_GlobalInvocationID.x; values[i]=i*i+17u; }
       }
     }
     Log("COMPUTE_READBACK_PASS count=64");
+  }
+
+  // Mirrors OpenGL::CreateProgram + LinkSeparableProgram for Eden's utility shaders.
+  void CheckEdenShaders() {
+    const auto create_shader =
+        Function<unsigned(WINAPI *)(unsigned)>("glCreateShader");
+    const auto source = Function<void(WINAPI *)(
+        unsigned, int, const char *const *, const int *)>("glShaderSource");
+    const auto compile = Function<void(WINAPI *)(unsigned)>("glCompileShader");
+    const auto shader_iv =
+        Function<void(WINAPI *)(unsigned, unsigned, int *)>("glGetShaderiv");
+    const auto shader_log =
+        Function<void(WINAPI *)(unsigned, int, int *, char *)>(
+            "glGetShaderInfoLog");
+    const auto create_program =
+        Function<unsigned(WINAPI *)()>("glCreateProgram");
+    const auto parameter = Function<void(WINAPI *)(unsigned, unsigned, int)>(
+        "glProgramParameteri");
+    const auto attach =
+        Function<void(WINAPI *)(unsigned, unsigned)>("glAttachShader");
+    const auto detach =
+        Function<void(WINAPI *)(unsigned, unsigned)>("glDetachShader");
+    const auto link = Function<void(WINAPI *)(unsigned)>("glLinkProgram");
+    const auto program_iv =
+        Function<void(WINAPI *)(unsigned, unsigned, int *)>("glGetProgramiv");
+    const auto program_log =
+        Function<void(WINAPI *)(unsigned, int, int *, char *)>(
+            "glGetProgramInfoLog");
+    const auto delete_shader =
+        Function<void(WINAPI *)(unsigned)>("glDeleteShader");
+    const auto delete_program =
+        Function<void(WINAPI *)(unsigned)>("glDeleteProgram");
+    unsigned failures = 0;
+    for (const auto &[name, code] : kEdenShaders) {
+      const std::string label(name);
+      const unsigned shader = create_shader(0x91B9);
+      const char *pointer = code.data();
+      const int length = static_cast<int>(code.size());
+      source(shader, 1, &pointer, &length);
+      Log("eden: compiling " + label);
+      compile(shader);
+      int compiled = 0;
+      shader_iv(shader, 0x8B81, &compiled);
+      if (!compiled) {
+        std::array<char, 2048> message{};
+        shader_log(shader, static_cast<int>(message.size()), nullptr,
+                   message.data());
+        Log("EDEN_SHADER_COMPILE_FAIL " + label + ": " + message.data());
+      }
+      const unsigned program = create_program();
+      parameter(program, 0x8258, 1);
+      attach(program, shader);
+      Log("eden: linking " + label);
+      link(program);
+      detach(program, shader);
+      delete_shader(shader);
+      int linked = 0;
+      program_iv(program, 0x8B82, &linked);
+      if (linked) {
+        Log("EDEN_SHADER_PASS " + label);
+      } else {
+        ++failures;
+        std::array<char, 2048> message{};
+        program_log(program, static_cast<int>(message.size()), nullptr,
+                    message.data());
+        Log("EDEN_SHADER_LINK_FAIL " + label + ": " + message.data());
+      }
+      delete_program(program);
+    }
+    Log("EDEN_SHADERS_DONE failures=" + std::to_string(failures));
   }
 };
 

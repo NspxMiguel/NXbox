@@ -10,3 +10,22 @@ target_compile_definitions(nxbox-graphics PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(nxbox-graphics PRIVATE /EHsc /W4)
 target_link_options(nxbox-graphics PRIVATE /APPCONTAINER)
 target_link_libraries(nxbox-graphics PRIVATE WindowsApp.lib)
+
+# Embed Eden's OpenGL utility compute shaders so the probe can compile them in isolation.
+set(NXBOX_EDEN_SHADERS
+    astc_decoder block_linear_unswizzle_2d block_linear_unswizzle_3d pitch_unswizzle
+    opengl_copy_bc4 opengl_convert_s8d24 convert_msaa_to_non_msaa convert_non_msaa_to_msaa)
+set(_shader_header "${CMAKE_CURRENT_BINARY_DIR}/eden_shaders.h")
+set(_shader_body "#pragma once\n#include <array>\n#include <string_view>\n#include <utility>\n")
+set(_shader_table "inline constexpr std::array<std::pair<std::string_view, std::string_view>, 8> kEdenShaders{{\n")
+foreach(_name IN LISTS NXBOX_EDEN_SHADERS)
+    set(_path "${CMAKE_CURRENT_SOURCE_DIR}/../../src/video_core/host_shaders/${_name}.comp")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_path}")
+    file(READ "${_path}" _hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "'\\\\x\\1'," _bytes "${_hex}")
+    string(APPEND _shader_body "inline constexpr char k_${_name}[] = {${_bytes}};\n")
+    string(APPEND _shader_table "    {\"${_name}\", std::string_view(k_${_name}, sizeof(k_${_name}))},\n")
+endforeach()
+string(APPEND _shader_table "}};\n")
+file(WRITE "${_shader_header}" "${_shader_body}${_shader_table}")
+target_include_directories(nxbox-graphics PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
