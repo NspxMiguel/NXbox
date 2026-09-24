@@ -2,6 +2,7 @@
 #pragma once
 
 #include <array>
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Gaming.Input.h>
 
 #include "common/settings.h"
