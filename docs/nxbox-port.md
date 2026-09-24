@@ -1,32 +1,53 @@
 # NXbox: Xbox Series X port workbench
 
-This is an experimental continuation of Eden's UWP work. Signed CPU and graphics diagnostics
-have been installed and executed on the Xbox Series X. **No playable guest game or commercial-game
-FPS has been demonstrated yet.** The gameplay frontend is undergoing its first Windows build.
+This is an experimental continuation of Eden's UWP work. Signed CPU and graphics diagnostics have
+been installed and executed on the Xbox Series X. **No playable guest game or commercial-game FPS
+has been demonstrated yet.** The gameplay frontend is undergoing its first Windows build.
 
 ## Console evidence (2026-09-23)
 
 - CPU package `0.1.2.0`, built from emulator run `35920737218` and packaged by `35926296025`,
-  completed `RunHeadlessBoot` with status 0. That status requires observing
-  `EDEN_XBOX_JIT_ALIVE` from the guest through the SVC observer, followed by shutdown.
-- Graphics package `0.1.6.0`, run `35926298987`, passed clear-color pixel readback,
-  first presentation and all 64 compute-shader storage-buffer results. Mesa reported
-  OpenGL 4.6 on `D3D12 (SraKmd_arden)`; the measured application memory limit was 5 GiB.
-  It completed 3,590 presentations in 60.009536 seconds. **This is a clear-screen driver
-  test, not gameplay FPS.**
+  completed `RunHeadlessBoot` with status 0. That status requires observing `EDEN_XBOX_JIT_ALIVE`
+  from the guest through the SVC observer, followed by shutdown.
+- Graphics package `0.1.6.0`, run `35926298987`, passed clear-color pixel readback, first
+  presentation and all 64 compute-shader storage-buffer results. Mesa reported OpenGL 4.6 on
+  `D3D12 (SraKmd_arden)`; the measured application memory limit was 5 GiB. It completed 3,590
+  presentations in 60.009536 seconds. **This is a clear-screen driver test, not gameplay FPS.**
 - Adding the packaged DXIL validator resolved the initial pipeline-creation crash. A later
-  shared-context test (`0.1.7.0`) exited while activating the context on a worker thread.
-  The pinned Mesa UWP shim calls `CoreWindow::GetForCurrentThread()` for window lookup;
-  the worker-safe source patch and build are under validation.
-- An earlier CPU crash reached `Kernel::KPageTableBase::SetHeapSize` while zeroing the guest
-  heap. Windows eagerly committed the 4 GiB host page table. The new UWP sparse allocator
-  reserves its address range and commits touched chunks; Windows integration CI verifies
-  a 4 GiB reservation with only three 64 KiB chunks committed, including concurrent first
-  touches. Standalone Xbox package `0.1.8.0` also passed: reported usage increased from
-  4,460,544 to 4,677,632 bytes while reserving 4 GiB and touching the three regions.
-  Full-core validation of the allocator remains in progress.
-- The JIT uses one reserved code cache with protection transitions; it does not require
-  duplicate writable/executable cache buffers. The temporary cache cap was reverted.
+  shared-context test (`0.1.7.0`) exited while activating the context on a worker thread. The pinned
+  Mesa UWP shim calls `CoreWindow::GetForCurrentThread()` for window lookup; the worker-safe source
+  patch and build are under validation.
+- An earlier CPU crash reached `Kernel::KPageTableBase::SetHeapSize` while zeroing the guest heap.
+  Windows eagerly committed the 4 GiB host page table. The new UWP sparse allocator reserves its
+  address range and commits touched chunks; Windows integration CI verifies a 4 GiB reservation with
+  only three 64 KiB chunks committed, including concurrent first touches. Standalone Xbox package
+  `0.1.8.0` also passed: reported usage increased from 4,460,544 to 4,677,632 bytes while reserving
+  4 GiB and touching the three regions. Full-core validation of the allocator remains in progress.
+- The JIT uses one reserved code cache with protection transitions; it does not require duplicate
+  writable/executable cache buffers. The temporary cache cap was reverted.
+
+## Console evidence (2026-09-24)
+
+- The patched Mesa (`0.1.9.0`) passed the worker-context compute test, which fixes the worker-thread
+  context activation problem from 2026-09-23.
+- The first game package crashed with fast-fail `0xC0000409` inside `libgallium_wgl.dll` while
+  `OpenGL::UtilShaders` linked its separable compute programs. Probe `0.1.11.0` linked Eden's OpenGL
+  startup shaders one by one on the worker context. Twelve passed: ASTC, unswizzle, BC4, S8D24,
+  local-memory warmup, blit and present. Both `image2DMSArray` conversion programs abort Mesa's
+  D3D12 backend, because D3D12 has no multisampled UAVs. WindowsStore builds define
+  `NXBOX_NO_MSAA_STORAGE_IMAGES`: they skip those programs, and MSAA image copies are skipped with a
+  warning.
+- With that change the game package loads the homebrew and reaches `GAME_RUNNING` without crashing.
+  The guest then panicked because `IpcController` 3, `set:sys` 3 and `IWindowController` 1 were
+  reported as unknown. A lookup-miss diagnostic showed tables with pointer halves as command ids
+  (for example, `set:sys` contained 1803350624). MSVC chose the member-pointer representation of the
+  incomplete `ServiceFrameworkBase` differently per translation unit, so `RegisterHandlersBase` read
+  each table with the wrong stride. `service.h` now pins the class to `__multiple_inheritance`, the
+  model MSVC requires. The representation is then the same in every translation unit.
+- A black screen in the other agent's app coincided with NXbox running. Two apps in the foreground
+  on one console suspend each other. Test one app at a time.
+- Using sccache with embedded debug info reduced a full CI rebuild from about 60 to 18 minutes.
+  Successful builds are now packaged automatically as the game payload with Mesa run `35928958265`.
 
 ## Source provenance
 
@@ -35,7 +56,8 @@ FPS has been demonstrated yet.** The gameplay frontend is undergoing its first W
 - The `src/eden_uwp` frontend was imported from the same repository's `feature/uwp-boot-appx`,
   commit `5b146f9a5ec3cffad462cf986c6c284df58bf316`. It was missing from the development snapshot.
   Original copyright and GPL notices are retained.
-- Local branch: `port/xbox-series-x`. This checkout is independent of `../XboxDev`; console diagnostics use separate NXbox package identities and do not modify Nativra.
+- Local branch: `port/xbox-series-x`. This checkout is independent of `../XboxDev`; console
+  diagnostics use separate NXbox package identities and do not modify Nativra.
 
 ## Product requirements
 
@@ -70,11 +92,13 @@ target, **not a compatibility claim or a promise to run every game**.
    data backing could repeatedly commit read/write pages and retry an instruction that still could
    not execute.
 4. Add standalone regression tests without downloading the emulator dependency graph, plus a
-   portable CI workflow. The Windows emulator build and portable tests have passed; renderer integration is ongoing.
+   portable CI workflow. The Windows emulator build and portable tests have passed; renderer
+   integration is ongoing.
 
 The policy tests cover first/last pages, chunk boundaries, out-of-range access, execute access,
-missing reservations, overflow and every byte in a 132 KiB sample reservation. A separate Windows-only integration executable exercises real reservations, commits, concurrent
-first-touch faults and release. Neither test suite alone proves Xbox runtime compatibility.
+missing reservations, overflow and every byte in a 132 KiB sample reservation. A separate
+Windows-only integration executable exercises real reservations, commits, concurrent first-touch
+faults and release. Neither test suite alone proves Xbox runtime compatibility.
 
 ## Reproduce local validation
 
@@ -139,8 +163,9 @@ to `LocalState/graphics-probe.txt`. Passing it would establish a driver path onl
 Switch GPU emulation.
 
 The initial signed probe installed on Series X, but activation returned `0x8027025B` before any app
-log or crash dump appeared. The MTA apartment initialization and activation handler fixed startup. Packaged DXIL fixed the
-subsequent pipeline crash; the validated results and remaining worker-context issue are listed above.
+log or crash dump appeared. The MTA apartment initialization and activation handler fixed startup.
+Packaged DXIL fixed the subsequent pipeline crash; the validated results and remaining
+worker-context issue are listed above.
 
 `homebrew/paddle-test` supplies an original interactive NRO for subsequent guest rendering and
 controller tests without keys. Its source compiles with devkitA64; it has not yet been played
