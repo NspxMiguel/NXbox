@@ -3,7 +3,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
+#include <optional>
 #include <thread>
+#include <winrt/Windows.ApplicationModel.Core.h>
+#include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.System.h>
 
 #include "common/logging.h"
@@ -23,8 +27,25 @@
 
 namespace EdenXbox {
 namespace {
+// The system suspends the app when another app takes the foreground; pause emulation before the
+// process is frozen and resume it afterwards.
+struct Lifecycle {
+    enum Request : int { None, Suspend, Resume };
+    std::atomic<int> request{None};
+    std::mutex mutex;
+    std::optional<winrt::Windows::ApplicationModel::SuspendingDeferral> deferral;
+
+    void CompleteDeferral() {
+        std::scoped_lock lock{mutex};
+        if (deferral) {
+            deferral->Complete();
+            deferral.reset();
+        }
+    }
+};
+
 void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool>& closed,
-             const std::shared_ptr<XboxGamepad>& gamepad) {
+             const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
     Common::Log::Initialize();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
@@ -72,8 +93,31 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     auto* controller = system.HIDCore().GetEmulatedControllerByIndex(0);
     auto measured_at = std::chrono::steady_clock::now();
     auto measured_frames = window.FrameCount();
+    bool paused = false;
+    SCOPE_EXIT {
+        lifecycle.CompleteDeferral();
+    };
     while (!closed.load(std::memory_order_acquire) &&
            !guest_exited.load(std::memory_order_acquire)) {
+        const int request = lifecycle.request.exchange(Lifecycle::None, std::memory_order_acq_rel);
+        if (request == Lifecycle::Suspend) {
+            if (!paused) {
+                void(system.Pause());
+                paused = true;
+                Diagnostic("GAME_SUSPENDED");
+            }
+            lifecycle.CompleteDeferral();
+        } else if (request == Lifecycle::Resume && paused) {
+            void(system.Run());
+            paused = false;
+            measured_at = std::chrono::steady_clock::now();
+            measured_frames = window.FrameCount();
+            Diagnostic("GAME_RESUMED");
+        }
+        if (paused) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+            continue;
+        }
         gamepad->Poll(*controller);
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
@@ -106,10 +150,25 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         if (gamepad->OnKey(args.VirtualKey(), false))
             args.Handled(true);
     });
+    Lifecycle lifecycle;
+    using winrt::Windows::ApplicationModel::Core::CoreApplication;
+    const auto suspending_token =
+        CoreApplication::Suspending([&lifecycle](const auto&, const auto& args) {
+            {
+                std::scoped_lock lock{lifecycle.mutex};
+                lifecycle.deferral = args.SuspendingOperation().GetDeferral();
+            }
+            lifecycle.request.store(Lifecycle::Suspend, std::memory_order_release);
+        });
+    const auto resuming_token = CoreApplication::Resuming([&lifecycle](const auto&, const auto&) {
+        lifecycle.request.store(Lifecycle::Resume, std::memory_order_release);
+    });
     SCOPE_EXIT {
         window.Closed(close_token);
         window.KeyDown(key_down_token);
         window.KeyUp(key_up_token);
+        CoreApplication::Suspending(suspending_token);
+        CoreApplication::Resuming(resuming_token);
     };
     // The driver targets the current HDMI surface. Layout remains 16:9 until resize handling lands.
     auto graphics = std::make_shared<MesaWindow>(window, 1920, 1080);
@@ -122,7 +181,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             done.store(true, std::memory_order_release);
         };
         try {
-            RunGame(*graphics, path, closed, gamepad);
+            RunGame(*graphics, path, closed, gamepad, lifecycle);
         } catch (const winrt::hresult_error& error) {
             Diagnostic("GAME_FAIL " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {
