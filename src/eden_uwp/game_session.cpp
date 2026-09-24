@@ -16,6 +16,7 @@
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/cpu_manager.h"
+#include "core/perf_stats.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/hle/kernel/svc/svc_debug_string.h"
