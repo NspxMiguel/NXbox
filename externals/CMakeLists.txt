@@ -199,6 +199,16 @@ else()
             $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-error=unused-command-line-argument>
         )
     endif()
+    # sirit hardcodes /MP /Zi, which share one PDB and break compiler caches such as sccache.
+    if (MSVC AND CMAKE_CXX_COMPILER_LAUNCHER AND TARGET siritobj)
+        get_target_property(_sirit_options siritobj COMPILE_OPTIONS)
+        if (_sirit_options)
+            list(TRANSFORM _sirit_options REPLACE "(^| )/(MP|Zi)( |$)" " ")
+            list(TRANSFORM _sirit_options STRIP)
+            list(FILTER _sirit_options EXCLUDE REGEX "^$")
+            set_target_properties(siritobj PROPERTIES COMPILE_OPTIONS "${_sirit_options}")
+        endif()
+    endif()
 endif()
 
 # Catch2
