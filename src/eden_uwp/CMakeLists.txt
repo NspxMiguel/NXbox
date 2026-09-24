@@ -40,7 +40,7 @@ if (MSVC)
     target_link_options(eden-uwp PRIVATE /APPCONTAINER)
     # Mesa's D3D12 shader compilation runs on Eden's GPU thread during present and needs more than
     # the 1 MiB default; every thread without an explicit size inherits this reservation.
-    target_link_options(eden-uwp PRIVATE /STACK:67108864)
+    target_link_options(eden-uwp PRIVATE /STACK:16777216)
     # CRT bridge for the two bundled prebuilt deps that are /MT and have NO from-source path on Windows:
     # ffmpeg (Eden disables YUZU_USE_EXTERNAL_FFMPEG on WIN32) and SDL3. They inject /DEFAULTLIB:LIBCMT,
     # which the /MD Store-CRT app can't satisfy; ignoring it forces their CRT symbols onto the app's
