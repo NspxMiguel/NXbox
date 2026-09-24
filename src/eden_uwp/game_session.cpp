@@ -10,6 +10,7 @@
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.System.h>
 
+#include <fmt/format.h>
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -125,10 +126,15 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
         if (elapsed >= 5.0) {
             const auto frames = window.FrameCount();
-            Diagnostic("GAME_PRESENT frames=" + std::to_string(frames - measured_frames) +
-                       " seconds=" + std::to_string(elapsed) +
-                       " fps=" + std::to_string((frames - measured_frames) / elapsed) + " memory=" +
-                       std::to_string(winrt::Windows::System::MemoryManager::AppMemoryUsage()));
+            const auto stats = system.GetAndResetPerfStats();
+            Diagnostic(fmt::format("GAME_PRESENT frames={} seconds={:.3f} fps={:.2f} "
+                                   "game_fps={:.2f} system_fps={:.2f} "
+                                   "frametime_ms={:.2f} speed={:.1f}% memory={}",
+                                   frames - measured_frames, elapsed,
+                                   (frames - measured_frames) / elapsed, stats.average_game_fps,
+                                   stats.system_fps, stats.frametime * 1000.0,
+                                   stats.emulation_speed * 100.0,
+                                   winrt::Windows::System::MemoryManager::AppMemoryUsage()));
             measured_at = now;
             measured_frames = frames;
         }
