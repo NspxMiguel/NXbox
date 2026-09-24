@@ -23,7 +23,8 @@
 
 namespace EdenXbox {
 namespace {
-void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool>& closed) {
+void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool>& closed,
+             const std::shared_ptr<XboxGamepad>& gamepad) {
     Diagnostic("GAME_BEGIN");
     Common::Log::Initialize();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
@@ -31,7 +32,6 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     Settings::values.cpuopt_fastmem = false;
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;
-    auto gamepad = std::make_shared<XboxGamepad>();
     XboxGamepad::Configure(gamepad);
     SCOPE_EXIT {
         Common::Input::UnregisterInputFactory("nxbox");
@@ -96,8 +96,20 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
     std::atomic<bool> closed{false};
     std::atomic<bool> done{false};
     const auto close_token = window.Closed([&](const auto&, const auto&) { closed.store(true); });
+    auto gamepad = std::make_shared<XboxGamepad>();
+    // Handled so the system does not treat B or Menu as navigation while a game runs.
+    const auto key_down_token = window.KeyDown([gamepad](const auto&, const KeyEventArgs& args) {
+        if (gamepad->OnKey(args.VirtualKey(), true))
+            args.Handled(true);
+    });
+    const auto key_up_token = window.KeyUp([gamepad](const auto&, const KeyEventArgs& args) {
+        if (gamepad->OnKey(args.VirtualKey(), false))
+            args.Handled(true);
+    });
     SCOPE_EXIT {
         window.Closed(close_token);
+        window.KeyDown(key_down_token);
+        window.KeyUp(key_up_token);
     };
     // The driver targets the current HDMI surface. Layout remains 16:9 until resize handling lands.
     auto graphics = std::make_shared<MesaWindow>(window, 1920, 1080);
@@ -110,7 +122,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             done.store(true, std::memory_order_release);
         };
         try {
-            RunGame(*graphics, path, closed);
+            RunGame(*graphics, path, closed, gamepad);
         } catch (const winrt::hresult_error& error) {
             Diagnostic("GAME_FAIL " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {
