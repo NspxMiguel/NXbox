@@ -387,6 +387,10 @@ endif()
 
 if (ENABLE_OPENGL)
     target_compile_definitions(video_core PUBLIC HAS_OPENGL)
+    # Xbox renders OpenGL through Mesa's D3D12 backend, which has no multisampled storage images.
+    if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+        target_compile_definitions(video_core PRIVATE NXBOX_NO_MSAA_STORAGE_IMAGES)
+    endif()
 endif()
 
 if (ARCHITECTURE_x86_64)

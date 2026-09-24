@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <mutex>
 #include <span>
 #include <string_view>
 
@@ -54,9 +55,11 @@ UtilShaders::UtilShaders(ProgramManager& program_manager_)
       block_linear_unswizzle_3d_program(MakeProgram(BLOCK_LINEAR_UNSWIZZLE_3D_COMP)),
       pitch_unswizzle_program(MakeProgram(PITCH_UNSWIZZLE_COMP)),
       copy_bc4_program(MakeProgram(OPENGL_COPY_BC4_COMP)),
-      convert_s8d24_program(MakeProgram(OPENGL_CONVERT_S8D24_COMP)),
-      convert_ms_to_nonms_program(MakeProgram(CONVERT_MSAA_TO_NON_MSAA_COMP)),
-      convert_nonms_to_ms_program(MakeProgram(CONVERT_NON_MSAA_TO_MSAA_COMP)) {
+      convert_s8d24_program(MakeProgram(OPENGL_CONVERT_S8D24_COMP)) {
+#ifndef NXBOX_NO_MSAA_STORAGE_IMAGES
+    convert_ms_to_nonms_program = MakeProgram(CONVERT_MSAA_TO_NON_MSAA_COMP);
+    convert_nonms_to_ms_program = MakeProgram(CONVERT_NON_MSAA_TO_MSAA_COMP);
+#endif
     const auto swizzle_table = Tegra::Texture::MakeSwizzleTable();
     swizzle_table_buffer.Create();
     glNamedBufferStorage(swizzle_table_buffer.handle, sizeof(swizzle_table), &swizzle_table, 0);
@@ -277,6 +280,17 @@ void UtilShaders::ConvertS8D24(Image& dst_image, std::span<const ImageCopy> copi
 
 void UtilShaders::CopyMSAA(Image& dst_image, Image& src_image,
                            std::span<const VideoCommon::ImageCopy> copies) {
+#ifdef NXBOX_NO_MSAA_STORAGE_IMAGES
+    // D3D12 has no multisampled UAVs, and Mesa's D3D12 backend aborts while linking these
+    // programs instead of reporting a link error.
+    static std::once_flag warned;
+    std::call_once(warned, [] {
+        LOG_WARNING(Render_OpenGL, "MSAA image conversion is unavailable on this driver; skipped");
+    });
+    (void)dst_image;
+    (void)src_image;
+    (void)copies;
+#else
     const bool is_ms_to_non_ms = src_image.info.num_samples > 1 && dst_image.info.num_samples == 1;
     const auto program_handle =
         is_ms_to_non_ms ? convert_ms_to_nonms_program.handle : convert_nonms_to_ms_program.handle;
@@ -300,6 +314,7 @@ void UtilShaders::CopyMSAA(Image& dst_image, Image& src_image,
         glDispatchCompute(num_dispatches_x, num_dispatches_y, num_dispatches_z);
     }
     program_manager.RestoreGuestCompute();
+#endif
 }
 
 GLenum StoreFormat(u32 bytes_per_block) {
