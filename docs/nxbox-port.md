@@ -40,10 +40,12 @@ has been demonstrated yet.** The gameplay frontend is undergoing its first Windo
 - With that change the game package loads the homebrew and reaches `GAME_RUNNING` without crashing.
   The guest then panicked because `IpcController` 3, `set:sys` 3 and `IWindowController` 1 were
   reported as unknown. A lookup-miss diagnostic showed tables with pointer halves as command ids
-  (for example, `set:sys` contained 1803350624). MSVC chose the member-pointer representation of the
-  incomplete `ServiceFrameworkBase` differently per translation unit, so `RegisterHandlersBase` read
-  each table with the wrong stride. `service.h` now pins the class to `__multiple_inheritance`, the
-  model MSVC requires. The representation is then the same in every translation unit.
+  (for example, `set:sys` contained 1803350624). Only entries with a null handler kept their command
+  id: `IWindowController` registered only id 0. MSVC constant-initialized the static `FunctionInfo`
+  tables through the `constexpr FunctionInfoTyped` constructor and wrote the converted member
+  pointers incorrectly. Pinning `ServiceFrameworkBase` to `__multiple_inheritance` changed nothing,
+  so it was reverted. Removing `constexpr` makes the tables initialize at run time. Local package
+  `0.1.16.2` then reached `NXBOX_PADDLE_READY` on the Xbox with no lookup misses.
 - A black screen in the other agent's app coincided with NXbox running. Two apps in the foreground
   on one console suspend each other. Test one app at a time.
 - Using sccache with embedded debug info reduced a full CI rebuild from about 60 to 18 minutes.
