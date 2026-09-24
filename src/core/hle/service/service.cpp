@@ -67,6 +67,21 @@ void ServiceFrameworkBase::ReportUnimplementedFunction(HLERequestContext& ctx,
         fmt::format_to(std::back_inserter(buf), ", [{}]={:#X}", i, cmd_buf[i]);
     buf.push_back('}');
 
+    if (info == nullptr) {
+        const u32 command = ctx.GetCommand();
+        bool linear_match = false;
+        std::string keys;
+        for (const auto& [key, value] : handlers) {
+            linear_match = linear_match || key == command || value.expected_header == command;
+            fmt::format_to(std::back_inserter(keys), "{}:{} ", key, value.expected_header);
+        }
+        LOG_CRITICAL(Service,
+                     "handler lookup miss: port={} command={} size={} buckets={} hash={:#x} "
+                     "linear_match={} keys=[{}]",
+                     service_name, command, handlers.size(), handlers.bucket_count(),
+                     handlers.hash_function()(command), linear_match, keys);
+    }
+
     system.GetReporter().SaveUnimplementedFunctionReport(ctx, ctx.GetCommand(), function_name, service_name);
     UNIMPLEMENTED_MSG("Unknown / unimplemented {}", fmt::to_string(buf));
     if (Settings::values.use_auto_stub) {

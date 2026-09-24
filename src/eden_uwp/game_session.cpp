@@ -35,6 +35,7 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     XboxGamepad::Configure(gamepad);
     SCOPE_EXIT {
         Common::Input::UnregisterInputFactory("nxbox");
+        Common::Input::UnregisterOutputFactory("nxbox");
     };
     std::atomic<bool> guest_exited{false};
     Core::System system{};

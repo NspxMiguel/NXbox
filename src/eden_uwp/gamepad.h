@@ -25,6 +25,8 @@ public:
     static void Configure(const std::shared_ptr<XboxGamepad>& engine) {
         Common::Input::RegisterInputFactory("nxbox",
                                             std::make_shared<InputCommon::InputFactory>(engine));
+        Common::Input::RegisterOutputFactory("nxbox",
+                                             std::make_shared<InputCommon::OutputFactory>(engine));
         auto& player = Settings::values.players.GetValue()[0];
         player.connected = true;
         player.controller_type = Settings::ControllerType::ProController;
