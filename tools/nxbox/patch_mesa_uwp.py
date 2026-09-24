@@ -22,6 +22,23 @@ def patch(root: Path) -> None:
         source = source.replace(old, new)
     path.write_text(source)
 
+    present_path = root / "src/gallium/winsys/d3d12/wgl/d3d12_wgl_framebuffer_uwp.cpp"
+    present_source = present_path.read_text()
+    present_old = (
+        "   if (interval < 1)\n"
+        "      return S_OK == framebuffer->swapchain->Present(0, DXGI_PRESENT_ALLOW_TEARING);\n"
+        "   else\n"
+        "      return S_OK == framebuffer->swapchain->Present(interval, 0);"
+    )
+    present_new = (
+        "   // The Xbox compositor is a fixed-refresh sink; DXGI_PRESENT_ALLOW_TEARING is untested\n"
+        "   // there and is not needed on a console. Always present with vsync.\n"
+        "   return S_OK == framebuffer->swapchain->Present(interval < 1 ? 1 : interval, 0);"
+    )
+    if present_old not in present_source:
+        raise RuntimeError("Pinned Mesa source does not match the present patch")
+    present_path.write_text(present_source.replace(present_old, present_new))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
