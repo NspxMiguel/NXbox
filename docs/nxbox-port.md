@@ -57,19 +57,41 @@ has been demonstrated yet.** The gameplay frontend is undergoing its first Windo
   service call. The gamepad poll loop runs immediately on the host thread and raced ahead of that,
   so the controller stayed at its construction default (`NpadStyleIndex::None`). Calling
   `ReloadInputDevices()` once before the poll loop fixed it.
-- With both of those fixed, the local package (`0.1.16.7`, built and packaged on the Windows PC in
-  under 30 seconds total) still exits with no process and no `GAME_PRESENT` line. A second crash
-  dump shows the same signature one level deeper: `0xC00000FD` again, now at a return address inside
-  `umd12ddi_arden.dll` (the Xbox D3D12 kernel driver), in a ~15,390-times-repeated 8-frame cycle
-  through `libgallium_wgl.dll` → `umd12ddi_arden.dll` → `D3D12Core.dll` → `libgallium_wgl.dll`, even
-  with the 16 MiB stack. The release Mesa build ships no PDB, so these addresses cannot be
-  attributed to a function; `tools/nxbox/build-mesa.cmd` now adds `-Ddebug=true` (keeps
-  `buildtype=release` optimization, adds symbols) and a debug Mesa build is running to symbolize
-  this properly instead of guessing at Mesa/driver internals from export-table proximity. One
-  candidate already read in the patched source: `d3d12_wgl_framebuffer_present`
+- With both of those fixed, the local build pipeline (build+package+deploy in under a minute on the
+  Windows PC) let this be reproduced many times. The game now reliably reaches `NXBOX_PADDLE_READY`,
+  connects the emulated controller, and **presents real frames** — every successful run measured
+  exactly 12 presented frames (`GAME_PRESENT frames=12`), over a varying wall-clock window (5.5 to
+  10.7 seconds across runs), before crashing. That fixed frame count, constant across very different
+  elapsed times, rules out a time-based or purely-recursive-until-stack-exhaustion explanation: it
+  is bounded by something that accumulates once per frame and hits a limit at 12.
+- The crash itself: `0xC00000FD` (stack overflow) at the same return address inside
+  `umd12ddi_arden.dll` (the Xbox kernel-mode D3D12 driver's user-mode component) in every
+  reproduction, in a deep repeating cycle through `libgallium_wgl.dll` → `umd12ddi_arden.dll` →
+  `D3D12Core.dll` → `libgallium_wgl.dll`. Raising the executable's default thread stack from 1 MiB
+  to 16 MiB, then to 64 MiB, made **no difference to the crash address or the 12-frame count** —
+  only to whether the crash could occur on the very first present (1 MiB) or only after 12 real
+  frames (16/64 MiB). This is conclusive: it is not primarily a stack-size problem, and no further
+  `/STACK` increase should be tried without new evidence. The `GAME_SUSPENDED` diagnostic logged
+  just before each crash is very likely an artifact of Windows Error Reporting intercepting the
+  exception (`Faultrep.dll` appears on the same crashing stack), not a real foreground app switch —
+  three separate reproductions crashed the same way with no other app on the console.
+- Getting a symbolized stack for this failed after real effort and should not be re-attempted the
+  same way: the release Mesa build ships no PDB; the pinned UWP `aerisarn/meson` fork links the
+  debug CRT (`ucrtbased.dll`, `VCRUNTIME140D_APP.dll`) into any build with `debug=true` regardless
+  of `buildtype` or an explicit `-Db_vscrt=md`, including `buildtype=debugoptimized` — three
+  separate CI builds all produced a Mesa DLL that fails `LoadPackagedLibrary` on the Xbox devkit
+  (`ERROR_MOD_NOT_FOUND`, 126) before it can even be tested; and the minidump's module record for
+  `umd12ddi_arden.dll` has no CodeView entry (`cv_size=0`), so its PDB signature cannot be recovered
+  from the dump to query Microsoft's public symbol server either. `tools/nxbox/build-mesa.cmd` is
+  back to the known-working release config. Symbolizing this driver-internal crash needs either a
+  genuine Windows debugging session (WinDbg with the Xbox devkit's own symbol path) or Microsoft's
+  own tools, neither available here.
+- One unverified, cheap-to-test candidate for a future session: `d3d12_wgl_framebuffer_present`
   (`d3d12_wgl_framebuffer_uwp.cpp`) unconditionally sets `DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING` and
-  calls `Present(0, DXGI_PRESENT_ALLOW_TEARING)` whenever `interval < 1`; this is unverified without
-  symbols and should not be treated as the cause until the debug build confirms it.
+  calls `Present(0, DXGI_PRESENT_ALLOW_TEARING)` whenever `interval < 1`; Xbox's compositor has a
+  fixed refresh rate and may not support tearing presents at all. Patching that one call to always
+  use `Present(1, 0)` on Xbox (a small, local Mesa source patch through `patch_mesa_uwp.py`, not a
+  build configuration change) is a five-minute test that does not require a debug Mesa build.
 - A black screen in the other agent's app coincided with NXbox running. Two apps in the foreground
   on one console suspend each other. Test one app at a time.
 - Using sccache with embedded debug info reduced a full CI rebuild from about 60 to 18 minutes.
