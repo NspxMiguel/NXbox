@@ -40,6 +40,13 @@ static_assert(ServerSessionCountMax == 0x40,
               "ServerSessionCountMax isn't 0x40 somehow, this assert is a reminder that this will "
               "break lots of things");
 
+#ifdef _MSC_VER
+// FunctionInfoBase stores a HandlerFnP<ServiceFrameworkBase> while the class is still incomplete.
+// MSVC then picks the member-pointer size per translation unit, so the handler tables registered
+// by each service were read with a different stride. Fix one representation for every TU.
+class __virtual_inheritance ServiceFrameworkBase;
+#endif
+
 /**
  * This is an non-templated base of ServiceFramework to reduce code bloat and compilation times, it
  * is not meant to be used directly.
