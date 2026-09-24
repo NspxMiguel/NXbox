@@ -15,6 +15,37 @@
 #include "input_common/input_poller.h"
 
 namespace EdenXbox {
+// Engines the desktop frontends provide (keyboard, TAS, cameras...). The Xbox frontend has none of
+// them; registering explicit null devices keeps behavior the same without logging an error for
+// every device created.
+template <typename Device>
+class NullFactory final : public Common::Input::Factory<Device> {
+public:
+    std::unique_ptr<Device> Create(const Common::ParamPackage&) override {
+        return std::make_unique<Device>();
+    }
+};
+
+inline constexpr std::array UnsupportedEngines{"keyboard", "mouse",           "touch",
+                                               "tas",      "virtual_gamepad", "virtual_amiibo",
+                                               "camera",   "joycon",          "cemuhookudp"};
+
+inline void RegisterUnsupportedEngines() {
+    for (const auto* name : UnsupportedEngines) {
+        Common::Input::RegisterInputFactory(
+            name, std::make_shared<NullFactory<Common::Input::InputDevice>>());
+        Common::Input::RegisterOutputFactory(
+            name, std::make_shared<NullFactory<Common::Input::OutputDevice>>());
+    }
+}
+
+inline void UnregisterUnsupportedEngines() {
+    for (const auto* name : UnsupportedEngines) {
+        Common::Input::UnregisterInputFactory(name);
+        Common::Input::UnregisterOutputFactory(name);
+    }
+}
+
 class XboxGamepad final : public InputCommon::InputEngine {
 public:
     XboxGamepad() : InputEngine("nxbox") {

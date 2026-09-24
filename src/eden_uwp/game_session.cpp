@@ -54,9 +54,11 @@ void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;
     XboxGamepad::Configure(gamepad);
+    RegisterUnsupportedEngines();
     SCOPE_EXIT {
         Common::Input::UnregisterInputFactory("nxbox");
         Common::Input::UnregisterOutputFactory("nxbox");
+        UnregisterUnsupportedEngines();
     };
     std::atomic<bool> guest_exited{false};
     Core::System system{};
