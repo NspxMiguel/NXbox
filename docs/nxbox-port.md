@@ -221,3 +221,25 @@ worker-context issue are listed above.
 `homebrew/paddle-test` supplies an original interactive NRO for subsequent guest rendering and
 controller tests without keys. Its source compiles with devkitA64; it has not yet been played
 through NXbox.
+
+## Booting a game from LocalState (2026-09-25)
+
+`RunGame` now resolves what to boot from the app's `LocalState`:
+
+- `game.txt` holds the path of the file to boot, relative to `LocalState` (for example
+  `games\p5r.nsp`). Without it the bundled homebrew boots, as before.
+- `game.url`, when present, makes the app download that URL to the `game.txt` path first, with a
+  resumable HTTP `Range` download (`src/eden_uwp/game_download.cpp`) that logs `DOWNLOAD ...`
+  progress. The manifest gained the `internetClient` and `privateNetworkClientServer` capabilities
+  for it.
+- Keys go in `LocalState\eden\keys` (`prod.keys`, `title.keys`).
+
+A commercial dump in `.nsz` must be converted to `.nsp` first (`nsz -D`); Eden does not read `.nsz`.
+The file can be served from a LAN machine with any HTTP server that honors `Range`.
+
+## Symbolizing the Mesa D3D12 crash
+
+`tools/nxbox/build-mesa.cmd` keeps `buildtype=release` and passes `/Zi`, `/FS` and `/DEBUG:FULL`
+explicitly. That produces a `libgallium_wgl.pdb` that matches the release DLL and keeps the release
+CRT, unlike `debug=true` or `buildtype=debugoptimized`, which link the debug CRT into the UWP
+target.
