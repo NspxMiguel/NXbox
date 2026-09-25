@@ -78,6 +78,21 @@ def patch(root: Path) -> None:
         raise RuntimeError("Pinned Mesa d3d12_query.cpp does not match the reentrancy patch")
     query.write_text(query_source.replace(begin_old, begin_new))
 
+    # fence_finish() dereferences the fence unconditionally, but the GL frontend reaches it with a
+    # null handle when a flush had nothing to submit (access violation at d3d12_fence.cpp:113,
+    # reading offset 0x28 of null). A null fence means there is no outstanding work: complete.
+    fence = query_dir / "d3d12_fence.cpp"
+    fence_source = fence.read_text()
+    fence_old = "   bool ret = d3d12_fence_finish(d3d12_fence(pfence), timeout_ns);\n"
+    fence_new = (
+        "   if (!pfence)\n"
+        "      return true;\n"
+        "   bool ret = d3d12_fence_finish(d3d12_fence(pfence), timeout_ns);\n"
+    )
+    if fence_old not in fence_source:
+        raise RuntimeError("Pinned Mesa d3d12_fence.cpp does not match the null-fence patch")
+    fence.write_text(fence_source.replace(fence_old, fence_new))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
