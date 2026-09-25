@@ -84,6 +84,23 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
     const std::string path = ResolveGamePath(bundled_path);
+    {
+        // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a
+        // run.
+        std::ifstream in(
+            std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+            "log_filter.txt");
+        std::string filter;
+        if (std::getline(in, filter)) {
+            while (!filter.empty() && (filter.back() == '\r' || filter.back() == ' ')) {
+                filter.pop_back();
+            }
+            if (!filter.empty()) {
+                Settings::values.log_filter.SetValue(filter);
+            }
+        }
+    }
     Common::Log::Initialize();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
     Settings::values.sink_id = Settings::AudioEngine::Null;
