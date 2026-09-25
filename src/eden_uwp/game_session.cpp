@@ -92,12 +92,18 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
             "log_filter.txt");
         std::string filter;
+        std::string flush;
         if (std::getline(in, filter)) {
             while (!filter.empty() && (filter.back() == '\r' || filter.back() == ' ')) {
                 filter.pop_back();
             }
             if (!filter.empty()) {
                 Settings::values.log_filter.SetValue(filter);
+            }
+            // A second line "flush" writes every log line through immediately, so a hung guest
+            // still leaves its last activity in the file.
+            if (std::getline(in, flush) && flush.rfind("flush", 0) == 0) {
+                Settings::values.log_flush_line.SetValue(true);
             }
         }
     }
