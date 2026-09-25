@@ -7,7 +7,7 @@ if errorlevel 1 exit /b 1
 set "NXBOX_ROOT=%CD%"
 set "PATH=C:\ProgramData\chocolatey\bin;C:\ProgramData\chocolatey\lib\winflexbison3\tools;%PATH%"
 cd .cache\mesa
-python ..\meson\meson.py setup build-nxbox --backend=vs2022 --uwp --buildtype=release --prefix="%NXBOX_ROOT%\mesa-install" -Dcpp_std=vc++17 -Dcpp_args="['/D_XBOX_UWP','/Zi']" -Dc_args="['/D_XBOX_UWP','/Zi']" -Dc_link_args="['/DEBUG:FULL','/OPT:REF','/OPT:ICF']" -Dcpp_link_args="['/DEBUG:FULL','/OPT:REF','/OPT:ICF']" -Db_pch=false -Dc_winlibs=WindowsApp.lib -Dcpp_winlibs=WindowsApp.lib -Dgallium-drivers=d3d12 -Dvulkan-drivers=[] -Dllvm=disabled -Ddraw-use-llvm=false -Dgallium-d3d12-video=disabled -Degl=disabled -Dgles1=disabled -Dgles2=disabled -Dbuild-tests=false
+python ..\meson\meson.py setup build-nxbox --backend=vs2022 --uwp --buildtype=release --prefix="%NXBOX_ROOT%\mesa-install" -Dcpp_std=vc++17 -Dcpp_args="['/D_XBOX_UWP','/Zi','/FS']" -Dc_args="['/D_XBOX_UWP','/Zi','/FS']" -Dc_link_args="['/DEBUG:FULL','/OPT:REF','/OPT:ICF']" -Dcpp_link_args="['/DEBUG:FULL','/OPT:REF','/OPT:ICF']" -Db_pch=false -Dc_winlibs=WindowsApp.lib -Dcpp_winlibs=WindowsApp.lib -Dgallium-drivers=d3d12 -Dvulkan-drivers=[] -Dllvm=disabled -Ddraw-use-llvm=false -Dgallium-d3d12-video=disabled -Degl=disabled -Dgles1=disabled -Dgles2=disabled -Dbuild-tests=false
 if errorlevel 1 exit /b 1
 python ..\meson\meson.py compile -C build-nxbox -j 3
 if errorlevel 1 exit /b 1
