@@ -265,3 +265,32 @@ per frame; the heap fills at frame 12. `patch_mesa_uwp.py` now guards the subque
 `accumulating` flag. The earlier statements above that the crash is "inside the Xbox D3D12 driver"
 and needs WinDbg were wrong: the driver frames on the stack are just callees of this cycle.
 Validation on the console is pending.
+
+## Homebrew validated on the console (2026-09-25)
+
+Package `0.1.32.19` (Mesa with the query-recursion and null-fence patches), Xbox OS `26100.9608`:
+
+- The bundled Paddle ran for two minutes with 24 `GAME_PRESENT` samples: 44.8 to 52.7 FPS and a
+  final sample of 59.56 FPS (298 frames in 5 s), memory flat at 1.06 GB, no crash.
+- A remote A press produced `NXBOX_PADDLE_INPUT_A` in the guest and the score moved `0:0` to `0:1`.
+- Plus produced `GAME_STOPPED` and the process exited.
+- The second Mesa crash after the recursion fix was an access violation in `d3d12_fence_finish`
+  (`d3d12_fence.cpp:113`, read of offset 0x28 of a null fence, called from `fence_finish`). The
+  patch treats a null fence as complete.
+- Limits: the Device Portal screenshot returns a black frame, so there is no visual capture of the
+  Paddle; the evidence is the guest markers and frame counters.
+
+## Commercial game boot (2026-09-25)
+
+A user-owned Persona 5 Royal dump (`.nsz` converted to `.nsp`, all NCAs hash-verified) was
+downloaded to `LocalState\games` over the LAN at about 110 MiB/s (14.2 GB in about 2 minutes). Eden
+recognized title `01005CA01580E000`, patched the ExeFS and applied game settings, so the keys work.
+The guest then stops calling services about 4.6 s after start (last call: applet `ReceiveMessage`,
+message 1), never presents a frame (`frames=0`) and the host CPU stays low; the process stays alive.
+Cause not found yet. Next steps: `log_filter.txt` with `*:Trace` and the `flush` line, and find what
+the guest waits for after `GetEventHandle`/`ReceiveMessage`.
+
+Operational notes: an Xbox system update wipes Device Portal credentials and can remove sideloaded
+apps; `game.txt` set to `none` (or empty) boots the bundled homebrew; installing a new package
+without uninstalling keeps `LocalState` (and the downloaded game), but an uninstall wipes it. The
+app's storage filled once when a stray download was written next to the 14.5 GB game.
