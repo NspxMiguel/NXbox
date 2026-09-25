@@ -13,6 +13,8 @@ add_executable(eden-uwp WIN32
     mesa_window.h
     game_session.cpp
     game_session.h
+    game_download.cpp
+    game_download.h
     gamepad.h
     diagnostic.h
 )

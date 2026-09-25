@@ -25,6 +25,8 @@
     </Application>
   </Applications>
   <Capabilities>
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
     <rescap:Capability Name="codeGeneration" />
   </Capabilities>
 </Package>

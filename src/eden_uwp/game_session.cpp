@@ -3,6 +3,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -16,13 +18,14 @@
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/cpu_manager.h"
-#include "core/perf_stats.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/hle/kernel/svc/svc_debug_string.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
+#include "core/perf_stats.h"
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/game_download.h"
 #include "eden_uwp/gamepad.h"
 #include "eden_uwp/mesa_window.h"
 #include "video_core/gpu.h"
@@ -46,9 +49,41 @@ struct Lifecycle {
     }
 };
 
-void RunGame(MesaWindow& window, const std::string& path, const std::atomic<bool>& closed,
+// LocalState\game.txt names the file to boot, relative to LocalState (for example
+// "games\\p5r.nsp"). If LocalState\game.url also exists, that URL is downloaded to that file first
+// (resuming a partial download). Without game.txt the bundled homebrew boots.
+std::string ResolveGamePath(const std::string& bundled) {
+    namespace fs = std::filesystem;
+    const fs::path local(
+        winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+    const auto read_line = [](const fs::path& file) {
+        std::string line;
+        std::ifstream in(file);
+        std::getline(in, line);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        return line;
+    };
+    if (!fs::exists(local / "game.txt")) {
+        return bundled;
+    }
+    const fs::path target = local / read_line(local / "game.txt");
+    if (fs::exists(local / "game.url") && !DownloadFile(read_line(local / "game.url"), target)) {
+        return bundled;
+    }
+    if (!fs::exists(target)) {
+        Diagnostic("GAME_MISSING " + target.string());
+        return bundled;
+    }
+    Diagnostic("GAME_TARGET " + target.string());
+    return target.string();
+}
+
+void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
+    const std::string path = ResolveGamePath(bundled_path);
     Common::Log::Initialize();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
     Settings::values.sink_id = Settings::AudioEngine::Null;
