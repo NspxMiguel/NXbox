@@ -68,8 +68,14 @@ std::string ResolveGamePath(const std::string& bundled) {
     if (!fs::exists(local / "game.txt")) {
         return bundled;
     }
-    const fs::path target = local / read_line(local / "game.txt");
-    if (fs::exists(local / "game.url") && !DownloadFile(read_line(local / "game.url"), target)) {
+    const std::string selected = read_line(local / "game.txt");
+    if (selected.empty() || selected == "none") {
+        return bundled;
+    }
+    const fs::path target = local / selected;
+    const std::string url =
+        fs::exists(local / "game.url") ? read_line(local / "game.url") : std::string{};
+    if (!url.empty() && !DownloadFile(url, target)) {
         return bundled;
     }
     if (!fs::exists(target)) {
