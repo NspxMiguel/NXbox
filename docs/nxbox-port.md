@@ -243,3 +243,25 @@ The file can be served from a LAN machine with any HTTP server that honors `Rang
 explicitly. That produces a `libgallium_wgl.pdb` that matches the release DLL and keeps the release
 CRT, unlike `debug=true` or `buildtype=debugoptimized`, which link the debug CRT into the UWP
 target.
+
+## Root cause of the 12-frame crash (2026-09-25)
+
+The `0xC00000FD` that ended every run after 12 presented frames is **not inside Microsoft's driver**
+and not a stack-size problem: it is unbounded recursion in Mesa's d3d12 query code. Symbolizing the
+crashing thread's stack with a PDB built from the same release flags (`crash-report.py`, ~15,400
+repeats of one cycle) gives:
+
+    begin_subquery (d3d12_query.cpp:458)
+      -> accumulate_subresult_gpu (:398)
+        -> d3d12_restore_compute_transform_state
+          -> d3d12_set_active_query_state
+            -> d3d12_resume_queries (:646)
+              -> begin_query -> begin_subquery   (same subquery again)
+
+`begin_subquery` accumulates the query heap when `curr_query == num_queries`. Accumulation saves and
+restores compute state, which suspends and resumes every active query, so `begin_subquery` is
+re-entered for the same subquery while `curr_query` still equals `num_queries`. Eden begins a query
+per frame; the heap fills at frame 12. `patch_mesa_uwp.py` now guards the subquery with an
+`accumulating` flag. The earlier statements above that the crash is "inside the Xbox D3D12 driver"
+and needs WinDbg were wrong: the driver frames on the stack are just callees of this cycle.
+Validation on the console is pending.
