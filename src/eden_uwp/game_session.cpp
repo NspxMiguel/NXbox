@@ -138,7 +138,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     system.GetFileSystemController().CreateFactories(*system.GetFilesystem());
     system.GetUserChannel().clear();
     Diagnostic("GAME_LOADING");
-    Service::AM::FrontendAppletParameters parameters{};
+    // Same parameters the desktop frontend uses to boot an application. With a zeroed applet id the
+    // applet manager treats the game as a library applet, sends it ChangeIntoForeground instead of
+    // FocusStateChanged, and the guest waits for that message forever.
+    Service::AM::FrontendAppletParameters parameters{
+        .applet_id = Service::AM::AppletId::Application,
+        .applet_type = Service::AM::AppletType::Application,
+    };
     const auto result = system.Load(window, path, parameters);
     if (result != Core::SystemResultStatus::Success) {
         Diagnostic("GAME_LOAD_FAILED status=" + std::to_string(static_cast<int>(result)));
