@@ -113,6 +113,11 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             if (std::getline(in, flush) && flush.rfind("flush", 0) == 0) {
                 Settings::values.log_flush_line.SetValue(true);
             }
+            // A third line "gldebug" turns on the OpenGL debug callback.
+            std::string gl_debug;
+            if (std::getline(in, gl_debug) && gl_debug.rfind("gldebug", 0) == 0) {
+                Settings::values.renderer_debug.SetValue(true);
+            }
         }
     }
     Common::Log::Initialize();
