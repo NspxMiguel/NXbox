@@ -141,13 +141,14 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                                          GL_UNSIGNED_BYTE, 4, px);
                     peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
                 }
-                if (present_draws % 240 == 1 && tex_w > 0 && tex_h > 0) {
-                    // Save the game texture as a PPM so the actual picture can be inspected.
+                static unsigned dumped = 0;
+                if (peak > 100 && dumped < 8 && tex_w > 0 && tex_h > 0) {
+                    // Save frames that have visible content as PPM so the picture can be inspected.
                     std::vector<unsigned char> rgba(static_cast<size_t>(tex_w) * tex_h * 4);
                     glGetTextureImage(textures[i], 0, GL_RGBA, GL_UNSIGNED_BYTE,
                                       static_cast<GLsizei>(rgba.size()), rgba.data());
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
-                                          "present_shot.ppm",
+                                          fmt::format("present_shot_{}.ppm", dumped++),
                                       std::ios::binary);
                     out << "P6\n" << tex_w << ' ' << tex_h << "\n255\n";
                     for (size_t px = 0; px < rgba.size(); px += 4) {
