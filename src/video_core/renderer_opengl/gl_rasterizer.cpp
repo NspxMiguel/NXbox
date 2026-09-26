@@ -276,6 +276,12 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                 GLint fw = 0;
                 GLint fh = 0;
                 const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
+                // Self test: clear the same target to a known color and read it back.
+                const std::array<float, 4> probe{1.0f, 0.5f, 0.25f, 1.0f};
+                glClearBufferfv(GL_COLOR, 0, probe.data());
+                const unsigned probe_peak = SampleDrawFramebuffer(&fw, &fh);
+                glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
+                LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
                              "{}x{} peak={}",
