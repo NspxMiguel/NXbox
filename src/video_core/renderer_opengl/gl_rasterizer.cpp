@@ -332,6 +332,48 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                                  glIsEnabled(GL_RASTERIZER_DISCARD),
                                  glIsEnabled(GL_FRAMEBUFFER_SRGB));
                 }
+                {
+                    GLint fbo = 0;
+                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+                    GLint depth_type = 0;
+                    GLint depth_name = 0;
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                        &depth_type);
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                        &depth_name);
+                    GLint color_type = 0;
+                    GLint color_name = 0;
+                    GLint color_layered = 0;
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
+                        &color_type);
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
+                        &color_name);
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_LAYERED,
+                        &color_layered);
+                    // Attach the same color texture to a brand new framebuffer and clear that.
+                    GLuint temp = 0;
+                    glCreateFramebuffers(1, &temp);
+                    glNamedFramebufferTexture(temp, GL_COLOR_ATTACHMENT0, color_name, 0);
+                    GLint prev_draw = 0;
+                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, temp);
+                    glClearBufferfv(GL_COLOR, 0, probe.data());
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
+                    unsigned char px[4]{};
+                    glGetTextureSubImage(color_name, 0, 100, 100, 0, 1, 1, 1, GL_RGBA,
+                                         GL_UNSIGNED_BYTE, 4, px);
+                    glDeleteFramebuffers(1, &temp);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX clear extra depth type={:#x} name={} color type={:#x} "
+                                 "name={} layered={} temp_fbo_clear_readback={},{},{}",
+                                 depth_type, depth_name, color_type, color_name, color_layered,
+                                 px[0], px[1], px[2]);
+                }
                 LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
