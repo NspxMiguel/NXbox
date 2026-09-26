@@ -96,8 +96,11 @@ void NxboxProbeFreshClear(const char* tag, bool normalize = false) {
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
     unsigned char px[4]{};
     glGetTextureSubImage(fresh, 0, 32, 32, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4, px);
-    LOG_CRITICAL(Render_OpenGL, "NXBOX probe [{}] fresh clear readback={},{},{} (expect 255,128,64)",
-                 tag, px[0], px[1], px[2]);
+    const GLenum reset_status = glGetGraphicsResetStatus ? glGetGraphicsResetStatus() : 0xFFFF;
+    LOG_CRITICAL(Render_OpenGL,
+                 "NXBOX probe [{}] fresh clear readback={},{},{} (expect 255,128,64) "
+                 "reset_status={:#x} (0 = none, 0xffff = unsupported)",
+                 tag, px[0], px[1], px[2], reset_status);
     glDeleteFramebuffers(1, &fbo);
     glDeleteTextures(1, &fresh);
 }
