@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <vector>
+#include <fstream>
 #include <winrt/Windows.Storage.h>
 #include <cstdlib>
 #include <future>
@@ -209,6 +211,22 @@ public:
                     peak = std::max<unsigned>(peak, std::max({pixel[0], pixel[1], pixel[2]}));
                     ++samples;
                     lit += (pixel[0] | pixel[1] | pixel[2]) != 0;
+                }
+            }
+            static unsigned saved = 0;
+            if (lit > 50 && saved < 6) {
+                // Save presented frames with visible content as PPM so the picture can be checked.
+                std::vector<unsigned char> rgba(1920u * 1080u * 4u);
+                glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+                const auto path = std::filesystem::path(winrt::to_string(
+                                      winrt::Windows::Storage::ApplicationData::Current()
+                                          .LocalFolder()
+                                          .Path())) /
+                                  "eden" / "log" / ("backbuffer_" + std::to_string(saved++) + ".ppm");
+                std::ofstream out(path, std::ios::binary);
+                out << "P6\n1920 1080\n255\n";
+                for (size_t px = 0; px < rgba.size(); px += 4) {
+                    out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
                 }
             }
             glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous));
