@@ -287,6 +287,47 @@ void RunRenderSelfTest(const char* where) {
             glDeleteTextures(1, &format_texture);
         }
     }
+    // Eden creates textures with direct state access and renders into texture views.
+    for (const GLenum internal_format : {GL_RGBA8, GL_RGB10_A2}) {
+        for (const int variant : {0, 1, 2}) {
+            GLuint base = 0;
+            glCreateTextures(GL_TEXTURE_2D, 1, &base);
+            glTextureStorage2D(base, 1, internal_format, 256, 256);
+            GLuint attach = base;
+            GLuint view = 0;
+            if (variant >= 1) {
+                glGenTextures(1, &view);
+                glTextureView(view, GL_TEXTURE_2D, base, internal_format, 0, 1, 0, 1);
+                attach = view;
+            }
+            GLuint dsa_fbo = 0;
+            glCreateFramebuffers(1, &dsa_fbo);
+            glNamedFramebufferTexture(dsa_fbo, GL_COLOR_ATTACHMENT0, attach, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, dsa_fbo);
+            if (variant == 2) {
+                const GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
+                glNamedFramebufferDrawBuffers(dsa_fbo, 1, buffers);
+            }
+            const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
+            glClearBufferfv(GL_COLOR, 0, color);
+            unsigned char base_px[4]{};
+            glGetTextureSubImage(base, 0, 128, 128, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4,
+                                 base_px);
+            unsigned char fbo_px[4]{};
+            glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fbo_px);
+            Diagnostic(std::string("SELFTEST dsa ") +
+                       (internal_format == GL_RGBA8 ? "RGBA8" : "RGB10_A2") + " variant=" +
+                       std::to_string(variant) + " texture=" + std::to_string(base_px[0]) + "," +
+                       std::to_string(base_px[1]) + " fbo=" + std::to_string(fbo_px[0]) + "," +
+                       std::to_string(fbo_px[1]) + " error=" + std::to_string(glGetError()));
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDeleteFramebuffers(1, &dsa_fbo);
+            if (view) {
+                glDeleteTextures(1, &view);
+            }
+            glDeleteTextures(1, &base);
+        }
+    }
     const char* vertex_source =
         "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,(gl_VertexID>>1)*2-1);"
         "gl_Position=vec4(p,0.0,1.0);}\n";
