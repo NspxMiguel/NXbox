@@ -157,6 +157,27 @@ public:
         runtime->make_current(nullptr, nullptr);
     }
     void SwapBuffers() override {
+        // Every 120th presentation, sample the back buffer so a black screen can be told apart from
+        // frames that are presented but empty.
+        if (++swaps % 120 == 1) {
+            GLint previous = 0;
+            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            unsigned lit = 0;
+            unsigned samples = 0;
+            for (int y = 0; y < 9; ++y) {
+                for (int x = 0; x < 16; ++x) {
+                    unsigned char pixel[4]{};
+                    glReadPixels(60 + x * 120, 60 + y * 120, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 pixel);
+                    ++samples;
+                    lit += (pixel[0] | pixel[1] | pixel[2]) != 0;
+                }
+            }
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous));
+            Diagnostic("BACKBUFFER swap=" + std::to_string(swaps) + " lit=" + std::to_string(lit) +
+                       "/" + std::to_string(samples));
+        }
         const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
         if (!swap(runtime->dc)) {
             throw std::runtime_error("Mesa presentation failed");
@@ -166,6 +187,7 @@ public:
 private:
     std::shared_ptr<MesaRuntime> runtime;
     HANDLE context;
+    unsigned swaps = 0;
 };
 
 MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
