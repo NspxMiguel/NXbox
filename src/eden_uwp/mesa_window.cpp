@@ -482,6 +482,24 @@ void RunRenderSelfTest(const char* where) {
                std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," +
                std::to_string(pixel[2]) + "," + std::to_string(pixel[3]) +
                " (expect 0,255,0,255) error=" + std::to_string(glGetError()));
+    {
+        // The same quad into the window's own framebuffer, at several viewport sizes.
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        for (const int size : {64, 256, 1280, 1920}) {
+            glViewport(0, 0, size, size * 9 / 16 > 0 ? size * 9 / 16 : 1);
+            GLuint window_query = 0;
+            glGenQueries(1, &window_query);
+            glBeginQuery(GL_SAMPLES_PASSED, window_query);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glEndQuery(GL_SAMPLES_PASSED);
+            GLuint window_samples = 0;
+            glGetQueryObjectuiv(window_query, GL_QUERY_RESULT, &window_samples);
+            Diagnostic("SELFTEST window draw viewport_width=" + std::to_string(size) +
+                       " samples_passed=" + std::to_string(window_samples) + " expected=" +
+                       std::to_string(size * (size * 9 / 16)));
+            glDeleteQueries(1, &window_query);
+        }
+    }
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glDeleteFramebuffers(1, &fbo);
