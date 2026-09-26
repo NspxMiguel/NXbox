@@ -316,6 +316,22 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                                  fbo, glCheckNamedFramebufferStatus(fbo, GL_READ_FRAMEBUFFER), type,
                                  name, format, samples, tw, th, tex_peak);
                 }
+                {
+                    GLboolean mask[4]{};
+                    glGetBooleani_v(GL_COLOR_WRITEMASK, 0, mask);
+                    GLint scissor[4]{};
+                    glGetIntegeri_v(GL_SCISSOR_BOX, 0, scissor);
+                    GLint draw_buffer = 0;
+                    glGetIntegerv(GL_DRAW_BUFFER0, &draw_buffer);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX clear state mask={}{}{}{} scissor_test={} box={},{} {}x{} "
+                                 "draw_buffer0={:#x} discard={} srgb={}",
+                                 mask[0], mask[1], mask[2], mask[3],
+                                 glIsEnabledi(GL_SCISSOR_TEST, 0), scissor[0], scissor[1],
+                                 scissor[2], scissor[3], draw_buffer,
+                                 glIsEnabled(GL_RASTERIZER_DISCARD),
+                                 glIsEnabled(GL_FRAMEBUFFER_SRGB));
+                }
                 LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
