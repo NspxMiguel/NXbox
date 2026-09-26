@@ -179,6 +179,47 @@ public:
             std::filesystem::path(winrt::to_string(
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
             "present_test.txt");
+        static const bool draw_test = std::filesystem::exists(
+            std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+            "present_test_draw.txt");
+        if (draw_test) {
+            // Draw a green full-screen quad with a plain shader over whatever Eden presented, to
+            // check that ordinary draws into the window's framebuffer reach the screen.
+            static GLuint program = 0;
+            if (program == 0) {
+                const char* vertex_source =
+                    "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,"
+                    "(gl_VertexID>>1)*2-1);gl_Position=vec4(p,0.0,1.0);}\n";
+                const char* fragment_source =
+                    "#version 430 core\nlayout(location=0) out vec4 c;void "
+                    "main(){c=vec4(0.0,1.0,0.0,1.0);}\n";
+                const GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+                glShaderSource(vs, 1, &vertex_source, nullptr);
+                glCompileShader(vs);
+                const GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+                glShaderSource(fs, 1, &fragment_source, nullptr);
+                glCompileShader(fs);
+                program = glCreateProgram();
+                glAttachShader(program, vs);
+                glAttachShader(program, fs);
+                glLinkProgram(program);
+            }
+            GLint previous_program = 0;
+            glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
+            glBindProgramPipeline(0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glViewport(0, 0, 1920, 1080);
+            glDisable(GL_SCISSOR_TEST);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_STENCIL_TEST);
+            glDisable(GL_BLEND);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glUseProgram(program);
+            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glUseProgram(static_cast<GLuint>(previous_program));
+        }
         if (present_test) {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDisable(GL_SCISSOR_TEST);
