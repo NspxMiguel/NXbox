@@ -8,6 +8,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <fstream>
+#include <vector>
+#include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/framebuffer_config.h"
@@ -135,6 +138,19 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                                          (tex_h * (2 * (k / 4) + 1)) / 8, 0, 1, 1, 1, GL_RGBA,
                                          GL_UNSIGNED_BYTE, 4, px);
                     peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
+                }
+                if (present_draws % 240 == 1 && tex_w > 0 && tex_h > 0) {
+                    // Save the game texture as a PPM so the actual picture can be inspected.
+                    std::vector<unsigned char> rgba(static_cast<size_t>(tex_w) * tex_h * 4);
+                    glGetTextureImage(textures[i], 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                                      static_cast<GLsizei>(rgba.size()), rgba.data());
+                    std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
+                                          "present_shot.ppm",
+                                      std::ios::binary);
+                    out << "P6\n" << tex_w << ' ' << tex_h << "\n255\n";
+                    for (size_t px = 0; px < rgba.size(); px += 4) {
+                        out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
+                    }
                 }
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX present tex={} {}x{} peak={} verts=({:.0f},{:.0f})-({:.0f},{:.0f}) "
