@@ -182,6 +182,14 @@ public:
             glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
         }
+        // The Xbox compositor treats the swap chain as premultiplied alpha, so a frame whose alpha
+        // channel was left at 0 shows as transparent (black). Force every presented pixel opaque.
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_TRUE);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         if (++swaps % 120 == 1) {
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
