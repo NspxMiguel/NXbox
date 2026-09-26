@@ -8,6 +8,8 @@
 // makes glReadPixels and glGetTextureImage store the pixels somewhere else than the client array.
 struct NxboxPackBufferGuard {
     NxboxPackBufferGuard() {
+        // Wait for all queued GPU work so the readback below sees finished pixels.
+        glFinish();
         glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &buffer);
         glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
         glGetIntegerv(GL_PACK_ROW_LENGTH, &row_length);
