@@ -209,6 +209,23 @@ public:
                     glReadPixels(15 + x * 30, 15 + y * 30, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                                  pixel);
                     peak = std::max<unsigned>(peak, std::max({pixel[0], pixel[1], pixel[2]}));
+                    static unsigned reported = 0;
+                    if ((pixel[0] | pixel[1] | pixel[2]) != 0 && reported < 6) {
+                        ++reported;
+                        const int px_x = 15 + x * 30;
+                        const int px_y = 15 + y * 30;
+                        unsigned char again[4]{};
+                        glReadPixels(px_x, px_y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, again);
+                        std::vector<unsigned char> block(4 * 4 * 4);
+                        glReadPixels(px_x, px_y, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, block.data());
+                        Diagnostic("BACKBUFFER lit sample at " + std::to_string(px_x) + "," +
+                                   std::to_string(px_y) + " value=" + std::to_string(pixel[0]) +
+                                   "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) +
+                                   "," + std::to_string(pixel[3]) + " again=" +
+                                   std::to_string(again[0]) + "," + std::to_string(again[1]) +
+                                   " block00=" + std::to_string(block[0]) + "," +
+                                   std::to_string(block[1]));
+                    }
                     ++samples;
                     lit += (pixel[0] | pixel[1] | pixel[2]) != 0;
                 }
