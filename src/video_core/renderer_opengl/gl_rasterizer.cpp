@@ -264,6 +264,37 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
     has_written_global_memory |= pipeline->WritesGlobalMemory();
 }
 
+#ifdef _WIN32
+namespace {
+// NXBOX diagnostic: largest color value found in a coarse grid of the bound draw framebuffer.
+unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
+    GLint fb = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    GLint prev_read = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    GLint w = 0;
+    GLint h = 0;
+    GLint viewport[4]{};
+    glGetIntegeri_v(GL_VIEWPORT, 0, viewport);
+    w = viewport[2];
+    h = viewport[3];
+    unsigned peak = 0;
+    for (int k = 0; k < 64 && w > 0 && h > 0; ++k) {
+        unsigned char px[4]{};
+        glReadPixels((w * (2 * (k % 8) + 1)) / 16, (h * (2 * (k / 8) + 1)) / 16, 1, 1, GL_RGBA,
+                     GL_UNSIGNED_BYTE, px);
+        peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
+    *out_w = w;
+    *out_h = h;
+    return peak;
+}
+} // namespace
+#endif
+
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
 #ifdef _WIN32
     static unsigned draw_calls = 0;
@@ -312,6 +343,15 @@ void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
             }
         }
     });
+#ifdef _WIN32
+    if (draw_calls % 60 == 1) {
+        GLint fw = 0;
+        GLint fh = 0;
+        const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
+        LOG_CRITICAL(Render_OpenGL, "NXBOX draw target {}x{} peak={} error={:#x}", fw, fh, peak,
+                     glGetError());
+    }
+#endif
 }
 
 void RasterizerOpenGL::DrawIndirect() {
