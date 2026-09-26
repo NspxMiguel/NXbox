@@ -250,6 +250,41 @@ void RunRenderSelfTest() {
     Diagnostic("SELFTEST clear readback=" + std::to_string(pixel[0]) + "," +
                std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," +
                std::to_string(pixel[3]) + " (expect 255,127,63,255)");
+    // Same clear on the render target formats the emulator's games commonly use.
+    for (const auto& [name, internal_format] :
+         std::array<std::pair<const char*, GLenum>, 5>{{{"RGB10_A2", GL_RGB10_A2},
+                                                        {"RGBA16F", GL_RGBA16F},
+                                                        {"SRGB8_A8", GL_SRGB8_ALPHA8},
+                                                        {"R11G11B10F", GL_R11F_G11F_B10F},
+                                                        {"RGBA8", GL_RGBA8}}}) {
+        for (const bool srgb : {false, true}) {
+            GLuint format_texture = 0;
+            glGenTextures(1, &format_texture);
+            glBindTexture(GL_TEXTURE_2D, format_texture);
+            glTexStorage2D(GL_TEXTURE_2D, 1, internal_format, 256, 256);
+            GLuint format_fbo = 0;
+            glGenFramebuffers(1, &format_fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, format_fbo);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
+                                   format_texture, 0);
+            if (srgb) {
+                glEnable(GL_FRAMEBUFFER_SRGB);
+            }
+            const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
+            glClearBufferfv(GL_COLOR, 0, color);
+            unsigned char px[4]{};
+            glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+            Diagnostic(std::string("SELFTEST format ") + name + (srgb ? " srgb" : "     ") +
+                       " status=" + std::to_string(glCheckFramebufferStatus(GL_FRAMEBUFFER)) +
+                       " readback=" + std::to_string(px[0]) + "," + std::to_string(px[1]) + "," +
+                       std::to_string(px[2]) + "," + std::to_string(px[3]) +
+                       " error=" + std::to_string(glGetError()));
+            glDisable(GL_FRAMEBUFFER_SRGB);
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glDeleteFramebuffers(1, &format_fbo);
+            glDeleteTextures(1, &format_texture);
+        }
+    }
     const char* vertex_source =
         "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,(gl_VertexID>>1)*2-1);"
         "gl_Position=vec4(p,0.0,1.0);}\n";
