@@ -66,6 +66,33 @@ unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
     return peak;
 }
 
+} // namespace
+
+// NXBOX diagnostic: clear a fresh texture in the current context and report what reads back.
+void NxboxProbeFreshClear(const char* tag) {
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    GLuint fresh = 0;
+    glCreateTextures(GL_TEXTURE_2D, 1, &fresh);
+    glTextureStorage2D(fresh, 1, GL_RGBA8, 64, 64);
+    GLuint fbo = 0;
+    glCreateFramebuffers(1, &fbo);
+    glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, fresh, 0);
+    GLint prev_draw = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
+    glClearBufferfv(GL_COLOR, 0, color);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
+    unsigned char px[4]{};
+    glGetTextureSubImage(fresh, 0, 32, 32, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4, px);
+    LOG_CRITICAL(Render_OpenGL, "NXBOX probe [{}] fresh clear readback={},{},{} (expect 255,128,64)",
+                 tag, px[0], px[1], px[2]);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &fresh);
+}
+
+namespace {
 // NXBOX diagnostic: save the bound draw framebuffer as a PPM next to the log.
 void DumpDrawFramebuffer(GLint w, GLint h, unsigned index) {
     GLint fb = 0;
@@ -208,6 +235,9 @@ void RasterizerOpenGL::LoadDiskResources(u64 title_id, std::stop_token stop_load
 void RasterizerOpenGL::Clear(u32 layer_count) {
 #ifdef _WIN32
     static unsigned clear_calls = 0;
+    if (clear_calls == 0) {
+        NxboxProbeFreshClear("before first clear");
+    }
     if (++clear_calls % 60 == 1) {
         LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer clears={}", clear_calls);
     }
@@ -494,6 +524,9 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
 #ifdef _WIN32
     static unsigned draw_calls = 0;
+    if (draw_calls == 0) {
+        NxboxProbeFreshClear("before first draw");
+    }
     if (++draw_calls % 60 == 1) {
         LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer draws={} indexed={}", draw_calls,
                      is_indexed);
