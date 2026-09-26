@@ -145,8 +145,9 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                 if (peak > 100 && dumped < 8 && tex_w > 0 && tex_h > 0) {
                     // Save frames that have visible content as PPM so the picture can be inspected.
                     std::vector<unsigned char> rgba(static_cast<size_t>(tex_w) * tex_h * 4);
-                    glGetTextureImage(textures[i], 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                                      static_cast<GLsizei>(rgba.size()), rgba.data());
+                    glGetTextureSubImage(textures[i], 0, 0, 0, 0, tex_w, tex_h, 1, GL_RGBA,
+                                         GL_UNSIGNED_BYTE, static_cast<GLsizei>(rgba.size()),
+                                         rgba.data());
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
                                           fmt::format("present_shot_{}.ppm", dumped++),
                                       std::ios::binary);
