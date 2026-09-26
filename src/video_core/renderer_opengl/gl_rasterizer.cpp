@@ -34,6 +34,36 @@
 #include "video_core/texture_cache/texture_cache_base.h"
 
 namespace OpenGL {
+#ifdef _WIN32
+namespace {
+// NXBOX diagnostic: largest color value found in a coarse grid of the bound draw framebuffer.
+unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
+    GLint fb = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    GLint prev_read = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    GLint w = 0;
+    GLint h = 0;
+    GLint viewport[4]{};
+    glGetIntegeri_v(GL_VIEWPORT, 0, viewport);
+    w = viewport[2];
+    h = viewport[3];
+    unsigned peak = 0;
+    for (int k = 0; k < 64 && w > 0 && h > 0; ++k) {
+        unsigned char px[4]{};
+        glReadPixels((w * (2 * (k % 8) + 1)) / 16, (h * (2 * (k / 8) + 1)) / 16, 1, 1, GL_RGBA,
+                     GL_UNSIGNED_BYTE, px);
+        peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
+    *out_w = w;
+    *out_h = h;
+    return peak;
+}
+} // namespace
+#endif
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 using GLvec4 = std::array<GLfloat, 4>;
@@ -216,6 +246,22 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
 
     if (use_color) {
         glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
+#ifdef _WIN32
+        {
+            static unsigned color_clears = 0;
+            if (++color_clears % 60 == 1) {
+                GLint fw = 0;
+                GLint fh = 0;
+                const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
+                LOG_CRITICAL(Render_OpenGL,
+                             "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
+                             "{}x{} peak={}",
+                             regs.clear_surface.RT.Value(), regs.clear_color[0],
+                             regs.clear_color[1], regs.clear_color[2], regs.clear_color[3], fw, fh,
+                             peak);
+            }
+        }
+#endif
     }
     if (use_depth && use_stencil) {
         glClearBufferfi(GL_DEPTH_STENCIL, 0, regs.clear_depth, regs.clear_stencil);
@@ -279,36 +325,6 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
     has_written_global_memory |= pipeline->WritesGlobalMemory();
 }
 
-#ifdef _WIN32
-namespace {
-// NXBOX diagnostic: largest color value found in a coarse grid of the bound draw framebuffer.
-unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
-    GLint fb = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
-    GLint prev_read = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    GLint w = 0;
-    GLint h = 0;
-    GLint viewport[4]{};
-    glGetIntegeri_v(GL_VIEWPORT, 0, viewport);
-    w = viewport[2];
-    h = viewport[3];
-    unsigned peak = 0;
-    for (int k = 0; k < 64 && w > 0 && h > 0; ++k) {
-        unsigned char px[4]{};
-        glReadPixels((w * (2 * (k % 8) + 1)) / 16, (h * (2 * (k / 8) + 1)) / 16, 1, 1, GL_RGBA,
-                     GL_UNSIGNED_BYTE, px);
-        peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
-    }
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
-    *out_w = w;
-    *out_h = h;
-    return peak;
-}
-} // namespace
-#endif
 
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
 #ifdef _WIN32
