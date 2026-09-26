@@ -226,6 +226,68 @@ private:
     GLuint vertex_array = 0;
 };
 
+namespace {
+// Renders into an offscreen texture with the plain GL calls Eden relies on and reports what reads
+// back, so a broken driver path can be told apart from a broken emulator path.
+void RunRenderSelfTest() {
+    GLuint vao = 0;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+    GLuint texture = 0;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    GLuint fbo = 0;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    Diagnostic("SELFTEST fbo status=" + std::to_string(glCheckFramebufferStatus(GL_FRAMEBUFFER)));
+    glViewport(0, 0, 256, 256);
+    glClearColor(1.0f, 0.5f, 0.25f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    unsigned char pixel[4]{};
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    Diagnostic("SELFTEST clear readback=" + std::to_string(pixel[0]) + "," +
+               std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," +
+               std::to_string(pixel[3]) + " (expect 255,127,63,255)");
+    const char* vertex_source =
+        "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,(gl_VertexID>>1)*2-1);"
+        "gl_Position=vec4(p,0.0,1.0);}\n";
+    const char* fragment_source =
+        "#version 430 core\nlayout(location=0) out vec4 c;void main(){c=vec4(0.0,1.0,0.0,1.0);}\n";
+    const GLuint vs = glCreateShader(GL_VERTEX_SHADER);
+    glShaderSource(vs, 1, &vertex_source, nullptr);
+    glCompileShader(vs);
+    const GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
+    glShaderSource(fs, 1, &fragment_source, nullptr);
+    glCompileShader(fs);
+    const GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    GLint linked = 0;
+    glGetProgramiv(program, GL_LINK_STATUS, &linked);
+    glUseProgram(program);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_DEPTH_TEST);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    Diagnostic("SELFTEST draw linked=" + std::to_string(linked) + " readback=" +
+               std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," +
+               std::to_string(pixel[2]) + "," + std::to_string(pixel[3]) +
+               " (expect 0,255,0,255) error=" + std::to_string(glGetError()));
+    glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glDeleteFramebuffers(1, &fbo);
+    glDeleteTextures(1, &texture);
+    glDeleteProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+    glBindVertexArray(0);
+    glDeleteVertexArrays(1, &vao);
+}
+} // namespace
+
 MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     : window(window_), runtime(std::make_shared<MesaRuntime>()) {
     runtime->Initialize(window);
@@ -233,6 +295,7 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     if (!gladLoadGLLoader(ResolveGL)) {
         throw std::runtime_error("Cannot load OpenGL entry points");
     }
+    RunRenderSelfTest();
     runtime->make_current(nullptr, nullptr);
     window_info.type = Core::Frontend::WindowSystemType::Windows;
     window_info.render_surface = get_abi(window);
