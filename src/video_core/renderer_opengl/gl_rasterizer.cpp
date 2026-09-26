@@ -153,6 +153,12 @@ void RasterizerOpenGL::LoadDiskResources(u64 title_id, std::stop_token stop_load
 }
 
 void RasterizerOpenGL::Clear(u32 layer_count) {
+#ifdef _WIN32
+    static unsigned clear_calls = 0;
+    if (++clear_calls % 60 == 1) {
+        LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer clears={}", clear_calls);
+    }
+#endif
     gpu_memory->FlushCaching();
     const auto& regs = maxwell3d->regs;
     bool use_color{};
@@ -259,6 +265,13 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 }
 
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
+#ifdef _WIN32
+    static unsigned draw_calls = 0;
+    if (++draw_calls % 60 == 1) {
+        LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer draws={} indexed={}", draw_calls,
+                     is_indexed);
+    }
+#endif
     PrepareDraw(is_indexed, [this, is_indexed, instance_count](GLenum primitive_mode) {
         const auto& draw_state = maxwell3d->draw_manager.draw_state;
         const GLuint base_instance = GLuint(draw_state.base_instance);
