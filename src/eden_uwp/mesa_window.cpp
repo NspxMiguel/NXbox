@@ -10,6 +10,7 @@
 #include <future>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <glad/glad.h>
 
 using namespace winrt;
@@ -229,7 +230,8 @@ private:
 namespace {
 // Renders into an offscreen texture with the plain GL calls Eden relies on and reports what reads
 // back, so a broken driver path can be told apart from a broken emulator path.
-void RunRenderSelfTest() {
+void RunRenderSelfTest(const char* where) {
+    Diagnostic(std::string("SELFTEST begin ") + where);
     GLuint vao = 0;
     glGenVertexArrays(1, &vao);
     glBindVertexArray(vao);
@@ -330,7 +332,17 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     if (!gladLoadGLLoader(ResolveGL)) {
         throw std::runtime_error("Cannot load OpenGL entry points");
     }
-    RunRenderSelfTest();
+    RunRenderSelfTest("bootstrap context");
+    {
+        // The emulator renders on a shared context owned by its GPU thread; repeat the test there.
+        auto shared = CreateSharedContext();
+        std::thread worker([&shared] {
+            shared->MakeCurrent();
+            RunRenderSelfTest("shared worker context");
+            shared->DoneCurrent();
+        });
+        worker.join();
+    }
     runtime->make_current(nullptr, nullptr);
     window_info.type = Core::Frontend::WindowSystemType::Windows;
     window_info.render_surface = get_abi(window);
