@@ -374,6 +374,34 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                                  depth_type, depth_name, color_type, color_name, color_layered,
                                  px[0], px[1], px[2]);
                 }
+                {
+                    // Allocate a fresh texture of the same size and format while the process is under
+                    // memory pressure; if the driver cannot allocate it, clears will not stick.
+                    while (glGetError() != GL_NO_ERROR) {
+                    }
+                    GLuint fresh = 0;
+                    glCreateTextures(GL_TEXTURE_2D, 1, &fresh);
+                    glTextureStorage2D(fresh, 1, GL_RGB10_A2, 1440, 810);
+                    const GLenum storage_error = glGetError();
+                    GLuint fresh_fbo = 0;
+                    glCreateFramebuffers(1, &fresh_fbo);
+                    glNamedFramebufferTexture(fresh_fbo, GL_COLOR_ATTACHMENT0, fresh, 0);
+                    GLint prev_draw = 0;
+                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fresh_fbo);
+                    glClearBufferfv(GL_COLOR, 0, probe.data());
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
+                    unsigned char px[4]{};
+                    glGetTextureSubImage(fresh, 0, 700, 400, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                         4, px);
+                    const GLenum read_error = glGetError();
+                    glDeleteFramebuffers(1, &fresh_fbo);
+                    glDeleteTextures(1, &fresh);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX fresh RGB10_A2 1440x810 storage_error={:#x} "
+                                 "clear_readback={},{},{} read_error={:#x}",
+                                 storage_error, px[0], px[1], px[2], read_error);
+                }
                 LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
