@@ -3,6 +3,10 @@
 
 from pathlib import Path
 import argparse
+import os
+
+# NXBOX_MESA_SKIP=query,fence leaves those patches out, to bisect rendering problems.
+SKIP = set(filter(None, os.environ.get("NXBOX_MESA_SKIP", "").split(",")))
 
 
 def patch(root: Path) -> None:
@@ -39,6 +43,18 @@ def patch(root: Path) -> None:
         raise RuntimeError("Pinned Mesa source does not match the present patch")
     present_path.write_text(present_source.replace(present_old, present_new))
 
+    if "query" in SKIP:
+        print("skipping the query reentrancy patch")
+    else:
+        patch_query(root)
+    if "fence" in SKIP:
+        print("skipping the null fence patch")
+    else:
+        patch_fence(root)
+
+
+def patch_query(root: Path) -> None:
+    query_dir = root / "src/gallium/drivers/d3d12"
     # begin_subquery() accumulates a full query heap with a compute pass; saving and restoring the
     # compute state suspends and resumes every active query, which re-enters begin_subquery() for
     # the same subquery while curr_query still equals num_queries. That recursed until the stack
@@ -78,6 +94,8 @@ def patch(root: Path) -> None:
         raise RuntimeError("Pinned Mesa d3d12_query.cpp does not match the reentrancy patch")
     query.write_text(query_source.replace(begin_old, begin_new))
 
+def patch_fence(root: Path) -> None:
+    query_dir = root / "src/gallium/drivers/d3d12"
     # fence_finish() dereferences the fence unconditionally, but the GL frontend reaches it with a
     # null handle when a flush had nothing to submit (access violation at d3d12_fence.cpp:113,
     # reading offset 0x28 of null). A null fence means there is no outstanding work: complete.
