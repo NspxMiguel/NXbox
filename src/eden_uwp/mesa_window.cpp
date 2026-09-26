@@ -333,16 +333,6 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
         throw std::runtime_error("Cannot load OpenGL entry points");
     }
     RunRenderSelfTest("bootstrap context");
-    {
-        // The emulator renders on a shared context owned by its GPU thread; repeat the test there.
-        auto shared = CreateSharedContext();
-        std::thread worker([&shared] {
-            shared->MakeCurrent();
-            RunRenderSelfTest("shared worker context");
-            shared->DoneCurrent();
-        });
-        worker.join();
-    }
     runtime->make_current(nullptr, nullptr);
     window_info.type = Core::Frontend::WindowSystemType::Windows;
     window_info.render_surface = get_abi(window);
@@ -351,6 +341,14 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
 }
 
 MesaWindow::~MesaWindow() = default;
+
+void MesaWindow::RunSharedSelfTest() {
+    // The emulator renders on a shared context owned by its GPU thread; repeat the test there.
+    auto shared = CreateSharedContext();
+    shared->MakeCurrent();
+    RunRenderSelfTest("shared worker context");
+    shared->DoneCurrent();
+}
 
 std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext() const {
     auto create = [this] {
