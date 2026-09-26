@@ -17,8 +17,9 @@ controller-first, minimal-setup experience as its goal.
 
 > **Early development. No playable Xbox release is available.** The original homebrew boots, runs at
 > 45 to 60 FPS on a Series X, responds to controller input and exits cleanly. A user-owned
-> commercial game boots but does not produce frames yet; no commercial game has been validated on
-> Xbox by NXbox.
+> commercial game (Persona 5 Royal) now boots and presents frames at a steady 30 FPS (its own
+> frame cap, 100% emulation speed) for the first minutes measured; it has not been played
+> through, so no compatibility is claimed.
 
 ## Where it stands
 
@@ -31,7 +32,7 @@ Results below were measured on an Xbox Series X in Dev Mode.
 | OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox                                                                   |
 | Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox                                                                            |
 | Homebrew boot            | Initializes all services, connects the Xbox controller, reaches its ready state                                                      |
-| Game rendering           | Homebrew presents 45 to 60 FPS on Xbox (2 minute run); a commercial game boots but shows no frames yet ([notes](docs/nxbox-port.md)) |
+| Game rendering           | Homebrew presents 45 to 60 FPS on Xbox (2 minute run); a commercial game presents 30 FPS at 100% speed in a short boot run ([notes](docs/nxbox-port.md)) |
 | Game input               | Remote A and Plus reach the guest and exit cleanly (homebrew); not yet exercised with a physical pad                                 |
 | Audio                    | Not implemented on Xbox (null backend)                                                                                               |
 | Game compatibility       | Unverified; no full-library compatibility claim                                                                                      |

@@ -294,3 +294,14 @@ Operational notes: an Xbox system update wipes Device Portal credentials and can
 apps; `game.txt` set to `none` (or empty) boots the bundled homebrew; installing a new package
 without uninstalling keeps `LocalState` (and the downloaded game), but an uninstall wipes it. The
 app's storage filled once when a stray download was written next to the 14.5 GB game.
+
+## Commercial game boot: root cause of the stall (measured)
+
+The frontend passed zeroed `FrontendAppletParameters`, so the applet manager created the game's
+applet with `is_application = false`. The guest then received `ChangeIntoForeground` (1) instead of
+`FocusStateChanged` (15) and both guest threads waited forever on the AM message event
+(`WaitSynchronization` on a `KReadableEvent`). Booting with `applet_id = Application` and
+`applet_type = Application`, as the desktop frontend does, lets the game run: Persona 5 Royal
+presents 150 frames per 5 s (30 FPS, `speed=100%`) with about 4.8 GB of memory in use. Only a short
+run was measured; audio is null and nothing beyond the boot was exercised. The stall diagnostics
+(`GUEST_THREAD` lines in the diagnostic file while no frame has been presented) remain available.
