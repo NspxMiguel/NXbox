@@ -87,6 +87,12 @@ Result WaitSynchronization(Core::System& system, int32_t* out_index, u64 user_ha
         }
     };
 
+    for (auto i = 0; i < num_handles; ++i) {
+        LOG_DEBUG(Kernel_SVC, "WaitSynchronization thread={} handle={:#x} object={} timeout_ns={}",
+                  GetCurrentThread(kernel).GetThreadId(), handles[i],
+                  objs[i]->GetTypeObj().GetName(), timeout_ns);
+    }
+
     // Convert the timeout from nanoseconds to ticks.
     s64 timeout;
     if (timeout_ns > 0) {
