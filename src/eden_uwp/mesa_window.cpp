@@ -218,9 +218,16 @@ public:
                 // Save presented frames with visible content as PPM so the picture can be checked.
                 std::vector<unsigned char> rgba(1920u * 1080u * 4u);
                 glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                for (int row = 0; row < 1080; ++row) {
-                    glReadPixels(0, row, 1920, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                                 rgba.data() + static_cast<size_t>(row) * 1920 * 4);
+                std::vector<unsigned char> tile(32 * 32 * 4);
+                for (int ty = 0; ty < 1080; ty += 32) {
+                    for (int tx = 0; tx < 1920; tx += 32) {
+                        const int th = std::min(32, 1080 - ty);
+                        glReadPixels(tx, ty, 32, th, GL_RGBA, GL_UNSIGNED_BYTE, tile.data());
+                        for (int r = 0; r < th; ++r) {
+                            std::copy_n(tile.data() + r * 32 * 4, 32 * 4,
+                                        rgba.data() + (static_cast<size_t>(ty + r) * 1920 + tx) * 4);
+                        }
+                    }
                 }
                 const auto path = std::filesystem::path(winrt::to_string(
                                       winrt::Windows::Storage::ApplicationData::Current()
