@@ -217,7 +217,11 @@ public:
             if (lit > 50 && saved < 6) {
                 // Save presented frames with visible content as PPM so the picture can be checked.
                 std::vector<unsigned char> rgba(1920u * 1080u * 4u);
-                glReadPixels(0, 0, 1920, 1080, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+                glPixelStorei(GL_PACK_ALIGNMENT, 1);
+                for (int row = 0; row < 1080; ++row) {
+                    glReadPixels(0, row, 1920, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 rgba.data() + static_cast<size_t>(row) * 1920 * 4);
+                }
                 const auto path = std::filesystem::path(winrt::to_string(
                                       winrt::Windows::Storage::ApplicationData::Current()
                                           .LocalFolder()
