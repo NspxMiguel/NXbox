@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
+#include <winrt/Windows.Storage.h>
 #include <cstdlib>
 #include <future>
 #include <stdexcept>
@@ -160,6 +162,19 @@ public:
     void SwapBuffers() override {
         // Every 120th presentation, sample the back buffer so a black screen can be told apart from
         // frames that are presented but empty.
+        // LocalState\present_test.txt replaces every frame with solid red, to tell a broken
+        // presentation path from a game that renders nothing.
+        static const bool present_test = std::filesystem::exists(
+            std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+            "present_test.txt");
+        if (present_test) {
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+            glDisable(GL_SCISSOR_TEST);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
         if (++swaps % 120 == 1) {
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
