@@ -236,6 +236,13 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 
     GraphicsPipeline* const pipeline{shader_cache.CurrentGraphicsPipeline()};
     if (!pipeline) {
+#ifdef _WIN32
+        static unsigned null_pipelines = 0;
+        if (++null_pipelines % 60 == 1) {
+            LOG_CRITICAL(Render_OpenGL, "NXBOX draw skipped: no pipeline (count={})",
+                         null_pipelines);
+        }
+#endif
         return;
     }
 
@@ -246,8 +253,16 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
         program_manager.LocalMemoryWarmup();
     }
     pipeline->SetEngine(maxwell3d, gpu_memory);
-    if (!pipeline->Configure(is_indexed))
+    if (!pipeline->Configure(is_indexed)) {
+#ifdef _WIN32
+        static unsigned failed_configures = 0;
+        if (++failed_configures % 60 == 1) {
+            LOG_CRITICAL(Render_OpenGL, "NXBOX draw skipped: Configure failed (count={})",
+                         failed_configures);
+        }
+#endif
         return;
+    }
 
     SyncState();
 
