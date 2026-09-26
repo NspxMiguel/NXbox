@@ -155,6 +155,13 @@ public:
         if (!runtime->make_current(runtime->dc, context)) {
             throw std::runtime_error("Mesa context activation failed");
         }
+        // Eden's renderer draws with vertex buffers and no vertex array object, which only a
+        // compatibility context allows. This is a core profile context, where that draw fails with
+        // "No array object bound" and every frame stays black, so give each context one.
+        if (vertex_array == 0) {
+            glGenVertexArrays(1, &vertex_array);
+        }
+        glBindVertexArray(vertex_array);
     }
     void DoneCurrent() override {
         runtime->make_current(nullptr, nullptr);
@@ -208,6 +215,7 @@ private:
     std::shared_ptr<MesaRuntime> runtime;
     HANDLE context;
     unsigned swaps = 0;
+    GLuint vertex_array = 0;
 };
 
 MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
