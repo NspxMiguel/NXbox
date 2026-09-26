@@ -305,3 +305,32 @@ applet with `is_application = false`. The guest then received `ChangeIntoForegro
 presents 150 frames per 5 s (30 FPS, `speed=100%`) with about 4.8 GB of memory in use. Only a short
 run was measured; audio is null and nothing beyond the boot was exercised. The stall diagnostics
 (`GUEST_THREAD` lines in the diagnostic file while no frame has been presented) remain available.
+
+## Black screen with frames presented (open, measured)
+
+Persona 5 Royal and the homebrew present frames at a steady rate, but the TV stays black. Facts:
+
+- The window framebuffer and swap chain are fine: a solid red clear right before `wglSwapBuffers`
+  shows on the TV.
+- The Eden presentation pass drew into a core profile context without a vertex array object
+  (`No array object bound` on every frame); each context now binds one. The picture stayed black.
+- The frame's alpha is forced opaque before swapping; it stayed black.
+- Plain GL works in the app's own contexts before the emulator runs: clears and draws on RGBA8,
+  RGB10_A2, RGBA16F, sRGB and R11G11B10F targets, DSA textures and texture views, both on the
+  bootstrap context and on a shared worker context, and quad draws into the window framebuffer
+  (sample counts from occlusion queries match the expected pixel counts).
+- A full-screen quad drawn late in a running session, after Eden's presentation, passed 0 samples
+  (occlusion query), so draws in the emulator's context stop producing pixels at some point.
+  That query result is not fully trustworthy: Eden may already hold a `GL_SAMPLES_PASSED` query
+  open, which would make a second one fail.
+- glReadPixels and glGetTextureImage return stale data once the emulator runs (values from
+  earlier readbacks appear in unrelated reads), so pixel readback cannot be used as evidence here;
+  the peak/PPM numbers from the earlier diagnostics are invalid. Neither the pack buffer binding
+  nor pack row/skip state nor `glFinish` changes that.
+- Device Portal screenshots of NXbox are always black, including while the red test was on the TV.
+
+Suspects, in order: the Mesa null-fence and query-reentrancy patches (`tools/nxbox/patch_mesa_uwp.py`)
+changing synchronization in the d3d12 driver; a query or predication state the emulator leaves
+active; the emulator's GL state after its first clear. Every diagnostic used is kept on the
+`diag/black-screen` branch (probes, self tests, PPM dumps, the green draw test); `main` carries
+only the fixes.
