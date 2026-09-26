@@ -227,6 +227,12 @@ public:
                                           .LocalFolder()
                                           .Path())) /
                                   "eden" / "log" / ("backbuffer_" + std::to_string(saved++) + ".ppm");
+                size_t nonzero = 0;
+                for (size_t px = 0; px < rgba.size(); px += 4) {
+                    nonzero += (rgba[px] | rgba[px + 1] | rgba[px + 2]) != 0;
+                }
+                Diagnostic("BACKBUFFER full read nonzero_pixels=" + std::to_string(nonzero) +
+                           " lit_samples=" + std::to_string(lit));
                 std::ofstream out(path, std::ios::binary);
                 out << "P6\n1920 1080\n255\n";
                 for (size_t px = 0; px < rgba.size(); px += 4) {
