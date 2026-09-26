@@ -20,6 +20,8 @@
 #include "core/cpu_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs_real.h"
+#include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_thread.h"
 #include "core/hle/kernel/svc/svc_debug_string.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
@@ -167,6 +169,8 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     auto measured_at = std::chrono::steady_clock::now();
     auto measured_frames = window.FrameCount();
     bool paused = false;
+    int stall_dumps = 0;
+    const auto started_at = std::chrono::steady_clock::now();
     SCOPE_EXIT {
         lifecycle.CompleteDeferral();
     };
@@ -207,6 +211,24 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage()));
             measured_at = now;
             measured_frames = frames;
+            // While no frame has appeared, record what every guest thread is doing (state, wait
+            // reason and last saved PC/LR) so a stalled boot can be diagnosed.
+            if (frames == 0 && stall_dumps < 3 &&
+                std::chrono::duration<double>(now - started_at).count() > 20.0) {
+                ++stall_dumps;
+                if (auto* process = system.ApplicationProcess()) {
+                    for (auto& thread : process->GetThreadList()) {
+                        const auto& ctx = thread.GetContext();
+                        Diagnostic(fmt::format(
+                            "GUEST_THREAD id={} core={} prio={} state={} wait={} pc={:#x} lr={:#x} "
+                            "sp={:#x}",
+                            thread.GetThreadId(), thread.GetActiveCore(), thread.GetPriority(),
+                            static_cast<unsigned>(thread.GetState()),
+                            static_cast<unsigned>(thread.GetWaitReasonForDebugging()), ctx.pc,
+                            ctx.lr, ctx.sp));
+                    }
+                }
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
