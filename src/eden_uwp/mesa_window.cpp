@@ -216,6 +216,16 @@ public:
             glDisable(GL_STENCIL_TEST);
             glDisable(GL_BLEND);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDisable(GL_RASTERIZER_DISCARD);
+            glDisable(GL_COLOR_LOGIC_OP);
+            glDisable(GL_DEPTH_CLAMP);
+            glDisable(GL_POLYGON_OFFSET_FILL);
+            glDisable(GL_SAMPLE_MASK);
+            glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
+            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            glDepthRange(0.0, 1.0);
+            glViewportIndexedf(0, 0.0f, 0.0f, 1920.0f, 1080.0f);
+            glClipControl(GL_LOWER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
             glUseProgram(program);
             // Count the samples the draw produces; this does not go through a pixel readback.
             static GLuint query = 0;
@@ -457,7 +467,16 @@ void RunRenderSelfTest(const char* where) {
     glUseProgram(program);
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
+    GLuint self_query = 0;
+    glGenQueries(1, &self_query);
+    glBeginQuery(GL_SAMPLES_PASSED, self_query);
     glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+    glEndQuery(GL_SAMPLES_PASSED);
+    GLuint self_samples = 0;
+    glGetQueryObjectuiv(self_query, GL_QUERY_RESULT, &self_samples);
+    Diagnostic("SELFTEST draw samples_passed=" + std::to_string(self_samples) +
+               " (256x256 quad is 65536)");
+    glDeleteQueries(1, &self_query);
     glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
     Diagnostic("SELFTEST draw linked=" + std::to_string(linked) + " readback=" +
                std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," +
