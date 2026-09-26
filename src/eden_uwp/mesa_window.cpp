@@ -217,7 +217,21 @@ public:
             glDisable(GL_BLEND);
             glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
             glUseProgram(program);
+            // Count the samples the draw produces; this does not go through a pixel readback.
+            static GLuint query = 0;
+            if (query == 0) {
+                glGenQueries(1, &query);
+            }
+            glBeginQuery(GL_SAMPLES_PASSED, query);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+            glEndQuery(GL_SAMPLES_PASSED);
+            static unsigned query_reports = 0;
+            if (++query_reports % 120 == 1) {
+                GLuint samples_passed = 0;
+                glGetQueryObjectuiv(query, GL_QUERY_RESULT, &samples_passed);
+                Diagnostic("DRAWTEST samples_passed=" + std::to_string(samples_passed) +
+                           " (a full-screen quad is 2073600)");
+            }
             glUseProgram(static_cast<GLuint>(previous_program));
         }
         if (present_test) {
