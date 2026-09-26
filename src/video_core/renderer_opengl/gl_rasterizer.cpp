@@ -69,7 +69,7 @@ unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
 } // namespace
 
 // NXBOX diagnostic: clear a fresh texture in the current context and report what reads back.
-void NxboxProbeFreshClear(const char* tag) {
+void NxboxProbeFreshClear(const char* tag, bool normalize = false) {
     while (glGetError() != GL_NO_ERROR) {
     }
     GLuint fresh = 0;
@@ -81,6 +81,16 @@ void NxboxProbeFreshClear(const char* tag) {
     GLint prev_draw = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    if (normalize) {
+        for (GLuint i = 0; i < 8; ++i) {
+            glColorMaski(i, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glDisablei(GL_SCISSOR_TEST, i);
+        }
+        glDisable(GL_RASTERIZER_DISCARD);
+        glDisable(GL_FRAMEBUFFER_SRGB);
+        glDisable(GL_STENCIL_TEST);
+        glDisable(GL_DEPTH_TEST);
+    }
     const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
     glClearBufferfv(GL_COLOR, 0, color);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
@@ -237,6 +247,9 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
     static unsigned clear_calls = 0;
     if (clear_calls < 12) {
         NxboxProbeFreshClear(fmt::format("before clear #{}", clear_calls + 1).c_str());
+        if (clear_calls == 1) {
+            NxboxProbeFreshClear("before clear #2, state normalized", true);
+        }
     }
     if (++clear_calls % 60 == 1) {
         LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer clears={}", clear_calls);
