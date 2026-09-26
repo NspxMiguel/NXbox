@@ -281,6 +281,41 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                 glClearBufferfv(GL_COLOR, 0, probe.data());
                 const unsigned probe_peak = SampleDrawFramebuffer(&fw, &fh);
                 glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
+                {
+                    GLint fbo = 0;
+                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
+                    GLint type = 0;
+                    GLint name = 0;
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
+                    glGetNamedFramebufferAttachmentParameteriv(
+                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &name);
+                    GLint format = 0;
+                    GLint samples = 0;
+                    GLint tw = 0;
+                    GLint th = 0;
+                    unsigned tex_peak = 0;
+                    if (type == GL_TEXTURE) {
+                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_INTERNAL_FORMAT, &format);
+                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_SAMPLES, &samples);
+                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_WIDTH, &tw);
+                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_HEIGHT, &th);
+                        if (samples <= 1 && tw > 0 && th > 0 && tw * th <= 4096 * 4096) {
+                            std::vector<unsigned char> data(static_cast<size_t>(tw) * th * 4);
+                            glGetTextureImage(name, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                                              static_cast<GLsizei>(data.size()), data.data());
+                            for (size_t i = 0; i < data.size(); i += 4) {
+                                tex_peak = std::max<unsigned>(
+                                    tex_peak, std::max({data[i], data[i + 1], data[i + 2]}));
+                            }
+                        }
+                    }
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX clear fbo={} status={:#x} attach type={:#x} name={} "
+                                 "format={:#x} samples={} size={}x{} texture_peak={}",
+                                 fbo, glCheckNamedFramebufferStatus(fbo, GL_READ_FRAMEBUFFER), type,
+                                 name, format, samples, tw, th, tex_peak);
+                }
                 LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
                 LOG_CRITICAL(Render_OpenGL,
                              "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
