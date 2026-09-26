@@ -91,7 +91,6 @@ std::string ResolveGamePath(const std::string& bundled) {
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
-    window.RunSharedSelfTest();
     const std::string path = ResolveGamePath(bundled_path);
     {
         // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a

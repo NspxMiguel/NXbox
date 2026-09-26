@@ -7,12 +7,6 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include <algorithm>
-#include "common/nxbox_gl_readback.h"
-#include <fstream>
-#include <vector>
-#include "common/fs/path_util.h"
-#include "common/logging.h"
 #include "common/settings.h"
 #include "video_core/framebuffer_config.h"
 #include "video_core/host_shaders/opengl_present_vert.h"
@@ -123,48 +117,6 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
         glProgramUniformMatrix3x2fv(vert.handle, ModelViewMatrixLocation, 1, GL_FALSE, matrices[i].data());
         glNamedBufferSubData(vertex_buffer.handle, 0, sizeof(vertices[i]), std::data(vertices[i]));
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-#ifdef _WIN32
-        {
-            // NXbox diagnostic: report what the presentation pass sampled, every 120 frames.
-            static unsigned present_draws = 0;
-            if (++present_draws % 120 == 1) {
-                NxboxPackBufferGuard pack_guard;
-                GLint tex_w = 0;
-                GLint tex_h = 0;
-                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_WIDTH, &tex_w);
-                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_HEIGHT, &tex_h);
-                unsigned peak = 0;
-                for (int k = 0; k < 16 && tex_w > 0 && tex_h > 0; ++k) {
-                    unsigned char px[4]{};
-                    glGetTextureSubImage(textures[i], 0, (tex_w * (2 * (k % 4) + 1)) / 8,
-                                         (tex_h * (2 * (k / 4) + 1)) / 8, 0, 1, 1, 1, GL_RGBA,
-                                         GL_UNSIGNED_BYTE, 4, px);
-                    peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
-                }
-                static unsigned dumped = 0;
-                if (peak > 100 && dumped < 8 && tex_w > 0 && tex_h > 0) {
-                    // Save frames that have visible content as PPM so the picture can be inspected.
-                    std::vector<unsigned char> rgba(static_cast<size_t>(tex_w) * tex_h * 4);
-                    glGetTextureSubImage(textures[i], 0, 0, 0, 0, tex_w, tex_h, 1, GL_RGBA,
-                                         GL_UNSIGNED_BYTE, static_cast<GLsizei>(rgba.size()),
-                                         rgba.data());
-                    std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
-                                          fmt::format("present_shot_{}.ppm", dumped++),
-                                      std::ios::binary);
-                    out << "P6\n" << tex_w << ' ' << tex_h << "\n255\n";
-                    for (size_t px = 0; px < rgba.size(); px += 4) {
-                        out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
-                    }
-                }
-                LOG_CRITICAL(Render_OpenGL,
-                             "NXBOX present tex={} {}x{} peak={} verts=({:.0f},{:.0f})-({:.0f},{:.0f}) "
-                             "layout={}x{} error={:#x}",
-                             textures[i], tex_w, tex_h, peak, vertices[i][0].position[0],
-                             vertices[i][0].position[1], vertices[i][3].position[0],
-                             vertices[i][3].position[1], layout.width, layout.height, glGetError());
-            }
-        }
-#endif
     }
 }
 

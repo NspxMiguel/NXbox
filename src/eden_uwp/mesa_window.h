@@ -19,7 +19,6 @@ public:
     bool IsShown() const override;
     void OnFrameDisplayed() override;
     u64 FrameCount() const;
-    void RunSharedSelfTest();
 
 private:
     winrt::Windows::UI::Core::CoreWindow window;

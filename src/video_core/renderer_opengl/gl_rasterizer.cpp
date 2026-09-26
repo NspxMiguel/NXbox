@@ -5,10 +5,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
-#include "common/nxbox_gl_readback.h"
-#include <fstream>
-#include <vector>
-#include "common/fs/path_util.h"
 #include <array>
 #include <bitset>
 #include <memory>
@@ -38,99 +34,6 @@
 #include "video_core/texture_cache/texture_cache_base.h"
 
 namespace OpenGL {
-#ifdef _WIN32
-namespace {
-// NXBOX diagnostic: largest color value found in a coarse grid of the bound draw framebuffer.
-unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
-    NxboxPackBufferGuard pack_guard;
-    GLint fb = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
-    GLint prev_read = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    GLint w = 0;
-    GLint h = 0;
-    GLint viewport[4]{};
-    glGetIntegeri_v(GL_VIEWPORT, 0, viewport);
-    w = viewport[2];
-    h = viewport[3];
-    unsigned peak = 0;
-    for (int k = 0; k < 64 && w > 0 && h > 0; ++k) {
-        unsigned char px[4]{};
-        glReadPixels((w * (2 * (k % 8) + 1)) / 16, (h * (2 * (k / 8) + 1)) / 16, 1, 1, GL_RGBA,
-                     GL_UNSIGNED_BYTE, px);
-        peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
-    }
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
-    *out_w = w;
-    *out_h = h;
-    return peak;
-}
-
-} // namespace
-
-// NXBOX diagnostic: clear a fresh texture in the current context and report what reads back.
-void NxboxProbeFreshClear(const char* tag, bool normalize = false) {
-    NxboxPackBufferGuard pack_guard;
-    while (glGetError() != GL_NO_ERROR) {
-    }
-    GLuint fresh = 0;
-    glCreateTextures(GL_TEXTURE_2D, 1, &fresh);
-    glTextureStorage2D(fresh, 1, GL_RGBA8, 64, 64);
-    GLuint fbo = 0;
-    glCreateFramebuffers(1, &fbo);
-    glNamedFramebufferTexture(fbo, GL_COLOR_ATTACHMENT0, fresh, 0);
-    GLint prev_draw = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-    if (normalize) {
-        for (GLuint i = 0; i < 8; ++i) {
-            glColorMaski(i, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-            glDisablei(GL_SCISSOR_TEST, i);
-        }
-        glDisable(GL_RASTERIZER_DISCARD);
-        glDisable(GL_FRAMEBUFFER_SRGB);
-        glDisable(GL_STENCIL_TEST);
-        glDisable(GL_DEPTH_TEST);
-    }
-    const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
-    glClearBufferfv(GL_COLOR, 0, color);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
-    unsigned char px[4]{};
-    glGetTextureSubImage(fresh, 0, 32, 32, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4, px);
-    const GLenum reset_status = glGetGraphicsResetStatus ? glGetGraphicsResetStatus() : 0xFFFF;
-    LOG_CRITICAL(Render_OpenGL,
-                 "NXBOX probe [{}] fresh clear readback={},{},{} (expect 255,128,64) "
-                 "reset_status={:#x} (0 = none, 0xffff = unsupported)",
-                 tag, px[0], px[1], px[2], reset_status);
-    glDeleteFramebuffers(1, &fbo);
-    glDeleteTextures(1, &fresh);
-}
-
-namespace {
-// NXBOX diagnostic: save the bound draw framebuffer as a PPM next to the log.
-void DumpDrawFramebuffer(GLint w, GLint h, unsigned index) {
-    NxboxPackBufferGuard pack_guard;
-    GLint fb = 0;
-    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
-    GLint prev_read = 0;
-    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    std::vector<unsigned char> rgba(static_cast<size_t>(w) * h * 4);
-    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
-    std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
-                          fmt::format("draw_{}_{}x{}.ppm", index, w, h),
-                      std::ios::binary);
-    out << "P6\n" << w << ' ' << h << "\n255\n";
-    for (size_t px = 0; px < rgba.size(); px += 4) {
-        out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
-    }
-}
-} // namespace
-#endif
 
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 using GLvec4 = std::array<GLfloat, 4>;
@@ -250,18 +153,6 @@ void RasterizerOpenGL::LoadDiskResources(u64 title_id, std::stop_token stop_load
 }
 
 void RasterizerOpenGL::Clear(u32 layer_count) {
-#ifdef _WIN32
-    static unsigned clear_calls = 0;
-    if (clear_calls < 12) {
-        NxboxProbeFreshClear(fmt::format("before clear #{}", clear_calls + 1).c_str());
-        if (clear_calls == 1) {
-            NxboxProbeFreshClear("before clear #2, state normalized", true);
-        }
-    }
-    if (++clear_calls % 60 == 1) {
-        LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer clears={}", clear_calls);
-    }
-#endif
     gpu_memory->FlushCaching();
     const auto& regs = maxwell3d->regs;
     bool use_color{};
@@ -319,167 +210,6 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
 
     if (use_color) {
         glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
-#ifdef _WIN32
-        {
-            static unsigned color_clears = 0;
-            if (++color_clears % 60 == 1) {
-                GLint fw = 0;
-                GLint fh = 0;
-                const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
-                // Self test: clear the same target to a known color and read it back.
-                const std::array<float, 4> probe{1.0f, 0.5f, 0.25f, 1.0f};
-                glClearBufferfv(GL_COLOR, 0, probe.data());
-                const unsigned probe_peak = SampleDrawFramebuffer(&fw, &fh);
-                glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
-                {
-                    NxboxPackBufferGuard pack_guard;
-                    GLint fbo = 0;
-                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
-                    GLint type = 0;
-                    GLint name = 0;
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE, &type);
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &name);
-                    GLint format = 0;
-                    GLint samples = 0;
-                    GLint tw = 0;
-                    GLint th = 0;
-                    unsigned tex_peak = 0;
-                    if (type == GL_TEXTURE) {
-                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_INTERNAL_FORMAT, &format);
-                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_SAMPLES, &samples);
-                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_WIDTH, &tw);
-                        glGetTextureLevelParameteriv(name, 0, GL_TEXTURE_HEIGHT, &th);
-                        if (samples <= 1 && tw > 0 && th > 0 && tw * th <= 4096 * 4096) {
-                            std::vector<unsigned char> data(static_cast<size_t>(tw) * th * 4);
-                            glGetTextureImage(name, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                                              static_cast<GLsizei>(data.size()), data.data());
-                            for (size_t i = 0; i < data.size(); i += 4) {
-                                tex_peak = std::max<unsigned>(
-                                    tex_peak, std::max({data[i], data[i + 1], data[i + 2]}));
-                            }
-                        }
-                    }
-                    LOG_CRITICAL(Render_OpenGL,
-                                 "NXBOX clear fbo={} status={:#x} attach type={:#x} name={} "
-                                 "format={:#x} samples={} size={}x{} texture_peak={}",
-                                 fbo, glCheckNamedFramebufferStatus(fbo, GL_READ_FRAMEBUFFER), type,
-                                 name, format, samples, tw, th, tex_peak);
-                }
-                {
-                    GLboolean mask[4]{};
-                    glGetBooleani_v(GL_COLOR_WRITEMASK, 0, mask);
-                    GLint scissor[4]{};
-                    glGetIntegeri_v(GL_SCISSOR_BOX, 0, scissor);
-                    GLint draw_buffer = 0;
-                    glGetIntegerv(GL_DRAW_BUFFER0, &draw_buffer);
-                    LOG_CRITICAL(Render_OpenGL,
-                                 "NXBOX clear state mask={}{}{}{} scissor_test={} box={},{} {}x{} "
-                                 "draw_buffer0={:#x} discard={} srgb={}",
-                                 mask[0], mask[1], mask[2], mask[3],
-                                 glIsEnabledi(GL_SCISSOR_TEST, 0), scissor[0], scissor[1],
-                                 scissor[2], scissor[3], draw_buffer,
-                                 glIsEnabled(GL_RASTERIZER_DISCARD),
-                                 glIsEnabled(GL_FRAMEBUFFER_SRGB));
-                }
-                {
-                    NxboxPackBufferGuard pack_guard;
-                    GLint fbo = 0;
-                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
-                    GLint depth_type = 0;
-                    GLint depth_name = 0;
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
-                        &depth_type);
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                        &depth_name);
-                    GLint color_type = 0;
-                    GLint color_name = 0;
-                    GLint color_layered = 0;
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE,
-                        &color_type);
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME,
-                        &color_name);
-                    glGetNamedFramebufferAttachmentParameteriv(
-                        fbo, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_LAYERED,
-                        &color_layered);
-                    // Attach the same color texture to a brand new framebuffer and clear that.
-                    GLuint temp = 0;
-                    glCreateFramebuffers(1, &temp);
-                    glNamedFramebufferTexture(temp, GL_COLOR_ATTACHMENT0, color_name, 0);
-                    GLint prev_draw = 0;
-                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, temp);
-                    glClearBufferfv(GL_COLOR, 0, probe.data());
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
-                    unsigned char px[4]{};
-                    glGetTextureSubImage(color_name, 0, 100, 100, 0, 1, 1, 1, GL_RGBA,
-                                         GL_UNSIGNED_BYTE, 4, px);
-                    glDeleteFramebuffers(1, &temp);
-                    LOG_CRITICAL(Render_OpenGL,
-                                 "NXBOX clear extra depth type={:#x} name={} color type={:#x} "
-                                 "name={} layered={} temp_fbo_clear_readback={},{},{}",
-                                 depth_type, depth_name, color_type, color_name, color_layered,
-                                 px[0], px[1], px[2]);
-                }
-                {
-                    NxboxPackBufferGuard pack_guard;
-                    // Allocate a fresh texture of the same size and format while the process is under
-                    // memory pressure; if the driver cannot allocate it, clears will not stick.
-                    while (glGetError() != GL_NO_ERROR) {
-                    }
-                    GLuint fresh = 0;
-                    glCreateTextures(GL_TEXTURE_2D, 1, &fresh);
-                    glTextureStorage2D(fresh, 1, GL_RGB10_A2, 1440, 810);
-                    const GLenum storage_error = glGetError();
-                    GLuint fresh_fbo = 0;
-                    glCreateFramebuffers(1, &fresh_fbo);
-                    glNamedFramebufferTexture(fresh_fbo, GL_COLOR_ATTACHMENT0, fresh, 0);
-                    GLint prev_draw = 0;
-                    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fresh_fbo);
-                    glClearBufferfv(GL_COLOR, 0, probe.data());
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
-                    unsigned char px[4]{};
-                    glGetTextureSubImage(fresh, 0, 700, 400, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                                         4, px);
-                    const GLenum read_error = glGetError();
-                    // Retry with any active conditional rendering ended.
-                    while (glGetError() != GL_NO_ERROR) {
-                    }
-                    glEndConditionalRender();
-                    const GLenum conditional_error = glGetError();
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fresh_fbo);
-                    glClearBufferfv(GL_COLOR, 0, probe.data());
-                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
-                    unsigned char px2[4]{};
-                    glGetTextureSubImage(fresh, 0, 700, 400, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                                         4, px2);
-                    LOG_CRITICAL(Render_OpenGL,
-                                 "NXBOX after EndConditionalRender error={:#x} (0x502 means none "
-                                 "was active) clear_readback={},{},{}",
-                                 conditional_error, px2[0], px2[1], px2[2]);
-                    glDeleteFramebuffers(1, &fresh_fbo);
-                    glDeleteTextures(1, &fresh);
-                    LOG_CRITICAL(Render_OpenGL,
-                                 "NXBOX fresh RGB10_A2 1440x810 storage_error={:#x} "
-                                 "clear_readback={},{},{} read_error={:#x}",
-                                 storage_error, px[0], px[1], px[2], read_error);
-                }
-                LOG_CRITICAL(Render_OpenGL, "NXBOX clear probe peak={} (expect 255)", probe_peak);
-                LOG_CRITICAL(Render_OpenGL,
-                             "NXBOX clear rt={} color=({:.2f},{:.2f},{:.2f},{:.2f}) readback "
-                             "{}x{} peak={}",
-                             regs.clear_surface.RT.Value(), regs.clear_color[0],
-                             regs.clear_color[1], regs.clear_color[2], regs.clear_color[3], fw, fh,
-                             peak);
-            }
-        }
-#endif
     }
     if (use_depth && use_stencil) {
         glClearBufferfi(GL_DEPTH_STENCIL, 0, regs.clear_depth, regs.clear_stencil);
@@ -500,13 +230,6 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 
     GraphicsPipeline* const pipeline{shader_cache.CurrentGraphicsPipeline()};
     if (!pipeline) {
-#ifdef _WIN32
-        static unsigned null_pipelines = 0;
-        if (++null_pipelines % 60 == 1) {
-            LOG_CRITICAL(Render_OpenGL, "NXBOX draw skipped: no pipeline (count={})",
-                         null_pipelines);
-        }
-#endif
         return;
     }
 
@@ -517,16 +240,8 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
         program_manager.LocalMemoryWarmup();
     }
     pipeline->SetEngine(maxwell3d, gpu_memory);
-    if (!pipeline->Configure(is_indexed)) {
-#ifdef _WIN32
-        static unsigned failed_configures = 0;
-        if (++failed_configures % 60 == 1) {
-            LOG_CRITICAL(Render_OpenGL, "NXBOX draw skipped: Configure failed (count={})",
-                         failed_configures);
-        }
-#endif
+    if (!pipeline->Configure(is_indexed))
         return;
-    }
 
     SyncState();
 
@@ -543,18 +258,7 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
     has_written_global_memory |= pipeline->WritesGlobalMemory();
 }
 
-
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
-#ifdef _WIN32
-    static unsigned draw_calls = 0;
-    if (draw_calls < 6) {
-        NxboxProbeFreshClear(fmt::format("before draw #{}", draw_calls + 1).c_str());
-    }
-    if (++draw_calls % 60 == 1) {
-        LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer draws={} indexed={}", draw_calls,
-                     is_indexed);
-    }
-#endif
     PrepareDraw(is_indexed, [this, is_indexed, instance_count](GLenum primitive_mode) {
         const auto& draw_state = maxwell3d->draw_manager.draw_state;
         const GLuint base_instance = GLuint(draw_state.base_instance);
@@ -595,18 +299,6 @@ void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
             }
         }
     });
-#ifdef _WIN32
-    if (draw_calls % 60 == 1) {
-        GLint fw = 0;
-        GLint fh = 0;
-        const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
-        LOG_CRITICAL(Render_OpenGL, "NXBOX draw target {}x{} peak={} error={:#x}", fw, fh, peak,
-                     glGetError());
-        if (draw_calls % 1200 == 1 && fw >= 640) {
-            DumpDrawFramebuffer(fw, fh, draw_calls);
-        }
-    }
-#endif
 }
 
 void RasterizerOpenGL::DrawIndirect() {

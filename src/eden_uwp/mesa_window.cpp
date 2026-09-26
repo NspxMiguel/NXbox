@@ -5,16 +5,12 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <vector>
-#include <fstream>
 #include <winrt/Windows.Storage.h>
 #include <cstdlib>
 #include <future>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <glad/glad.h>
-#include "common/nxbox_gl_readback.h"
 
 using namespace winrt;
 using namespace Windows::UI::Core;
@@ -171,79 +167,12 @@ public:
         runtime->make_current(nullptr, nullptr);
     }
     void SwapBuffers() override {
-        // Every 120th presentation, sample the back buffer so a black screen can be told apart from
-        // frames that are presented but empty.
         // LocalState\present_test.txt replaces every frame with solid red, to tell a broken
         // presentation path from a game that renders nothing.
         static const bool present_test = std::filesystem::exists(
             std::filesystem::path(winrt::to_string(
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
             "present_test.txt");
-        static const bool draw_test = std::filesystem::exists(
-            std::filesystem::path(winrt::to_string(
-                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
-            "present_test_draw.txt");
-        if (draw_test) {
-            // Draw a green full-screen quad with a plain shader over whatever Eden presented, to
-            // check that ordinary draws into the window's framebuffer reach the screen.
-            static GLuint program = 0;
-            if (program == 0) {
-                const char* vertex_source =
-                    "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,"
-                    "(gl_VertexID>>1)*2-1);gl_Position=vec4(p,0.0,1.0);}\n";
-                const char* fragment_source =
-                    "#version 430 core\nlayout(location=0) out vec4 c;void "
-                    "main(){c=vec4(0.0,1.0,0.0,1.0);}\n";
-                const GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-                glShaderSource(vs, 1, &vertex_source, nullptr);
-                glCompileShader(vs);
-                const GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-                glShaderSource(fs, 1, &fragment_source, nullptr);
-                glCompileShader(fs);
-                program = glCreateProgram();
-                glAttachShader(program, vs);
-                glAttachShader(program, fs);
-                glLinkProgram(program);
-            }
-            GLint previous_program = 0;
-            glGetIntegerv(GL_CURRENT_PROGRAM, &previous_program);
-            glBindProgramPipeline(0);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            glViewport(0, 0, 1920, 1080);
-            glDisable(GL_SCISSOR_TEST);
-            glDisable(GL_CULL_FACE);
-            glDisable(GL_DEPTH_TEST);
-            glDisable(GL_STENCIL_TEST);
-            glDisable(GL_BLEND);
-            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-            glDisable(GL_RASTERIZER_DISCARD);
-            glDisable(GL_COLOR_LOGIC_OP);
-            glDisable(GL_DEPTH_CLAMP);
-            glDisable(GL_POLYGON_OFFSET_FILL);
-            glDisable(GL_SAMPLE_MASK);
-            glDisable(GL_SAMPLE_ALPHA_TO_COVERAGE);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-            glDepthRange(0.0, 1.0);
-            glViewportIndexedf(0, 0.0f, 0.0f, 1920.0f, 1080.0f);
-            glClipControl(GL_LOWER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
-            glUseProgram(program);
-            // Count the samples the draw produces; this does not go through a pixel readback.
-            static GLuint query = 0;
-            if (query == 0) {
-                glGenQueries(1, &query);
-            }
-            glBeginQuery(GL_SAMPLES_PASSED, query);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            glEndQuery(GL_SAMPLES_PASSED);
-            static unsigned query_reports = 0;
-            if (++query_reports % 120 == 1) {
-                GLuint samples_passed = 0;
-                glGetQueryObjectuiv(query, GL_QUERY_RESULT, &samples_passed);
-                Diagnostic("DRAWTEST samples_passed=" + std::to_string(samples_passed) +
-                           " (a full-screen quad is 2073600)");
-            }
-            glUseProgram(static_cast<GLuint>(previous_program));
-        }
         if (present_test) {
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
             glDisable(GL_SCISSOR_TEST);
@@ -259,80 +188,6 @@ public:
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        if (++swaps % 120 == 1) {
-            NxboxPackBufferGuard pack_guard;
-            GLint previous = 0;
-            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            glReadBuffer(GL_BACK);
-            unsigned lit = 0;
-            unsigned samples = 0;
-            unsigned peak = 0;
-            for (int y = 0; y < 36; ++y) {
-                for (int x = 0; x < 64; ++x) {
-                    unsigned char pixel[4]{};
-                    glReadPixels(15 + x * 30, 15 + y * 30, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
-                                 pixel);
-                    peak = std::max<unsigned>(peak, std::max({pixel[0], pixel[1], pixel[2]}));
-                    static unsigned reported = 0;
-                    if ((pixel[0] | pixel[1] | pixel[2]) != 0 && reported < 6) {
-                        ++reported;
-                        const int px_x = 15 + x * 30;
-                        const int px_y = 15 + y * 30;
-                        unsigned char again[4]{};
-                        glReadPixels(px_x, px_y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, again);
-                        std::vector<unsigned char> block(4 * 4 * 4);
-                        glReadPixels(px_x, px_y, 4, 4, GL_RGBA, GL_UNSIGNED_BYTE, block.data());
-                        Diagnostic("BACKBUFFER lit sample at " + std::to_string(px_x) + "," +
-                                   std::to_string(px_y) + " value=" + std::to_string(pixel[0]) +
-                                   "," + std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) +
-                                   "," + std::to_string(pixel[3]) + " again=" +
-                                   std::to_string(again[0]) + "," + std::to_string(again[1]) +
-                                   " block00=" + std::to_string(block[0]) + "," +
-                                   std::to_string(block[1]));
-                    }
-                    ++samples;
-                    lit += (pixel[0] | pixel[1] | pixel[2]) != 0;
-                }
-            }
-            static unsigned saved = 0;
-            if (lit > 50 && saved < 6) {
-                // Save presented frames with visible content as PPM so the picture can be checked.
-                std::vector<unsigned char> rgba(1920u * 1080u * 4u);
-                glPixelStorei(GL_PACK_ALIGNMENT, 1);
-                std::vector<unsigned char> tile(32 * 32 * 4);
-                for (int ty = 0; ty < 1080; ty += 32) {
-                    for (int tx = 0; tx < 1920; tx += 32) {
-                        const int th = std::min(32, 1080 - ty);
-                        glReadPixels(tx, ty, 32, th, GL_RGBA, GL_UNSIGNED_BYTE, tile.data());
-                        for (int r = 0; r < th; ++r) {
-                            std::copy_n(tile.data() + r * 32 * 4, 32 * 4,
-                                        rgba.data() + (static_cast<size_t>(ty + r) * 1920 + tx) * 4);
-                        }
-                    }
-                }
-                const auto path = std::filesystem::path(winrt::to_string(
-                                      winrt::Windows::Storage::ApplicationData::Current()
-                                          .LocalFolder()
-                                          .Path())) /
-                                  "eden" / "log" / ("backbuffer_" + std::to_string(saved++) + ".ppm");
-                size_t nonzero = 0;
-                for (size_t px = 0; px < rgba.size(); px += 4) {
-                    nonzero += (rgba[px] | rgba[px + 1] | rgba[px + 2]) != 0;
-                }
-                Diagnostic("BACKBUFFER full read nonzero_pixels=" + std::to_string(nonzero) +
-                           " lit_samples=" + std::to_string(lit));
-                std::ofstream out(path, std::ios::binary);
-                out << "P6\n1920 1080\n255\n";
-                for (size_t px = 0; px < rgba.size(); px += 4) {
-                    out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
-                }
-            }
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous));
-            Diagnostic("BACKBUFFER swap=" + std::to_string(swaps) + " lit=" + std::to_string(lit) +
-                       "/" + std::to_string(samples) + " peak=" + std::to_string(peak) +
-                       " error=" + std::to_string(glGetError()));
-        }
         const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
         if (!swap(runtime->dc)) {
             throw std::runtime_error("Mesa presentation failed");
@@ -342,175 +197,8 @@ public:
 private:
     std::shared_ptr<MesaRuntime> runtime;
     HANDLE context;
-    unsigned swaps = 0;
     GLuint vertex_array = 0;
 };
-
-namespace {
-// Renders into an offscreen texture with the plain GL calls Eden relies on and reports what reads
-// back, so a broken driver path can be told apart from a broken emulator path.
-void RunRenderSelfTest(const char* where) {
-    Diagnostic(std::string("SELFTEST begin ") + where);
-    GLuint vao = 0;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-    GLuint texture = 0;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 256, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    GLuint fbo = 0;
-    glGenFramebuffers(1, &fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
-    Diagnostic("SELFTEST fbo status=" + std::to_string(glCheckFramebufferStatus(GL_FRAMEBUFFER)));
-    glViewport(0, 0, 256, 256);
-    glClearColor(1.0f, 0.5f, 0.25f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    unsigned char pixel[4]{};
-    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-    Diagnostic("SELFTEST clear readback=" + std::to_string(pixel[0]) + "," +
-               std::to_string(pixel[1]) + "," + std::to_string(pixel[2]) + "," +
-               std::to_string(pixel[3]) + " (expect 255,127,63,255)");
-    // Same clear on the render target formats the emulator's games commonly use.
-    for (const auto& [name, internal_format] :
-         std::array<std::pair<const char*, GLenum>, 5>{{{"RGB10_A2", GL_RGB10_A2},
-                                                        {"RGBA16F", GL_RGBA16F},
-                                                        {"SRGB8_A8", GL_SRGB8_ALPHA8},
-                                                        {"R11G11B10F", GL_R11F_G11F_B10F},
-                                                        {"RGBA8", GL_RGBA8}}}) {
-        for (const bool srgb : {false, true}) {
-            GLuint format_texture = 0;
-            glGenTextures(1, &format_texture);
-            glBindTexture(GL_TEXTURE_2D, format_texture);
-            glTexStorage2D(GL_TEXTURE_2D, 1, internal_format, 256, 256);
-            GLuint format_fbo = 0;
-            glGenFramebuffers(1, &format_fbo);
-            glBindFramebuffer(GL_FRAMEBUFFER, format_fbo);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-                                   format_texture, 0);
-            if (srgb) {
-                glEnable(GL_FRAMEBUFFER_SRGB);
-            }
-            const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
-            glClearBufferfv(GL_COLOR, 0, color);
-            unsigned char px[4]{};
-            glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
-            Diagnostic(std::string("SELFTEST format ") + name + (srgb ? " srgb" : "     ") +
-                       " status=" + std::to_string(glCheckFramebufferStatus(GL_FRAMEBUFFER)) +
-                       " readback=" + std::to_string(px[0]) + "," + std::to_string(px[1]) + "," +
-                       std::to_string(px[2]) + "," + std::to_string(px[3]) +
-                       " error=" + std::to_string(glGetError()));
-            glDisable(GL_FRAMEBUFFER_SRGB);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glDeleteFramebuffers(1, &format_fbo);
-            glDeleteTextures(1, &format_texture);
-        }
-    }
-    // Eden creates textures with direct state access and renders into texture views.
-    for (const GLenum internal_format : {GL_RGBA8, GL_RGB10_A2}) {
-        for (const int variant : {0, 1, 2}) {
-            GLuint base = 0;
-            glCreateTextures(GL_TEXTURE_2D, 1, &base);
-            glTextureStorage2D(base, 1, internal_format, 256, 256);
-            GLuint attach = base;
-            GLuint view = 0;
-            if (variant >= 1) {
-                glGenTextures(1, &view);
-                glTextureView(view, GL_TEXTURE_2D, base, internal_format, 0, 1, 0, 1);
-                attach = view;
-            }
-            GLuint dsa_fbo = 0;
-            glCreateFramebuffers(1, &dsa_fbo);
-            glNamedFramebufferTexture(dsa_fbo, GL_COLOR_ATTACHMENT0, attach, 0);
-            glBindFramebuffer(GL_FRAMEBUFFER, dsa_fbo);
-            if (variant == 2) {
-                const GLenum buffers[] = {GL_COLOR_ATTACHMENT0};
-                glNamedFramebufferDrawBuffers(dsa_fbo, 1, buffers);
-            }
-            const float color[4] = {1.0f, 0.5f, 0.25f, 1.0f};
-            glClearBufferfv(GL_COLOR, 0, color);
-            unsigned char base_px[4]{};
-            glGetTextureSubImage(base, 0, 128, 128, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4,
-                                 base_px);
-            unsigned char fbo_px[4]{};
-            glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, fbo_px);
-            Diagnostic(std::string("SELFTEST dsa ") +
-                       (internal_format == GL_RGBA8 ? "RGBA8" : "RGB10_A2") + " variant=" +
-                       std::to_string(variant) + " texture=" + std::to_string(base_px[0]) + "," +
-                       std::to_string(base_px[1]) + " fbo=" + std::to_string(fbo_px[0]) + "," +
-                       std::to_string(fbo_px[1]) + " error=" + std::to_string(glGetError()));
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glDeleteFramebuffers(1, &dsa_fbo);
-            if (view) {
-                glDeleteTextures(1, &view);
-            }
-            glDeleteTextures(1, &base);
-        }
-    }
-    const char* vertex_source =
-        "#version 430 core\nvoid main(){vec2 p=vec2((gl_VertexID&1)*2-1,(gl_VertexID>>1)*2-1);"
-        "gl_Position=vec4(p,0.0,1.0);}\n";
-    const char* fragment_source =
-        "#version 430 core\nlayout(location=0) out vec4 c;void main(){c=vec4(0.0,1.0,0.0,1.0);}\n";
-    const GLuint vs = glCreateShader(GL_VERTEX_SHADER);
-    glShaderSource(vs, 1, &vertex_source, nullptr);
-    glCompileShader(vs);
-    const GLuint fs = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(fs, 1, &fragment_source, nullptr);
-    glCompileShader(fs);
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vs);
-    glAttachShader(program, fs);
-    glLinkProgram(program);
-    GLint linked = 0;
-    glGetProgramiv(program, GL_LINK_STATUS, &linked);
-    glUseProgram(program);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_DEPTH_TEST);
-    GLuint self_query = 0;
-    glGenQueries(1, &self_query);
-    glBeginQuery(GL_SAMPLES_PASSED, self_query);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glEndQuery(GL_SAMPLES_PASSED);
-    GLuint self_samples = 0;
-    glGetQueryObjectuiv(self_query, GL_QUERY_RESULT, &self_samples);
-    Diagnostic("SELFTEST draw samples_passed=" + std::to_string(self_samples) +
-               " (256x256 quad is 65536)");
-    glDeleteQueries(1, &self_query);
-    glReadPixels(128, 128, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
-    Diagnostic("SELFTEST draw linked=" + std::to_string(linked) + " readback=" +
-               std::to_string(pixel[0]) + "," + std::to_string(pixel[1]) + "," +
-               std::to_string(pixel[2]) + "," + std::to_string(pixel[3]) +
-               " (expect 0,255,0,255) error=" + std::to_string(glGetError()));
-    {
-        // The same quad into the window's own framebuffer, at several viewport sizes.
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        for (const int size : {64, 256, 1280, 1920}) {
-            glViewport(0, 0, size, size * 9 / 16 > 0 ? size * 9 / 16 : 1);
-            GLuint window_query = 0;
-            glGenQueries(1, &window_query);
-            glBeginQuery(GL_SAMPLES_PASSED, window_query);
-            glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-            glEndQuery(GL_SAMPLES_PASSED);
-            GLuint window_samples = 0;
-            glGetQueryObjectuiv(window_query, GL_QUERY_RESULT, &window_samples);
-            Diagnostic("SELFTEST window draw viewport_width=" + std::to_string(size) +
-                       " samples_passed=" + std::to_string(window_samples) + " expected=" +
-                       std::to_string(size * (size * 9 / 16)));
-            glDeleteQueries(1, &window_query);
-        }
-    }
-    glUseProgram(0);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glDeleteFramebuffers(1, &fbo);
-    glDeleteTextures(1, &texture);
-    glDeleteProgram(program);
-    glDeleteShader(vs);
-    glDeleteShader(fs);
-    glBindVertexArray(0);
-    glDeleteVertexArrays(1, &vao);
-}
-} // namespace
 
 MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     : window(window_), runtime(std::make_shared<MesaRuntime>()) {
@@ -519,7 +207,6 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     if (!gladLoadGLLoader(ResolveGL)) {
         throw std::runtime_error("Cannot load OpenGL entry points");
     }
-    RunRenderSelfTest("bootstrap context");
     runtime->make_current(nullptr, nullptr);
     window_info.type = Core::Frontend::WindowSystemType::Windows;
     window_info.render_surface = get_abi(window);
@@ -528,14 +215,6 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
 }
 
 MesaWindow::~MesaWindow() = default;
-
-void MesaWindow::RunSharedSelfTest() {
-    // The emulator renders on a shared context owned by its GPU thread; repeat the test there.
-    auto shared = CreateSharedContext();
-    shared->MakeCurrent();
-    RunRenderSelfTest("shared worker context");
-    shared->DoneCurrent();
-}
 
 std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext() const {
     auto create = [this] {
