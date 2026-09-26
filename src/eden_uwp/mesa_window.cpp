@@ -2,6 +2,7 @@
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/mesa_window.h"
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <future>
@@ -163,20 +164,24 @@ public:
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+            glReadBuffer(GL_BACK);
             unsigned lit = 0;
             unsigned samples = 0;
-            for (int y = 0; y < 9; ++y) {
-                for (int x = 0; x < 16; ++x) {
+            unsigned peak = 0;
+            for (int y = 0; y < 36; ++y) {
+                for (int x = 0; x < 64; ++x) {
                     unsigned char pixel[4]{};
-                    glReadPixels(60 + x * 120, 60 + y * 120, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                    glReadPixels(15 + x * 30, 15 + y * 30, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                                  pixel);
+                    peak = std::max<unsigned>(peak, std::max({pixel[0], pixel[1], pixel[2]}));
                     ++samples;
                     lit += (pixel[0] | pixel[1] | pixel[2]) != 0;
                 }
             }
             glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous));
             Diagnostic("BACKBUFFER swap=" + std::to_string(swaps) + " lit=" + std::to_string(lit) +
-                       "/" + std::to_string(samples));
+                       "/" + std::to_string(samples) + " peak=" + std::to_string(peak) +
+                       " error=" + std::to_string(glGetError()));
         }
         const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
         if (!swap(runtime->dc)) {
