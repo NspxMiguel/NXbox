@@ -235,8 +235,8 @@ void RasterizerOpenGL::LoadDiskResources(u64 title_id, std::stop_token stop_load
 void RasterizerOpenGL::Clear(u32 layer_count) {
 #ifdef _WIN32
     static unsigned clear_calls = 0;
-    if (clear_calls == 0) {
-        NxboxProbeFreshClear("before first clear");
+    if (clear_calls < 12) {
+        NxboxProbeFreshClear(fmt::format("before clear #{}", clear_calls + 1).c_str());
     }
     if (++clear_calls % 60 == 1) {
         LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer clears={}", clear_calls);
@@ -524,8 +524,8 @@ void RasterizerOpenGL::PrepareDraw(bool is_indexed, Func&& draw_func) {
 void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
 #ifdef _WIN32
     static unsigned draw_calls = 0;
-    if (draw_calls == 0) {
-        NxboxProbeFreshClear("before first draw");
+    if (draw_calls < 6) {
+        NxboxProbeFreshClear(fmt::format("before draw #{}", draw_calls + 1).c_str());
     }
     if (++draw_calls % 60 == 1) {
         LOG_CRITICAL(Render_OpenGL, "NXBOX rasterizer draws={} indexed={}", draw_calls,
