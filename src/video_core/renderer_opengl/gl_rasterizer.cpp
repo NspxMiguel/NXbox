@@ -395,6 +395,21 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                     glGetTextureSubImage(fresh, 0, 700, 400, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
                                          4, px);
                     const GLenum read_error = glGetError();
+                    // Retry with any active conditional rendering ended.
+                    while (glGetError() != GL_NO_ERROR) {
+                    }
+                    glEndConditionalRender();
+                    const GLenum conditional_error = glGetError();
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fresh_fbo);
+                    glClearBufferfv(GL_COLOR, 0, probe.data());
+                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
+                    unsigned char px2[4]{};
+                    glGetTextureSubImage(fresh, 0, 700, 400, 0, 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                         4, px2);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX after EndConditionalRender error={:#x} (0x502 means none "
+                                 "was active) clear_readback={},{},{}",
+                                 conditional_error, px2[0], px2[1], px2[2]);
                     glDeleteFramebuffers(1, &fresh_fbo);
                     glDeleteTextures(1, &fresh);
                     LOG_CRITICAL(Render_OpenGL,
