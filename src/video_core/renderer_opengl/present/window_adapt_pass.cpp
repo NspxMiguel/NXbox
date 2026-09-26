@@ -8,6 +8,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include "common/nxbox_gl_readback.h"
 #include <fstream>
 #include <vector>
 #include "common/fs/path_util.h"
@@ -127,6 +128,7 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
             // NXbox diagnostic: report what the presentation pass sampled, every 120 frames.
             static unsigned present_draws = 0;
             if (++present_draws % 120 == 1) {
+                NxboxPackBufferGuard pack_guard;
                 GLint tex_w = 0;
                 GLint tex_h = 0;
                 glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_WIDTH, &tex_w);

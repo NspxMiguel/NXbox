@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include "common/nxbox_gl_readback.h"
 #include <fstream>
 #include <vector>
 #include "common/fs/path_util.h"
@@ -41,6 +42,7 @@ namespace OpenGL {
 namespace {
 // NXBOX diagnostic: largest color value found in a coarse grid of the bound draw framebuffer.
 unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
+    NxboxPackBufferGuard pack_guard;
     GLint fb = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
     GLint prev_read = 0;
@@ -70,6 +72,7 @@ unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
 
 // NXBOX diagnostic: clear a fresh texture in the current context and report what reads back.
 void NxboxProbeFreshClear(const char* tag, bool normalize = false) {
+    NxboxPackBufferGuard pack_guard;
     while (glGetError() != GL_NO_ERROR) {
     }
     GLuint fresh = 0;
@@ -108,6 +111,7 @@ void NxboxProbeFreshClear(const char* tag, bool normalize = false) {
 namespace {
 // NXBOX diagnostic: save the bound draw framebuffer as a PPM next to the log.
 void DumpDrawFramebuffer(GLint w, GLint h, unsigned index) {
+    NxboxPackBufferGuard pack_guard;
     GLint fb = 0;
     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
     GLint prev_read = 0;
@@ -328,6 +332,7 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                 const unsigned probe_peak = SampleDrawFramebuffer(&fw, &fh);
                 glClearBufferfv(GL_COLOR, regs.clear_surface.RT, regs.clear_color.data());
                 {
+                    NxboxPackBufferGuard pack_guard;
                     GLint fbo = 0;
                     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
                     GLint type = 0;
@@ -379,6 +384,7 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                                  glIsEnabled(GL_FRAMEBUFFER_SRGB));
                 }
                 {
+                    NxboxPackBufferGuard pack_guard;
                     GLint fbo = 0;
                     glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fbo);
                     GLint depth_type = 0;
@@ -421,6 +427,7 @@ void RasterizerOpenGL::Clear(u32 layer_count) {
                                  px[0], px[1], px[2]);
                 }
                 {
+                    NxboxPackBufferGuard pack_guard;
                     // Allocate a fresh texture of the same size and format while the process is under
                     // memory pressure; if the driver cannot allocate it, clears will not stick.
                     while (glGetError() != GL_NO_ERROR) {

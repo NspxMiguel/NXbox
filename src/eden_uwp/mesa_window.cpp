@@ -12,6 +12,7 @@
 #include <string>
 #include <thread>
 #include <glad/glad.h>
+#include "common/nxbox_gl_readback.h"
 
 using namespace winrt;
 using namespace Windows::UI::Core;
@@ -192,6 +193,7 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         if (++swaps % 120 == 1) {
+            NxboxPackBufferGuard pack_guard;
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
