@@ -5,6 +5,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <fstream>
+#include <vector>
+#include "common/fs/path_util.h"
 #include <array>
 #include <bitset>
 #include <memory>
@@ -61,6 +64,26 @@ unsigned SampleDrawFramebuffer(GLint* out_w, GLint* out_h) {
     *out_w = w;
     *out_h = h;
     return peak;
+}
+
+// NXBOX diagnostic: save the bound draw framebuffer as a PPM next to the log.
+void DumpDrawFramebuffer(GLint w, GLint h, unsigned index) {
+    GLint fb = 0;
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &fb);
+    GLint prev_read = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(fb));
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    std::vector<unsigned char> rgba(static_cast<size_t>(w) * h * 4);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
+    std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
+                          fmt::format("draw_{}_{}x{}.ppm", index, w, h),
+                      std::ios::binary);
+    out << "P6\n" << w << ' ' << h << "\n255\n";
+    for (size_t px = 0; px < rgba.size(); px += 4) {
+        out.write(reinterpret_cast<const char*>(&rgba[px]), 3);
+    }
 }
 } // namespace
 #endif
@@ -381,6 +404,9 @@ void RasterizerOpenGL::Draw(bool is_indexed, u32 instance_count) {
         const unsigned peak = SampleDrawFramebuffer(&fw, &fh);
         LOG_CRITICAL(Render_OpenGL, "NXBOX draw target {}x{} peak={} error={:#x}", fw, fh, peak,
                      glGetError());
+        if (draw_calls % 1200 == 1 && fw >= 640) {
+            DumpDrawFramebuffer(fw, fh, draw_calls);
+        }
     }
 #endif
 }
