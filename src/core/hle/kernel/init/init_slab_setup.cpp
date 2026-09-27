@@ -73,7 +73,15 @@ enum KSlabType : u32 {
 // Constexpr counts.
 constexpr size_t SlabCountKProcess = 80;
 constexpr size_t SlabCountKThread = 800;
+#ifdef _WIN32
+// NXbox diagnostic: something on this port creates far more KEvent objects than real hardware's
+// limit allows (Persona 5 Royal exhausts the stock 900 in about 3.5 minutes with no apparent
+// retry loop in service logs). Raised well past that to see how far the guest gets with the
+// pressure off while the actual leak is still being tracked down.
+constexpr size_t SlabCountKEvent = 20000;
+#else
 constexpr size_t SlabCountKEvent = 900;
+#endif
 constexpr size_t SlabCountKInterruptEvent = 100;
 constexpr size_t SlabCountKPort = 384;
 constexpr size_t SlabCountKSharedMemory = 80;
