@@ -7,6 +7,7 @@
 
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Storage.h>
+#include <winrt/Windows.Storage.FileProperties.h>
 
 #include "eden_uwp/diagnostic.h"
 
@@ -63,7 +64,7 @@ void ListGames(const StorageFolder& drive, const wchar_t* directory,
         if (!files) {
             return;
         }
-        for (const auto& file : **files) {
+        for (const auto& file : *files) {
             const auto name = std::wstring(file.Name());
             if (name.size() > 4 &&
                 (name.ends_with(L".nsp") || name.ends_with(L".nsz") || name.ends_with(L".xci"))) {
@@ -88,7 +89,7 @@ UsbLibraryScan ScanUsbForGamesAndKeys() {
         }
         // The first drive with a recognizable layout wins; a console has one game USB at a time
         // in practice, and picking the first keeps this simple.
-        for (const auto& drive : **drives) {
+        for (const auto& drive : *drives) {
             std::vector<std::wstring> games;
             ListGames(drive, L"games", games);
             if (games.empty()) {
