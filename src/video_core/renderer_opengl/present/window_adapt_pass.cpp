@@ -175,8 +175,10 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     out << "P6\n" << kW << ' ' << kH << "\n255\n";
                     out.write(reinterpret_cast<const char*>(thumb.data()),
                               static_cast<std::streamsize>(thumb.size()));
-                    LOG_CRITICAL(Render_OpenGL, "NXBOX thumb_{} (save #{}) tex={}x{} peak={}",
-                                 slot, saved, tex_w, tex_h, peak);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX thumb_{} (save #{}) tex={}x{} peak={} layer={}/{} "
+                                 "invert_y={}",
+                                 slot, saved, tex_w, tex_h, peak, i, layer_count, invert_y);
                     ++saved;
                 }
             }
