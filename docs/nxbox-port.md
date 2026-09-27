@@ -369,6 +369,14 @@ controller (a real controller should stay enumerated in WGI continuously), but t
 protects a real controller against any transient WGI enumeration gap, so it is the right fix either
 way.
 
+**Correction after further testing: this was not the (sole) cause of the black screen.** With
+continuous remote input sent throughout boot (`hold-input.ts`, keeping the debounce's `keys_seen`
+flag true from the start), the controller-applet loop is confirmed gone — zero retries through a
+262-second run — and the game runs the whole time at a steady ~30 FPS with no crash. The screen is
+still black: every thumbnail sample in that run (48 of them, 5 seconds apart, the same proven
+`window_adapt_pass.cpp` readback used earlier) came back `peak=0`. The controller loop was a real,
+now-fixed bug, but whatever actually keeps the screen black is still open.
+
 ## Motion controls (planned, not implemented)
 
 The Xbox Series X controller and Xbox Elite controller have no gyroscope. Eden's motion pipeline
