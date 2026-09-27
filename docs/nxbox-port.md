@@ -357,11 +357,14 @@ as a stopgap (`#ifdef _WIN32`) so longer runs are possible while this is tracked
 process still eventually hits the guest's own per-process `EventCountMax` resource limit (~247s in
 two independent runs, suspiciously exact) since raising the slab does not raise that.
 
-Next step: trace what the game's applet-management code checks between `IsCompleted` succeeding and
-deciding to retry — likely a field or handle we are not returning correctly from
-`ILibraryAppletAccessor`/`IStorage` for this specific applet type, or a race between `Exit()` firing
-synchronously inside `Execute()` (our `DefaultControllerApplet::ReconfigureControllers` calls its
-callback immediately, before `Execute()` returns control to the caller) and the guest's own wait
-setup. Diagnostics for this (`NXBOX ConfigurationComplete`, `NXBOX CreateEvent`, `NXBOX
-GetDisplayVsyncEvent`) are committed to `main`; `GetDisplayVsyncEvent` was checked and ruled out (0
-calls logged while the leak was already at 700+).
+**Root cause found and fixed.** `eden_uwp/gamepad.h`'s `Poll()` disconnected the emulated controller
+the instant a poll saw no WGI gamepad (`Gamepad::Gamepads()`) and no remote-input key had ever been
+seen yet — every 8 ms. The controller applet's `Connect(true)` was undone by the very next poll
+tick, so from the game's continuous connection-monitoring the pad connected and instantly vanished
+again, and it re-showed the applet on its own ~5.13 s cooldown, forever. Fixed by debouncing the
+disconnect (half a second of consecutive empty polls, not one) — confirmed on Xbox: zero
+`Initializing Controller Applet` re-entries in a run that previously hit it every ~5 s without stop.
+This was most likely specific to testing over Device Portal remote input rather than a real paired
+controller (a real controller should stay enumerated in WGI continuously), but the debounce also
+protects a real controller against any transient WGI enumeration gap, so it is the right fix either
+way.
