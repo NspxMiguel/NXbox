@@ -139,8 +139,18 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                 NxboxPackBufferGuard pack_guard;
                 GLint tex_w = 0;
                 GLint tex_h = 0;
+                GLint tex_format = 0;
+                GLint tex_levels = 0;
+                GLint tex_samples = 0;
                 glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_WIDTH, &tex_w);
                 glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_HEIGHT, &tex_h);
+                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_INTERNAL_FORMAT,
+                                             &tex_format);
+                glGetTextureParameteriv(textures[i], GL_TEXTURE_IMMUTABLE_LEVELS, &tex_levels);
+                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_SAMPLES, &tex_samples);
+                LOG_CRITICAL(Render_OpenGL,
+                             "NXBOX texture={} format={:#x} levels={} samples={} error={:#x}",
+                             textures[i], tex_format, tex_levels, tex_samples, glGetError());
                 if (tex_w > 0 && tex_h > 0) {
                     constexpr int kW = 16;
                     constexpr int kH = 9;
