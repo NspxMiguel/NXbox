@@ -93,3 +93,22 @@ First implementable, testable-without-any-rendering slice: the USB scanner itsel
 (`KnownFolders.RemovableDevices` + `IStorageFolderHandleAccess`), which can prove it finds
 `switch/prod.keys`/`switch/games/*.nsp` on a real USB drive and copies them into `LocalState`,
 independent of whatever draws the screen on top of it.
+
+
+## Status (measured on Xbox)
+
+Both foundations proven working, independent of each other, on real hardware:
+
+- **USB discovery**: `usb_library.cpp`'s `ScanUsbForGamesAndKeys()` gets the `removableStorage`
+  capability, enumerates the console's USB drive via `KnownFolders::RemovableDevices()`, and
+  correctly reports no `switch/`, `nxbox/games/`, `prod.keys` or `title.keys` on Nativra's drive
+  (there genuinely is none there) — no crash, no capability denial.
+- **Rendering**: `setup_ui.cpp`'s `ShowSetupScreen()` stands up D3D11 + a D2D device/context + a
+  DXGI swap chain on the same `CoreWindow` Mesa later takes over, and draws with DirectWrite —
+  6 seconds of `BeginDraw`/`DrawText`/`EndDraw`/`Present1` with zero failures logged
+  (`SETUP_UI_BEGIN` through `SETUP_UI_END`, no `SETUP_UI_FAILED`).
+
+Not yet built: the actual screens from the plan above (only a placeholder title + one status line
+renders right now), input/focus navigation on the setup screen, `ImportFromUsb()`'s copy path has
+not been exercised against a drive that actually has files on it, and neither piece is wired into
+the real boot flow yet (both are behind the `usb_scan_test.txt` marker file for testing only).
