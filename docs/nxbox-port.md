@@ -334,3 +334,34 @@ changing synchronization in the d3d12 driver; a query or predication state the e
 active; the emulator's GL state after its first clear. Every diagnostic used is kept on the
 `diag/black-screen` branch (probes, self tests, PPM dumps, the green draw test); `main` carries
 only the fixes.
+
+
+## Persona 5 Royal: found the loop that blocks the menu (measured, root cause not yet fixed)
+
+The game never gets past a black screen because it never leaves the controller-configuration
+applet. `applet_controller.cpp`'s `Initialize`/`ReconfigureControllers` cycle repeats every ~5.13
+seconds, forever (measured: `Initializing Controller Applet` at 144.7, 149.8, 154.9, 160.1, 165.2,
+170.4, 175.5, 180.7, 185.9s, a run of nine straight cycles). Our side reports success every time
+(logged: `is_success=true player_count=1 selected_id=0x0 result=0`), so the game is rejecting a
+response that looks correct by every field we control — the bug is in the handshake back to the
+guest, not in the controller state itself. `FrontendApplet::Exit()` sets `is_completed` and signals
+`state_changed_event`; `ILibraryAppletAccessor::GetResult()` separately returns `terminate_result`,
+which nothing in the applet code ever sets explicitly (it stays at its zero/Success default, so this
+was ruled out as the cause, not confirmed as it).
+
+This loop is also what exhausts kernel events: each cycle leaks the generic `Service::Event` wrapper
+(`core/hle/service/os/event.cpp`, name `"Event"`) at the controller applet's retry rate — measured
+766 of 800 total `KEvent` creations were bucketed under `"Event"` in one run. The stock slab of 900
+(`SlabCountKEvent` in `init_slab_setup.cpp`) is exhausted in ~216s; raised to 20000 on this port only
+as a stopgap (`#ifdef _WIN32`) so longer runs are possible while this is tracked down, but the
+process still eventually hits the guest's own per-process `EventCountMax` resource limit (~247s in
+two independent runs, suspiciously exact) since raising the slab does not raise that.
+
+Next step: trace what the game's applet-management code checks between `IsCompleted` succeeding and
+deciding to retry — likely a field or handle we are not returning correctly from
+`ILibraryAppletAccessor`/`IStorage` for this specific applet type, or a race between `Exit()` firing
+synchronously inside `Execute()` (our `DefaultControllerApplet::ReconfigureControllers` calls its
+callback immediately, before `Execute()` returns control to the caller) and the guest's own wait
+setup. Diagnostics for this (`NXBOX ConfigurationComplete`, `NXBOX CreateEvent`, `NXBOX
+GetDisplayVsyncEvent`) are committed to `main`; `GetDisplayVsyncEvent` was checked and ruled out (0
+calls logged while the leak was already at 700+).
