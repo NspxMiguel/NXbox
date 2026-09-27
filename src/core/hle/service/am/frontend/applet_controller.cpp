@@ -259,6 +259,13 @@ void Controller::ConfigurationComplete(bool is_success) {
     LOG_DEBUG(Service_HID, "Result Info: player_count={}, selected_id={}, result={}",
               result_info.player_count, result_info.selected_id, result_info.result);
 
+#ifdef _WIN32
+    LOG_CRITICAL(Service_HID,
+                 "NXBOX ConfigurationComplete is_success={} player_count={} selected_id={:#x} "
+                 "result={}",
+                 is_success, result_info.player_count, result_info.selected_id,
+                 static_cast<u32>(result_info.result));
+#endif
     complete = true;
     out_data = std::vector<u8>(sizeof(ControllerSupportResultInfo));
     std::memcpy(out_data.data(), &result_info, out_data.size());
