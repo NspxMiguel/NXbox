@@ -422,3 +422,23 @@ when a manual full-screen red clear was confirmed visible on the TV, which was n
 either. Continuing this needs either a working comparison (the same P5R dump running visibly on
 desktop Eden, to confirm the assumption that it should work at all) or someone who knows Eden's
 render pipeline well enough to suggest a lead this session did not find.
+
+
+## Confirmed via desktop Eden: the dump, keys and Eden itself are all fine
+
+Built desktop Eden (`cmake -S . -B build-desktop` with the Qt frontend, target `yuzu`, output
+`eden.exe`) on the PC with a real NVIDIA GPU, using the exact same P5R dump and keys copied
+straight into `%APPDATA%\eden\keys`. It boots and renders correctly: the photosensitivity warning
+screen (real text) and the "Thieves Guild" network-connection prompt (a real logo image, not just
+text) both display properly. This rules out the dump, the keys, and Eden's own P5R support as
+possible causes — the same title works when NOT going through this port's Mesa D3D12 backend.
+
+This narrows the black screen to something specific to `libgallium_wgl.dll` (the pinned
+`aerisarn/mesa-uwp` fork) rendering through D3D12 on the Xbox, as opposed to a native driver
+(NVIDIA here) rendering OpenGL directly. Screenshots kept in
+`~/.local/share/nxbox/artifacts/p5r-desktop-proof/` (not committed — real box art/game screens).
+
+Practical note for next time: on this PC, GUI apps launched over SSH run in Session 0 (services,
+no real display) and screenshots there fail with "the handle is invalid". A `schtasks /Create ...
+/IT /RL HIGHEST` (interactive) run against the active console session (`query session` shows it)
+is what actually reaches the real screen for both the app and screenshot capture.
