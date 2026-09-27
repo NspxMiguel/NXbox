@@ -194,13 +194,13 @@ public:
         // at a time (the bulk/tile readback path was unreliable; single-pixel reads were not).
         static unsigned thumbs_saved = 0;
         static unsigned swap_index = 0;
-        if (thumbs_saved < 6 && (++swap_index % 90 == 1)) {
+        if (thumbs_saved < 10 && (++swap_index % 120 == 1)) {
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             glReadBuffer(GL_BACK);
-            constexpr int kThumbW = 96;
-            constexpr int kThumbH = 54;
+            constexpr int kThumbW = 16;
+            constexpr int kThumbH = 9;
             std::vector<unsigned char> thumb(static_cast<size_t>(kThumbW) * kThumbH * 3);
             for (int y = 0; y < kThumbH; ++y) {
                 for (int x = 0; x < kThumbW; ++x) {
