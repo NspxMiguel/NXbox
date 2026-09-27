@@ -16,6 +16,8 @@ add_executable(eden-uwp WIN32
     game_download.cpp
     game_download.h
     gamepad.h
+    usb_library.cpp
+    usb_library.h
     diagnostic.h
 )
 

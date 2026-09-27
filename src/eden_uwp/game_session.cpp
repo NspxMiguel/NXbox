@@ -30,6 +30,7 @@
 #include "eden_uwp/game_download.h"
 #include "eden_uwp/gamepad.h"
 #include "eden_uwp/mesa_window.h"
+#include "eden_uwp/usb_library.h"
 #include "video_core/gpu.h"
 
 namespace EdenXbox {
@@ -91,6 +92,15 @@ std::string ResolveGamePath(const std::string& bundled) {
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
+    // LocalState\usb_scan_test.txt: a one-off trigger to test the USB library scanner (see
+    // usb_library.h) without wiring it into the boot path yet.
+    if (std::filesystem::exists(
+            std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+            "usb_scan_test.txt")) {
+        const auto scan = ScanUsbForGamesAndKeys();
+        Diagnostic("USB_SCAN_TEST drive_found=" + std::string(scan.drive_found ? "1" : "0"));
+    }
     const std::string path = ResolveGamePath(bundled_path);
     {
         // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a

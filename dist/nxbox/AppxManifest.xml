@@ -28,5 +28,8 @@
     <Capability Name="internetClient" />
     <Capability Name="privateNetworkClientServer" />
     <rescap:Capability Name="codeGeneration" />
+    <!-- Reads game/key files from a USB drive (KnownFolders.RemovableDevices), so a player can set
+         up NXbox without a PC and the Device Portal. -->
+    <DeviceCapability Name="removableStorage" />
   </Capabilities>
 </Package>
