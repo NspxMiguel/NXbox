@@ -18,6 +18,8 @@ add_executable(eden-uwp WIN32
     gamepad.h
     usb_library.cpp
     usb_library.h
+    setup_ui.cpp
+    setup_ui.h
     diagnostic.h
 )
 
@@ -32,6 +34,10 @@ target_link_libraries(eden-uwp PRIVATE WindowsApp.lib)
 # Win32 networking used by core's network_interface (ConvertLengthToIpv4Mask etc.), plus crypt32 +
 # user32 which the from-source OpenSSL pulls (cert store + its fatal-error/service-detection code).
 target_link_libraries(eden-uwp PRIVATE iphlpapi ws2_32 crypt32 user32)
+
+# setup_ui.cpp: Direct2D/DirectWrite render the setup screen directly on the CoreWindow (no XAML
+# toolchain in this CMake/Ninja build — see docs/nxbox-ui.md).
+target_link_libraries(eden-uwp PRIVATE d3d11 d2d1 dwrite dxgi)
 
 # The HostMemory *FromApp path keys off this for the common headers it includes here too.
 target_compile_definitions(eden-uwp PRIVATE YUZU_UWP_APPCONTAINER=1)
