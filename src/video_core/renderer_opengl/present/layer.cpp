@@ -4,6 +4,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include "common/logging.h"
 #include "video_core/framebuffer_config.h"
 #include "video_core/present.h"
 #include "video_core/renderer_opengl/gl_blit_screen.h"
@@ -143,6 +145,21 @@ FramebufferTextureInfo Layer::LoadFBToScreenInfo(const Tegra::FramebufferConfig&
     const u8* const host_ptr{device_memory.GetPointer<u8>(framebuffer_addr)};
     if (host_ptr) {
         const std::span<const u8> input_data(host_ptr, size_in_bytes);
+#ifdef _WIN32
+        {
+            static unsigned calls = 0;
+            if (++calls % 90 == 1) {
+                size_t nonzero = 0;
+                for (size_t i = 0; i < std::min<size_t>(size_in_bytes, 1u << 20); ++i) {
+                    nonzero += host_ptr[i] != 0;
+                }
+                LOG_CRITICAL(Render_OpenGL,
+                             "NXBOX LoadFBToScreenInfo (CPU fallback) addr={:#x} size={} "
+                             "nonzero_of_first_1MiB={}",
+                             framebuffer_addr, size_in_bytes, nonzero);
+            }
+        }
+#endif
         Tegra::Texture::UnswizzleTexture(gl_framebuffer_data, input_data, bytes_per_pixel,
                                          framebuffer.width, framebuffer.height, 1,
                                          block_height_log2, 0);

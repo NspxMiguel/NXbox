@@ -738,6 +738,16 @@ std::optional<FramebufferTextureInfo> RasterizerOpenGL::AccelerateDisplay(
     std::scoped_lock lock{texture_cache.mutex};
     const auto [image_view, scaled] =
         texture_cache.TryFindFramebufferImageView(config, framebuffer_addr);
+#ifdef _WIN32
+    {
+        static unsigned calls = 0;
+        if (++calls % 90 == 1) {
+            LOG_CRITICAL(Render_OpenGL,
+                         "NXBOX AccelerateDisplay addr={:#x} stride={} accelerated={} scaled={}",
+                         framebuffer_addr, pixel_stride, image_view != nullptr, scaled);
+        }
+    }
+#endif
     if (!image_view) {
         return {};
     }
