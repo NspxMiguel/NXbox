@@ -133,7 +133,9 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
             // successfully): LocalState\eden\log.
             static unsigned draws = 0;
             static unsigned saved = 0;
-            if (saved < 10 && (++draws % 90 == 1)) {
+            // Keeps sampling for as long as the game runs, cycling through 4 files so a late
+            // thumbnail (after a long intro) can still be pulled.
+            if (++draws % 300 == 1) {
                 NxboxPackBufferGuard pack_guard;
                 GLint tex_w = 0;
                 GLint tex_h = 0;
@@ -156,14 +158,15 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                             thumb[o + 2] = px[2];
                         }
                     }
+                    const unsigned slot = saved % 4;
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
-                                          fmt::format("thumb_{}.ppm", saved),
+                                          fmt::format("thumb_{}.ppm", slot),
                                       std::ios::binary);
                     out << "P6\n" << kW << ' ' << kH << "\n255\n";
                     out.write(reinterpret_cast<const char*>(thumb.data()),
                               static_cast<std::streamsize>(thumb.size()));
-                    LOG_CRITICAL(Render_OpenGL, "NXBOX thumb_{} saved tex={}x{} peak={}", saved,
-                                 tex_w, tex_h, peak);
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX thumb_{} (save #{}) tex={}x{} peak={}",
+                                 slot, saved, tex_w, tex_h, peak);
                     ++saved;
                 }
             }
