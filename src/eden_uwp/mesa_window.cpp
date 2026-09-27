@@ -194,7 +194,12 @@ public:
         // at a time (the bulk/tile readback path was unreliable; single-pixel reads were not).
         static unsigned thumbs_saved = 0;
         static unsigned swap_index = 0;
-        if (thumbs_saved < 10 && (++swap_index % 120 == 1)) {
+        ++swap_index;
+        if (swap_index <= 3 || swap_index % 500 == 0) {
+            Diagnostic("SWAPBUFFERS_CALLED index=" + std::to_string(swap_index) +
+                       " thumbs_saved=" + std::to_string(thumbs_saved));
+        }
+        if (thumbs_saved < 10 && (swap_index % 120 == 1)) {
             GLint previous = 0;
             glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
