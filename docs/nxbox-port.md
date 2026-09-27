@@ -402,3 +402,23 @@ loop (fixed, confirmed not the cause with 4+ minutes of continuous input), the d
 one), and the managed layer's default visibility (defaults to visible, unrelated code path). The
 presented texture the game itself writes to remains genuinely empty through several minutes of
 active ~30 FPS rendering with zero GL/driver errors.
+
+
+## 15-minute conclusive test: the black screen is not a loading phase
+
+With the full-patch (query + fence) Mesa restored, the controller loop fixed, and continuous remote
+input sent the whole time (ruling out any input-related stall), P5R ran for 887.8 seconds (14.8
+minutes) at a steady ~30 FPS with zero crashes and zero controller-applet retries. 173 thumbnail
+samples, 5 seconds apart, spanning the whole run: every single one `peak=0`. This rules out "it just
+needs more time to load" — a stable, active, crash-free 15-minute run with genuinely empty output is
+not a loading screen.
+
+**Where this investigation stands**: every hypothesis generated from reading Eden's and this port's
+own code has been tested and ruled out (see the sections above). The remaining possibilities are
+either something in Eden's rendering pipeline this port does not yet understand well enough to
+suspect, or something at the Xbox compositor/swapchain level outside Eden's own code entirely —
+notably, Device Portal screenshots of NXbox have been black in every test all session, including
+when a manual full-screen red clear was confirmed visible on the TV, which was never explained
+either. Continuing this needs either a working comparison (the same P5R dump running visibly on
+desktop Eden, to confirm the assumption that it should work at all) or someone who knows Eden's
+render pipeline well enough to suggest a lead this session did not find.
