@@ -385,3 +385,20 @@ engine callback mechanism as buttons and sticks, so no new core plumbing is need
 source. Plan: map the right stick's tilt as a motion proxy (pitch/yaw) by default, which covers
 aim-assist-style motion controls without new infrastructure. Stretch idea for later: a phone as a
 companion gyroscope over the LAN, reusing the remote-input bridge already built for testing.
+
+
+## Ruled out: the null-fence patch is not the black-screen cause either
+
+Tested `d3d12_fence.cpp`'s null-fence guard (patch_mesa_uwp.py's `patch_fence`) in isolation, removed
+via a CI build with `mesa_skip=fence`. Result: the game is noticeably less stable without it (crashed
+on the first three launch attempts, before even reaching the point the loop-fix build always survives
+to), and on the one run that did stay up, the picture is still black — 4 samples, `peak=0`, through
+t=67.9s. The guard is necessary for basic stability and is not itself hiding real rendered content;
+restored to the full-patch (query + fence) Mesa build after this test.
+
+Ruled out so far, in full: both Mesa patches together, either alone, the controller-applet retry
+loop (fixed, confirmed not the cause with 4+ minutes of continuous input), the disabled MSAA resolve
+(fixed with glBlitFramebuffer, confirmed not the cause), multiple display layers (P5R uses exactly
+one), and the managed layer's default visibility (defaults to visible, unrelated code path). The
+presented texture the game itself writes to remains genuinely empty through several minutes of
+active ~30 FPS rendering with zero GL/driver errors.
