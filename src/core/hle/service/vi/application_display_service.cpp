@@ -4,6 +4,9 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef _WIN32
+#include <atomic>
+#endif
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/nvnflinger/hos_binder_driver.h"
 #include "core/hle/service/nvnflinger/parcel.h"
@@ -255,6 +258,15 @@ Result IApplicationDisplayService::GetDisplayVsyncEvent(
     std::scoped_lock lk{m_lock};
 
     auto [it, created] = m_display_vsync_events.emplace(display_id, m_context);
+#ifdef _WIN32
+    {
+        static std::atomic<unsigned> calls{0};
+        LOG_CRITICAL(Service_VI,
+                     "NXBOX GetDisplayVsyncEvent call={} display_id={:#x} created={} map_size={}",
+                     calls.fetch_add(1, std::memory_order_relaxed), display_id, created,
+                     m_display_vsync_events.size());
+    }
+#endif
     R_UNLESS(created, VI::ResultPermissionDenied);
 
     m_container->LinkVsyncEvent(display_id, &it->second);
