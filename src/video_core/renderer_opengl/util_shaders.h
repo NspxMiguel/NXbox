@@ -56,6 +56,11 @@ private:
     OGLProgram convert_s8d24_program;
     OGLProgram convert_ms_to_nonms_program;
     OGLProgram convert_nonms_to_ms_program;
+#ifdef NXBOX_NO_MSAA_STORAGE_IMAGES
+    // Used by the glBlitFramebuffer-based MSAA resolve fallback (see CopyMSAA).
+    OGLFramebuffer msaa_blit_read_fbo;
+    OGLFramebuffer msaa_blit_draw_fbo;
+#endif
 };
 
 GLenum StoreFormat(u32 bytes_per_block);

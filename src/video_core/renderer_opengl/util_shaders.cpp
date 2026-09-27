@@ -281,15 +281,38 @@ void UtilShaders::ConvertS8D24(Image& dst_image, std::span<const ImageCopy> copi
 void UtilShaders::CopyMSAA(Image& dst_image, Image& src_image,
                            std::span<const VideoCommon::ImageCopy> copies) {
 #ifdef NXBOX_NO_MSAA_STORAGE_IMAGES
-    // D3D12 has no multisampled UAVs, and Mesa's D3D12 backend aborts while linking these
-    // programs instead of reporting a link error.
-    static std::once_flag warned;
-    std::call_once(warned, [] {
-        LOG_WARNING(Render_OpenGL, "MSAA image conversion is unavailable on this driver; skipped");
-    });
-    (void)dst_image;
-    (void)src_image;
-    (void)copies;
+    // D3D12 has no multisampled UAVs, and Mesa's D3D12 backend aborts while linking the compute
+    // programs the desktop path uses here instead of reporting a link error. glBlitFramebuffer's
+    // multisample resolve does the same conversion without image load/store, and Mesa's D3D12
+    // backend implements it through the driver's native resolve.
+    if (msaa_blit_read_fbo.handle == 0) {
+        msaa_blit_read_fbo.Create();
+        msaa_blit_draw_fbo.Create();
+    }
+    GLint prev_read = 0;
+    GLint prev_draw = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &prev_read);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prev_draw);
+    for (const VideoCommon::ImageCopy& copy : copies) {
+        ASSERT(copy.src_subresource.base_layer == 0);
+        ASSERT(copy.src_subresource.num_layers == 1);
+        ASSERT(copy.dst_subresource.base_layer == 0);
+        ASSERT(copy.dst_subresource.num_layers == 1);
+
+        glNamedFramebufferTexture(msaa_blit_read_fbo.handle, GL_COLOR_ATTACHMENT0,
+                                  src_image.Handle(), copy.src_subresource.base_level);
+        glNamedFramebufferTexture(msaa_blit_draw_fbo.handle, GL_COLOR_ATTACHMENT0,
+                                  dst_image.Handle(), copy.dst_subresource.base_level);
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, msaa_blit_read_fbo.handle);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, msaa_blit_draw_fbo.handle);
+        glBlitFramebuffer(
+            copy.src_offset.x, copy.src_offset.y, copy.src_offset.x + copy.extent.width,
+            copy.src_offset.y + copy.extent.height, copy.dst_offset.x, copy.dst_offset.y,
+            copy.dst_offset.x + copy.extent.width, copy.dst_offset.y + copy.extent.height,
+            GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(prev_read));
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(prev_draw));
 #else
     const bool is_ms_to_non_ms = src_image.info.num_samples > 1 && dst_image.info.num_samples == 1;
     const auto program_handle =
