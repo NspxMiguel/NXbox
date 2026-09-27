@@ -368,3 +368,12 @@ This was most likely specific to testing over Device Portal remote input rather 
 controller (a real controller should stay enumerated in WGI continuously), but the debounce also
 protects a real controller against any transient WGI enumeration gap, so it is the right fix either
 way.
+
+## Motion controls (planned, not implemented)
+
+The Xbox Series X controller and Xbox Elite controller have no gyroscope. Eden's motion pipeline
+(`hid_core/frontend/emulated_controller.h`'s `SetMotion`) reads through the same `Common::Input`
+engine callback mechanism as buttons and sticks, so no new core plumbing is needed — only a new
+source. Plan: map the right stick's tilt as a motion proxy (pitch/yaw) by default, which covers
+aim-assist-style motion controls without new infrastructure. Stretch idea for later: a phone as a
+companion gyroscope over the LAN, reusing the remote-input bridge already built for testing.
