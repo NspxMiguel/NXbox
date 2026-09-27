@@ -4,8 +4,6 @@
 
 #include <algorithm>
 #include <array>
-#include <vector>
-#include <fstream>
 #include <filesystem>
 #include <winrt/Windows.Storage.h>
 #include <cstdlib>
@@ -190,47 +188,6 @@ public:
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-        // LocalState\eden\log\thumb_N.ppm: a low-resolution thumbnail of the back buffer, one pixel
-        // at a time (the bulk/tile readback path was unreliable; single-pixel reads were not).
-        static unsigned thumbs_saved = 0;
-        static unsigned swap_index = 0;
-        ++swap_index;
-        if (swap_index <= 3 || swap_index % 500 == 0) {
-            Diagnostic("SWAPBUFFERS_CALLED index=" + std::to_string(swap_index) +
-                       " thumbs_saved=" + std::to_string(thumbs_saved));
-        }
-        if (thumbs_saved < 10 && (swap_index % 120 == 1)) {
-            GLint previous = 0;
-            glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previous);
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            glReadBuffer(GL_BACK);
-            constexpr int kThumbW = 16;
-            constexpr int kThumbH = 9;
-            std::vector<unsigned char> thumb(static_cast<size_t>(kThumbW) * kThumbH * 3);
-            for (int y = 0; y < kThumbH; ++y) {
-                for (int x = 0; x < kThumbW; ++x) {
-                    unsigned char pixel[4]{};
-                    glReadPixels(x * 1920 / kThumbW, y * 1080 / kThumbH, 1, 1, GL_RGBA,
-                                 GL_UNSIGNED_BYTE, pixel);
-                    // PPM rows go top to bottom; GL's origin is bottom-left, so flip Y.
-                    const size_t offset = (static_cast<size_t>(kThumbH - 1 - y) * kThumbW + x) * 3;
-                    thumb[offset] = pixel[0];
-                    thumb[offset + 1] = pixel[1];
-                    thumb[offset + 2] = pixel[2];
-                }
-            }
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, static_cast<GLuint>(previous));
-            const auto path = std::filesystem::path(winrt::to_string(
-                                  winrt::Windows::Storage::ApplicationData::Current()
-                                      .LocalFolder()
-                                      .Path())) /
-                              "eden" / "log" /
-                              ("thumb_" + std::to_string(thumbs_saved++) + ".ppm");
-            std::ofstream out(path, std::ios::binary);
-            out << "P6\n" << kThumbW << ' ' << kThumbH << "\n255\n";
-            out.write(reinterpret_cast<const char*>(thumb.data()),
-                      static_cast<std::streamsize>(thumb.size()));
-        }
         const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
         if (!swap(runtime->dc)) {
             throw std::runtime_error("Mesa presentation failed");

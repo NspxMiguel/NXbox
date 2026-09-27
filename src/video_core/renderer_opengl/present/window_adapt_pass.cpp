@@ -7,8 +7,17 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/nxbox_gl_readback.h"
 #include "common/settings.h"
 #include "video_core/framebuffer_config.h"
+
+#ifdef _WIN32
+#include <algorithm>
+#include <fstream>
+#include <vector>
+#include "common/fs/path_util.h"
+#include "common/logging.h"
+#endif
 #include "video_core/host_shaders/opengl_present_vert.h"
 #include "video_core/renderer_opengl/gl_device.h"
 #include "video_core/renderer_opengl/gl_shader_manager.h"
@@ -117,6 +126,49 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
         glProgramUniformMatrix3x2fv(vert.handle, ModelViewMatrixLocation, 1, GL_FALSE, matrices[i].data());
         glNamedBufferSubData(vertex_buffer.handle, 0, sizeof(vertices[i]), std::data(vertices[i]));
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+#ifdef _WIN32
+        {
+            // NXBOX diagnostic: save a small thumbnail of the presented layer texture, at most
+            // 10 times, at the same place window_adapt_pass.cpp used before (proven to write
+            // successfully): LocalState\eden\log.
+            static unsigned draws = 0;
+            static unsigned saved = 0;
+            if (saved < 10 && (++draws % 90 == 1)) {
+                NxboxPackBufferGuard pack_guard;
+                GLint tex_w = 0;
+                GLint tex_h = 0;
+                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_WIDTH, &tex_w);
+                glGetTextureLevelParameteriv(textures[i], 0, GL_TEXTURE_HEIGHT, &tex_h);
+                if (tex_w > 0 && tex_h > 0) {
+                    constexpr int kW = 16;
+                    constexpr int kH = 9;
+                    std::vector<unsigned char> thumb(kW * kH * 3);
+                    unsigned peak = 0;
+                    for (int y = 0; y < kH; ++y) {
+                        for (int x = 0; x < kW; ++x) {
+                            unsigned char px[4]{};
+                            glGetTextureSubImage(textures[i], 0, x * tex_w / kW, y * tex_h / kH, 0,
+                                                 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4, px);
+                            peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
+                            const size_t o = (static_cast<size_t>(y) * kW + x) * 3;
+                            thumb[o] = px[0];
+                            thumb[o + 1] = px[1];
+                            thumb[o + 2] = px[2];
+                        }
+                    }
+                    std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
+                                          fmt::format("thumb_{}.ppm", saved),
+                                      std::ios::binary);
+                    out << "P6\n" << kW << ' ' << kH << "\n255\n";
+                    out.write(reinterpret_cast<const char*>(thumb.data()),
+                              static_cast<std::streamsize>(thumb.size()));
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX thumb_{} saved tex={}x{} peak={}", saved,
+                                 tex_w, tex_h, peak);
+                    ++saved;
+                }
+            }
+        }
+#endif
     }
 }
 
