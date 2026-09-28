@@ -480,12 +480,49 @@ nxbox_report_reset(const char *what, HRESULT hr)
     )
     # The helper must precede d3d12_reset_batch, the first function that uses it.
     reset_anchor = "bool\nd3d12_reset_batch(struct d3d12_context *ctx, struct d3d12_batch *batch, uint64_t timeout_ns)\n"
-    for old in (reset_anchor, anchor, close_old, alloc_old, list_old):
+    # NXBOX_D3D12_RECOVER=1: drop a command list whose Close() failed and let the next batch
+    # create a fresh one, instead of trying to reuse it (which cascades into every later batch).
+    recover_old = (
+        "      batch->has_errors = true;\n"
+        "      return;\n"
+        "   }\n\n"
+        "   mtx_lock(&screen->submit_mutex);\n"
+    )
+    recover_new = (
+        "      batch->has_errors = true;\n"
+        "      if (getenv(\"NXBOX_D3D12_RECOVER\")) {\n"
+        "         if (ctx->cmdlist2) {\n"
+        "            ctx->cmdlist2->Release();\n"
+        "            ctx->cmdlist2 = nullptr;\n"
+        "         }\n"
+        "         if (ctx->cmdlist8) {\n"
+        "            ctx->cmdlist8->Release();\n"
+        "            ctx->cmdlist8 = nullptr;\n"
+        "         }\n"
+        "         ctx->cmdlist->Release();\n"
+        "         ctx->cmdlist = nullptr;\n"
+        "      }\n"
+        "      return;\n"
+        "   }\n\n"
+        "   mtx_lock(&screen->submit_mutex);\n"
+    )
+    for old in (reset_anchor, anchor, close_old, alloc_old, list_old, recover_old):
         if source.count(old) != 1:
             raise RuntimeError(f"Pinned Mesa d3d12_batch.cpp does not match the batch patch: {old[:50]}")
     source = source.replace(reset_anchor, helper + reset_anchor)
     source = source.replace(close_old, close_new).replace(alloc_old, alloc_new).replace(list_old, list_new)
+    source = source.replace(recover_old, recover_new)
     path.write_text(source)
+
+    # Context destruction ends the batch and then releases the list, which recovery may have
+    # already dropped.
+    context = root / "src/gallium/drivers/d3d12/d3d12_context.cpp"
+    context_source = context.read_text()
+    release_old = "      d3d12_destroy_batch(ctx, &ctx->batches[i]);\n   ctx->cmdlist->Release();\n"
+    release_new = "      d3d12_destroy_batch(ctx, &ctx->batches[i]);\n   if (ctx->cmdlist)\n      ctx->cmdlist->Release();\n"
+    if context_source.count(release_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_context.cpp does not match the recovery patch")
+    context.write_text(context_source.replace(release_old, release_new))
 
 
 if __name__ == "__main__":
