@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
+#include <fstream>
 #include <winrt/Windows.Storage.h>
 #include <cstdlib>
 #include <future>
@@ -84,6 +85,28 @@ struct MesaRuntime {
 
     void Initialize(const CoreWindow& window) {
         _putenv_s("GALLIUM_DRIVER", "d3d12");
+        // Diagnostic knobs for Mesa, changeable on the console without a rebuild.
+        {
+            const std::filesystem::path env_file =
+                std::filesystem::path(winrt::to_string(
+                    winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+                "nxbox_env.txt";
+            std::ifstream env_in(env_file);
+            std::string line;
+            while (std::getline(env_in, line)) {
+                while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+                    line.pop_back();
+                }
+                const auto eq = line.find('=');
+                if (line.empty() || line[0] == '#' || eq == std::string::npos) {
+                    continue;
+                }
+                const std::string key = line.substr(0, eq);
+                const std::string value = line.substr(eq + 1);
+                _putenv_s(key.c_str(), value.c_str());
+                Diagnostic("ENV " + key + "=" + value);
+            }
+        }
         Diagnostic("loading packaged DXIL validator");
         const auto validator = LoadPackagedLibrary(L"dxil.dll", 0);
         if (!validator) {

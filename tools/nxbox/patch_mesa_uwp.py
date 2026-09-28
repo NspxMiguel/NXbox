@@ -55,6 +55,7 @@ def patch(root: Path) -> None:
         print("skipping the DXIL report patch")
     else:
         patch_dxil(root)
+    patch_shader_model(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -270,6 +271,34 @@ def patch_dxil(root: Path) -> None:
     if error_old not in compiler_source:
         raise RuntimeError("Pinned Mesa d3d12_compiler.cpp does not match the error report patch")
     compiler.write_text(compiler_source.replace(error_old, error_new, 1))
+
+
+
+def patch_shader_model(root: Path) -> None:
+    # The pinned Mesa emits DXIL for the highest model the device reports (6.8 on the Xbox);
+    # NXBOX_D3D12_MAX_SM=<minor> caps it (e.g. 7 for 6.7) so models can be bisected at runtime.
+    path = root / "src/gallium/drivers/d3d12/d3d12_screen.cpp"
+    source = path.read_text()
+    old = "         break;\n      }\n   }\n\n   D3D12_COMMAND_QUEUE_DESC queue_desc;\n"
+    new = (
+        "         break;\n      }\n   }\n"
+        "   {\n"
+        "      const char *nxbox_sm = getenv(\"NXBOX_D3D12_MAX_SM\");\n"
+        "      if (nxbox_sm && *nxbox_sm) {\n"
+        "         unsigned nxbox_minor = (unsigned)strtoul(nxbox_sm, NULL, 10);\n"
+        "         dxil_shader_model nxbox_cap = (dxil_shader_model)(SHADER_MODEL_6_0 + nxbox_minor);\n"
+        "         if (nxbox_cap < screen->max_shader_model)\n"
+        "            screen->max_shader_model = nxbox_cap;\n"
+        "      }\n"
+        "      char nxbox_text[32];\n"
+        "      snprintf(nxbox_text, sizeof(nxbox_text), \"0x%x\", (unsigned)screen->max_shader_model);\n"
+        "      SetEnvironmentVariableA(\"NXBOX_D3D12_SM\", nxbox_text);\n"
+        "   }\n"
+        "\n   D3D12_COMMAND_QUEUE_DESC queue_desc;\n"
+    )
+    if source.count(old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_screen.cpp does not match the shader model patch")
+    path.write_text(source.replace(old, new))
 
 
 if __name__ == "__main__":

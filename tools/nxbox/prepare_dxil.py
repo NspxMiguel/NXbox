@@ -46,13 +46,25 @@ def main():
         / "Windows Kits/10/Redist"
     )
     candidates = sorted(p for p in sdk.rglob("dxil.dll") if "x64" in p.parts)
-    # The SDK validator (1.8) fails every Mesa shader with DXC_E_LLVM_UNREACHABLE on the
-    # Xbox, so the pinned DXC release is the default; NXBOX_DXIL_SDK=1 restores the SDK one.
-    if candidates and os.environ.get("NXBOX_DXIL_SDK") == "1":
+    # The DXC release validator imports the desktop CRT and fails to load in the package
+    # (error 126), so the SDK validator stays the default; NXBOX_DXIL_SDK=0 forces DXC.
+    if candidates and os.environ.get("NXBOX_DXIL_SDK") != "0":
         shutil.copy2(candidates[-1], args.output / "dxil.dll")
         print(f"Using Windows SDK shader validator: {candidates[-1]}")
     else:
         print("Using checksum-pinned DXC 1.9.2607 shader validator")
+    # dxcompiler.dll (diagnostics only) needs the desktop C++ runtime; ship it app-local.
+    vs = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft Visual Studio"
+    crt_dirs = sorted(
+        p for p in vs.glob("*/*/VC/Redist/MSVC/*/x64/Microsoft.VC14*.CRT") if p.is_dir()
+    )
+    if crt_dirs:
+        for name in ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll"]:
+            if (crt_dirs[-1] / name).exists():
+                shutil.copy2(crt_dirs[-1] / name, args.output / name)
+        print(f"Staged the C++ runtime from {crt_dirs[-1]}")
+    else:
+        print("No Visual C++ runtime found; dxcompiler.dll will not load")
     print("DXIL SHA256:", hashlib.sha256((args.output / "dxil.dll").read_bytes()).hexdigest())
 
 
