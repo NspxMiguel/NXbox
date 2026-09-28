@@ -879,6 +879,17 @@ void HostMemory::Protect(size_t virtual_offset, size_t length, MemoryPermission 
 }
 
 void HostMemory::ClearBackingRegion(size_t physical_offset, size_t length, u32 fill_value) {
+#ifdef HOST_MEMORY_USE_FROM_APP
+    // The Xbox/UWP backing is demand-committed (see BackingDemandCommitHandler): decommitting
+    // yields zero-filled pages on the next touch, exactly like the memset, without charging the
+    // 5 GiB app budget for memory the guest allocates but never uses (games clear their whole heap
+    // through here at startup).
+    constexpr size_t PageMask = 0xFFF;
+    if (fill_value == 0 && ((physical_offset | length) & PageMask) == 0 && length != 0 &&
+        VirtualFree(backing_base + physical_offset, length, MEM_DECOMMIT)) {
+        return;
+    }
+#endif
     std::memset(backing_base + physical_offset, fill_value, length);
 }
 
