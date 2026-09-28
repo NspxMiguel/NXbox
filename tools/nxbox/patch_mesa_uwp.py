@@ -250,6 +250,27 @@ def patch_dxil(root: Path) -> None:
         source = source.replace(old, new, 1)
     path.write_text(source)
 
+    compiler = root / "src/gallium/drivers/d3d12/d3d12_compiler.cpp"
+    compiler_source = compiler.read_text()
+    error_old = (
+        "               \"== END ==========================================================\\n\",\n"
+        "               err);\n"
+    )
+    error_new = error_old + (
+        "            static bool nxbox_error_reported = false;\n"
+        "            if (!nxbox_error_reported) {\n"
+        "               nxbox_error_reported = true;\n"
+        "               char nxbox_text[400];\n"
+        "               snprintf(nxbox_text, sizeof(nxbox_text), \"%s\", err);\n"
+        "               for (char *c = nxbox_text; *c; ++c)\n"
+        "                  if (*c == '\\n' || *c == '\\r') *c = ' ';\n"
+        "               SetEnvironmentVariableA(\"NXBOX_DXIL_ERROR\", nxbox_text);\n"
+        "            }\n"
+    )
+    if error_old not in compiler_source:
+        raise RuntimeError("Pinned Mesa d3d12_compiler.cpp does not match the error report patch")
+    compiler.write_text(compiler_source.replace(error_old, error_new, 1))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

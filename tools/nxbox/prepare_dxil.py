@@ -29,6 +29,13 @@ def main():
             if member.filename.replace("\\", "/") == "bin/x64/dxil.dll"
         )
         (args.output / "dxil.dll").write_bytes(bundle.read(validator))
+        # dxcompiler.dll only gives Mesa readable validation errors; it is optional at runtime.
+        compiler = next(
+            member
+            for member in bundle.infolist()
+            if member.filename.replace("\\", "/") == "bin/x64/dxcompiler.dll"
+        )
+        (args.output / "dxcompiler.dll").write_bytes(bundle.read(compiler))
         for name in ["LICENSE-MS.txt", "LICENSE-LLVM.txt"]:
             (args.output / f"DXC-{name}").write_bytes(bundle.read(name))
     archive.unlink()
@@ -39,7 +46,9 @@ def main():
         / "Windows Kits/10/Redist"
     )
     candidates = sorted(p for p in sdk.rglob("dxil.dll") if "x64" in p.parts)
-    if candidates:
+    # The SDK validator (1.8) fails every Mesa shader with DXC_E_LLVM_UNREACHABLE on the
+    # Xbox, so the pinned DXC release is the default; NXBOX_DXIL_SDK=1 restores the SDK one.
+    if candidates and os.environ.get("NXBOX_DXIL_SDK") == "1":
         shutil.copy2(candidates[-1], args.output / "dxil.dll")
         print(f"Using Windows SDK shader validator: {candidates[-1]}")
     else:

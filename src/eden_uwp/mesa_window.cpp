@@ -93,6 +93,9 @@ struct MesaRuntime {
         // Keep the validator loaded for the process lifetime; Mesa also acquires
         // it.
         Diagnostic("DXIL validator loaded");
+        // Optional: lets Mesa turn validation failures into readable messages.
+        Diagnostic(LoadPackagedLibrary(L"dxcompiler.dll", 0) ? "DXC compiler loaded"
+                                                               : "DXC compiler unavailable");
         Diagnostic("loading packaged Mesa");
         library = LoadPackagedLibrary(L"opengl32.dll", 0);
         if (!library) {
