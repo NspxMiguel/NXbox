@@ -378,6 +378,7 @@ def patch_batch(root: Path) -> None:
     path = root / "src/gallium/drivers/d3d12/d3d12_batch.cpp"
     source = path.read_text()
     helper = r"""
+#include <directx/d3d12sdklayers.h>
 #include <stdio.h>
 #include <stdlib.h>
 
