@@ -49,7 +49,9 @@ void BlitScreen::DrawScreen(std::span<const Tegra::FramebufferConfig> framebuffe
     state_tracker.NotifyAlphaTest();
     state_tracker.ClipControl(GL_LOWER_LEFT, GL_ZERO_TO_ONE);
 
-    glEnable(GL_CULL_FACE);
+    // The presentation quad never needs culling; with Mesa d3d12 a winding mismatch would
+    // cull the whole quad and leave only the clear color on screen.
+    glDisable(GL_CULL_FACE);
     glDisable(GL_COLOR_LOGIC_OP);
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_STENCIL_TEST);

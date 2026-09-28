@@ -197,6 +197,26 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     char validate_report[96] = "unavailable";
                     GetEnvironmentVariableA("NXBOX_DXIL_VALIDATE", validate_report,
                                             sizeof(validate_report));
+                    // Readback self test: clear a private texture to a known color and read it
+                    // back. If this fails, none of the peak/out_center numbers can be trusted.
+                    {
+                        GLuint probe_tex = 0;
+                        GLuint probe_fb = 0;
+                        glCreateTextures(GL_TEXTURE_2D, 1, &probe_tex);
+                        glTextureStorage2D(probe_tex, 1, GL_RGBA8, 4, 4);
+                        glCreateFramebuffers(1, &probe_fb);
+                        glNamedFramebufferTexture(probe_fb, GL_COLOR_ATTACHMENT0, probe_tex, 0);
+                        const GLfloat probe_color[4]{37 / 255.0f, 99 / 255.0f, 201 / 255.0f, 1.0f};
+                        glClearNamedFramebufferfv(probe_fb, GL_COLOR, 0, probe_color);
+                        glFinish();
+                        unsigned char probe_px[4]{};
+                        glGetTextureSubImage(probe_tex, 0, 1, 1, 0, 1, 1, 1, GL_RGBA,
+                                             GL_UNSIGNED_BYTE, 4, probe_px);
+                        LOG_CRITICAL(Render_OpenGL, "NXBOX readback_probe={},{},{} expected=37,99,201",
+                                     probe_px[0], probe_px[1], probe_px[2]);
+                        glDeleteFramebuffers(1, &probe_fb);
+                        glDeleteTextures(1, &probe_tex);
+                    }
                     char draw_report[400] = "unavailable";
                     GetEnvironmentVariableA("NXBOX_D3D12_DRAW", draw_report, sizeof(draw_report));
                     char quad_report[400] = "unavailable";
