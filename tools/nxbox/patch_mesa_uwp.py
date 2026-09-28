@@ -56,6 +56,7 @@ def patch(root: Path) -> None:
     else:
         patch_dxil(root)
     patch_shader_model(root)
+    patch_draw(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -299,6 +300,74 @@ def patch_shader_model(root: Path) -> None:
     if source.count(old) != 1:
         raise RuntimeError("Pinned Mesa d3d12_screen.cpp does not match the shader model patch")
     path.write_text(source.replace(old, new))
+
+
+def patch_draw(root: Path) -> None:
+    # Count every silent exit of d3d12_draw_vbo and snapshot the state of issued draws, so the
+    # frontend can tell whether draws are dropped or issued with state that yields no pixels.
+    path = root / "src/gallium/drivers/d3d12/d3d12_draw.cpp"
+    source = path.read_text()
+    helper = r"""
+#include <stdio.h>
+
+static long nxbox_draw_count[6];
+
+static void
+nxbox_draw_snapshot(struct d3d12_context *ctx, const struct pipe_draw_info *dinfo,
+                    const struct pipe_draw_start_count_bias *draws, const char *name)
+{
+   struct d3d12_rasterizer_state *rast = ctx->gfx_pipeline_state.rast;
+   struct d3d12_blend_state *blend = ctx->gfx_pipeline_state.blend;
+   char text[400];
+   snprintf(text, sizeof(text),
+            "calls=%ld zero=%ld prim=%ld cullfab=%ld sofail=%ld issued=%ld mode=%u count=%u "
+            "pred=%d disc=%d clip=0x%x smask=0x%x cb=%u zs=%d fb=%ux%u vp=%.0fx%.0f@%.0f,%.0f "
+            "depth=%.2f-%.2f sc=%d:%ld,%ld-%ld,%ld wm=0x%x cull=%d fill=%d so=%u",
+            nxbox_draw_count[0], nxbox_draw_count[1], nxbox_draw_count[2], nxbox_draw_count[3],
+            nxbox_draw_count[4], nxbox_draw_count[5], (unsigned)dinfo->mode, draws[0].count,
+            ctx->current_predication != NULL, rast ? (int)rast->base.rasterizer_discard : -1,
+            rast ? (unsigned)rast->base.clip_plane_enable : 0u, ctx->gfx_pipeline_state.sample_mask,
+            ctx->fb.nr_cbufs, ctx->fb.zsbuf != NULL, ctx->fb.width, ctx->fb.height,
+            ctx->viewports[0].Width, ctx->viewports[0].Height, ctx->viewports[0].TopLeftX,
+            ctx->viewports[0].TopLeftY, ctx->viewports[0].MinDepth, ctx->viewports[0].MaxDepth,
+            rast ? (int)rast->base.scissor : -1, (long)ctx->scissors[0].left,
+            (long)ctx->scissors[0].top, (long)ctx->scissors[0].right, (long)ctx->scissors[0].bottom,
+            blend ? (unsigned)blend->desc.RenderTarget[0].RenderTargetWriteMask : 0u,
+            rast ? (int)rast->desc.CullMode : -1, rast ? (int)rast->desc.FillMode : -1,
+            ctx->gfx_pipeline_state.num_so_targets);
+   SetEnvironmentVariableA(name, text);
+}
+
+"""
+    anchor = "void\nd3d12_draw_vbo(struct pipe_context *pctx,\n"
+    replacements = [
+        (anchor, helper + anchor),
+        ("   if (!indirect && (!draws[0].count || !dinfo->instance_count))\n      return;\n",
+         "   nxbox_draw_count[0]++;\n"
+         "   if (!indirect && (!draws[0].count || !dinfo->instance_count)) {\n"
+         "      nxbox_draw_count[1]++;\n      return;\n   }\n"),
+        ("      util_primconvert_draw_vbo(ctx->primconvert, dinfo, drawid_offset, indirect, draws, num_draws);\n      return;\n",
+         "      nxbox_draw_count[2]++;\n"
+         "      util_primconvert_draw_vbo(ctx->primconvert, dinfo, drawid_offset, indirect, draws, num_draws);\n      return;\n"),
+        ("       ctx->gfx_pipeline_state.rast->base.cull_face == PIPE_FACE_FRONT_AND_BACK)\n      return;\n",
+         "       ctx->gfx_pipeline_state.rast->base.cull_face == PIPE_FACE_FRONT_AND_BACK) {\n"
+         "      nxbox_draw_count[3]++;\n      return;\n   }\n"),
+        ("      debug_printf(\"validate_stream_output_targets() failed\\n\");\n      return;\n",
+         "      debug_printf(\"validate_stream_output_targets() failed\\n\");\n"
+         "      nxbox_draw_count[4]++;\n      return;\n"),
+        ("   if (indirect) {\n      unsigned draw_count = draw_auto ? 1 : indirect->draw_count;\n",
+         "   nxbox_draw_count[5]++;\n"
+         "   if ((nxbox_draw_count[5] & 63) == 1)\n"
+         "      nxbox_draw_snapshot(ctx, dinfo, draws, \"NXBOX_D3D12_DRAW\");\n"
+         "   if (!indirect && dinfo->mode == MESA_PRIM_TRIANGLE_STRIP && draws[0].count == 4)\n"
+         "      nxbox_draw_snapshot(ctx, dinfo, draws, \"NXBOX_D3D12_QUAD\");\n"
+         "   if (indirect) {\n      unsigned draw_count = draw_auto ? 1 : indirect->draw_count;\n"),
+    ]
+    for old, new in replacements:
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa d3d12_draw.cpp does not match the draw patch: {old[:60]}")
+        source = source.replace(old, new)
+    path.write_text(source)
 
 
 if __name__ == "__main__":

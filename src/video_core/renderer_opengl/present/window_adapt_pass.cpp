@@ -197,6 +197,12 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     char validate_report[96] = "unavailable";
                     GetEnvironmentVariableA("NXBOX_DXIL_VALIDATE", validate_report,
                                             sizeof(validate_report));
+                    char draw_report[400] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_D3D12_DRAW", draw_report, sizeof(draw_report));
+                    char quad_report[400] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_D3D12_QUAD", quad_report, sizeof(quad_report));
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX draw=[{}]", draw_report);
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX quad=[{}]", quad_report);
                     static bool dxil_error_logged = false;
                     char dxil_error[400] = "";
                     if (!dxil_error_logged &&
