@@ -57,6 +57,7 @@ def patch(root: Path) -> None:
         patch_dxil(root)
     patch_shader_model(root)
     patch_draw(root)
+    patch_batch(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -367,6 +368,74 @@ nxbox_draw_snapshot(struct d3d12_context *ctx, const struct pipe_draw_info *dinf
         if source.count(old) != 1:
             raise RuntimeError(f"Pinned Mesa d3d12_draw.cpp does not match the draw patch: {old[:60]}")
         source = source.replace(old, new)
+    path.write_text(source)
+
+
+def patch_batch(root: Path) -> None:
+    # A failed ID3D12GraphicsCommandList::Close() only reaches debug_printf: the batch is never
+    # executed and gets no fence, so every draw, clear and copy in it silently disappears.
+    # Publish close failures, the device removed reason and the last debug layer message.
+    path = root / "src/gallium/drivers/d3d12/d3d12_batch.cpp"
+    source = path.read_text()
+    helper = r"""
+#include <stdio.h>
+#include <stdlib.h>
+
+static void
+nxbox_report_batch(struct d3d12_screen *screen, HRESULT close_hr)
+{
+   static long batches = 0, close_failed = 0, last_hr = 0;
+   batches++;
+   if (FAILED(close_hr)) {
+      close_failed++;
+      last_hr = (long)close_hr;
+   }
+   const bool report = FAILED(close_hr) ? (close_failed <= 8 || (close_failed & (close_failed - 1)) == 0)
+                                        : (batches <= 4 || (batches & 255) == 0);
+   if (!report)
+      return;
+   char text[160];
+   snprintf(text, sizeof(text), "batches=%ld close_failed=%ld close_hr=0x%08lx removed=0x%08lx",
+            batches, close_failed, (unsigned long)last_hr,
+            (unsigned long)screen->dev->GetDeviceRemovedReason());
+   SetEnvironmentVariableA("NXBOX_D3D12_BATCH", text);
+   if (!FAILED(close_hr))
+      return;
+   ID3D12InfoQueue *queue;
+   if (FAILED(screen->dev->QueryInterface(IID_PPV_ARGS(&queue))))
+      return;
+   UINT64 count = queue->GetNumStoredMessages();
+   if (count > 0) {
+      SIZE_T length = 0;
+      queue->GetMessage(count - 1, NULL, &length);
+      D3D12_MESSAGE *message = (D3D12_MESSAGE *)malloc(length);
+      if (message && SUCCEEDED(queue->GetMessage(count - 1, message, &length))) {
+         char description[400];
+         snprintf(description, sizeof(description), "id=%d %s", (int)message->ID,
+                  message->pDescription);
+         SetEnvironmentVariableA("NXBOX_D3D12_MESSAGE", description);
+      }
+      free(message);
+   }
+   queue->Release();
+}
+
+"""
+    anchor = "void\nd3d12_end_batch(struct d3d12_context *ctx, struct d3d12_batch *batch)\n"
+    close_old = (
+        "   if (FAILED(ctx->cmdlist->Close())) {\n"
+        "      debug_printf(\"D3D12: closing ID3D12GraphicsCommandList failed\\n\");\n"
+    )
+    close_new = (
+        "   HRESULT nxbox_close_hr = ctx->cmdlist->Close();\n"
+        "   nxbox_report_batch(screen, nxbox_close_hr);\n"
+        "   if (FAILED(nxbox_close_hr)) {\n"
+        "      debug_printf(\"D3D12: closing ID3D12GraphicsCommandList failed\\n\");\n"
+    )
+    for old in (anchor, close_old):
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa d3d12_batch.cpp does not match the batch patch: {old[:50]}")
+    source = source.replace(anchor, helper + anchor).replace(close_old, close_new)
     path.write_text(source)
 
 

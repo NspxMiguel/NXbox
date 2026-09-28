@@ -221,6 +221,13 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     GetEnvironmentVariableA("NXBOX_D3D12_DRAW", draw_report, sizeof(draw_report));
                     char quad_report[400] = "unavailable";
                     GetEnvironmentVariableA("NXBOX_D3D12_QUAD", quad_report, sizeof(quad_report));
+                    char batch_report[160] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_D3D12_BATCH", batch_report, sizeof(batch_report));
+                    char message_report[400] = "none";
+                    GetEnvironmentVariableA("NXBOX_D3D12_MESSAGE", message_report,
+                                            sizeof(message_report));
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX batch=[{}] message=[{}]", batch_report,
+                                 message_report);
                     LOG_CRITICAL(Render_OpenGL, "NXBOX draw=[{}]", draw_report);
                     LOG_CRITICAL(Render_OpenGL, "NXBOX quad=[{}]", quad_report);
                     static bool dxil_error_logged = false;
