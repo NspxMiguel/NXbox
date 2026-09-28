@@ -117,8 +117,14 @@ class TextureCache : public VideoCommon::ChannelSetupCaches<TextureCacheChannelI
     static constexpr s64 TARGET_THRESHOLD = 4_GiB;
 #endif
 
+#ifdef NXBOX_UWP
+    // The Xbox app budget (5 GiB) also holds the guest's 4 GiB DRAM; keep the cache small.
+    static constexpr s64 DEFAULT_EXPECTED_MEMORY = 512_MiB;
+    static constexpr s64 DEFAULT_CRITICAL_MEMORY = 768_MiB;
+#else
     static constexpr s64 DEFAULT_EXPECTED_MEMORY = 1_GiB + 125_MiB;
     static constexpr s64 DEFAULT_CRITICAL_MEMORY = 1_GiB + 625_MiB;
+#endif
     static constexpr size_t GC_EMERGENCY_COUNTS = 2;
 
     using Runtime = typename P::Runtime;

@@ -251,8 +251,11 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
     config.wall_clock_cntpct = m_uses_wall_clock;
     config.enable_cycle_counting = !m_uses_wall_clock;
 
-    // Code cache size
-#if defined(ARCHITECTURE_arm64) || defined(__sun__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__OpenBSD__)
+    // Code cache size. On the Xbox the whole process has a 5 GiB budget; four 512 MiB caches
+    // (plus UWP's separate writable view) leave too little for the guest heap, so bound them.
+#if defined(NXBOX_UWP)
+    config.code_cache_size = std::uint32_t(128_MiB);
+#elif defined(ARCHITECTURE_arm64) || defined(__sun__) || defined(__NetBSD__) || defined(__DragonFly__) || defined(__OpenBSD__)
     config.code_cache_size = std::uint32_t(128_MiB);
 #else
     config.code_cache_size = std::uint32_t(512_MiB);

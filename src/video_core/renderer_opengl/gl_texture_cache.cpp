@@ -546,7 +546,11 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, ProgramManager& 
         if (device.CanReportMemoryUsage()) {
             return device.GetCurrentDedicatedVideoMemory() + 512_MiB;
         }
+#ifdef NXBOX_UWP
+        return 1_GiB; // Mesa d3d12 cannot report memory; the Xbox app budget is shared with DRAM
+#else
         return 2_GiB; // Return minimum requirements
+#endif
     }();
 }
 

@@ -1287,4 +1287,9 @@ target_link_libraries(core PRIVATE OpenSSL::SSL OpenSSL::Crypto)
 #         hle/service/ssl/ssl_backend_none.cpp)
 # endif()
 
+# NXbox: Xbox/UWP-specific limits inside core (the common target's YUZU_UWP_APPCONTAINER is private).
+if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+    target_compile_definitions(core PRIVATE NXBOX_UWP=1)
+endif()
+
 create_target_directory_groups(core)

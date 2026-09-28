@@ -405,4 +405,9 @@ if (ANDROID AND ARCHITECTURE_arm64)
     target_link_libraries(video_core PRIVATE adrenotools)
 endif()
 
+# NXbox: Xbox/UWP-specific limits (5 GiB process budget shared with the guest heap).
+if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+    target_compile_definitions(video_core PRIVATE NXBOX_UWP=1)
+endif()
+
 create_target_directory_groups(video_core)
