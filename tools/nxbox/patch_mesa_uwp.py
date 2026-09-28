@@ -406,19 +406,44 @@ nxbox_report_batch(struct d3d12_screen *screen, HRESULT close_hr)
    if (FAILED(screen->dev->QueryInterface(IID_PPV_ARGS(&queue))))
       return;
    UINT64 count = queue->GetNumStoredMessages();
-   if (count > 0) {
+   /* The first failure starts the cascade: keep its last three messages separately. */
+   const bool first = close_failed == 1;
+   char joined[1000] = "";
+   size_t used = 0;
+   for (UINT64 i = count > 3 ? count - 3 : 0; i < count; ++i) {
       SIZE_T length = 0;
-      queue->GetMessage(count - 1, NULL, &length);
+      queue->GetMessage(i, NULL, &length);
       D3D12_MESSAGE *message = (D3D12_MESSAGE *)malloc(length);
-      if (message && SUCCEEDED(queue->GetMessage(count - 1, message, &length))) {
-         char description[400];
-         snprintf(description, sizeof(description), "id=%d %s", (int)message->ID,
-                  message->pDescription);
-         SetEnvironmentVariableA("NXBOX_D3D12_MESSAGE", description);
+      if (message && SUCCEEDED(queue->GetMessage(i, message, &length)) && used < sizeof(joined)) {
+         int n = snprintf(joined + used, sizeof(joined) - used, "%s[id=%d %s]", used ? " " : "",
+                          (int)message->ID, message->pDescription);
+         if (n > 0)
+            used += (size_t)n;
       }
       free(message);
    }
+   SetEnvironmentVariableA(first ? "NXBOX_D3D12_FIRST_MESSAGE" : "NXBOX_D3D12_MESSAGE", joined);
+   if (first) {
+      char where[64];
+      snprintf(where, sizeof(where), "batch=%ld stored=%llu", batches, (unsigned long long)count);
+      SetEnvironmentVariableA("NXBOX_D3D12_FIRST_FAILURE", where);
+   }
    queue->Release();
+}
+
+static void
+nxbox_report_reset(const char *what, HRESULT hr)
+{
+   static long list_failed = 0, alloc_failed = 0, last_hr = 0;
+   if (what[0] == 'l')
+      list_failed++;
+   else
+      alloc_failed++;
+   last_hr = (long)hr;
+   char text[128];
+   snprintf(text, sizeof(text), "list_reset_failed=%ld alloc_reset_failed=%ld last_hr=0x%08lx",
+            list_failed, alloc_failed, (unsigned long)last_hr);
+   SetEnvironmentVariableA("NXBOX_D3D12_RESET", text);
 }
 
 """
@@ -433,10 +458,33 @@ nxbox_report_batch(struct d3d12_screen *screen, HRESULT close_hr)
         "   if (FAILED(nxbox_close_hr)) {\n"
         "      debug_printf(\"D3D12: closing ID3D12GraphicsCommandList failed\\n\");\n"
     )
-    for old in (anchor, close_old):
+    alloc_old = (
+        "   if (FAILED(batch->cmdalloc->Reset())) {\n"
+        "      debug_printf(\"D3D12: resetting ID3D12CommandAllocator failed\\n\");\n"
+    )
+    alloc_new = (
+        "   HRESULT nxbox_alloc_hr = batch->cmdalloc->Reset();\n"
+        "   if (FAILED(nxbox_alloc_hr)) {\n"
+        "      nxbox_report_reset(\"allocator\", nxbox_alloc_hr);\n"
+        "      debug_printf(\"D3D12: resetting ID3D12CommandAllocator failed\\n\");\n"
+    )
+    list_old = (
+        "      if (FAILED(ctx->cmdlist->Reset(batch->cmdalloc, NULL))) {\n"
+        "         debug_printf(\"D3D12: resetting ID3D12GraphicsCommandList failed\\n\");\n"
+    )
+    list_new = (
+        "      HRESULT nxbox_list_hr = ctx->cmdlist->Reset(batch->cmdalloc, NULL);\n"
+        "      if (FAILED(nxbox_list_hr)) {\n"
+        "         nxbox_report_reset(\"list\", nxbox_list_hr);\n"
+        "         debug_printf(\"D3D12: resetting ID3D12GraphicsCommandList failed\\n\");\n"
+    )
+    # The helper must precede d3d12_reset_batch, the first function that uses it.
+    reset_anchor = "bool\nd3d12_reset_batch(struct d3d12_context *ctx, struct d3d12_batch *batch, uint64_t timeout_ns)\n"
+    for old in (reset_anchor, anchor, close_old, alloc_old, list_old):
         if source.count(old) != 1:
             raise RuntimeError(f"Pinned Mesa d3d12_batch.cpp does not match the batch patch: {old[:50]}")
-    source = source.replace(anchor, helper + anchor).replace(close_old, close_new)
+    source = source.replace(reset_anchor, helper + reset_anchor)
+    source = source.replace(close_old, close_new).replace(alloc_old, alloc_new).replace(list_old, list_new)
     path.write_text(source)
 
 

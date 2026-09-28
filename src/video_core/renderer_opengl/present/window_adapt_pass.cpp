@@ -228,6 +228,16 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                                             sizeof(message_report));
                     LOG_CRITICAL(Render_OpenGL, "NXBOX batch=[{}] message=[{}]", batch_report,
                                  message_report);
+                    char first_failure[64] = "none";
+                    GetEnvironmentVariableA("NXBOX_D3D12_FIRST_FAILURE", first_failure,
+                                            sizeof(first_failure));
+                    char first_message[1000] = "none";
+                    GetEnvironmentVariableA("NXBOX_D3D12_FIRST_MESSAGE", first_message,
+                                            sizeof(first_message));
+                    char reset_report[128] = "none";
+                    GetEnvironmentVariableA("NXBOX_D3D12_RESET", reset_report, sizeof(reset_report));
+                    LOG_CRITICAL(Render_OpenGL, "NXBOX first_failure=[{}] reset=[{}] first_message={}",
+                                 first_failure, reset_report, first_message);
                     LOG_CRITICAL(Render_OpenGL, "NXBOX draw=[{}]", draw_report);
                     LOG_CRITICAL(Render_OpenGL, "NXBOX quad=[{}]", quad_report);
                     static bool dxil_error_logged = false;
