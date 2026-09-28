@@ -19,6 +19,9 @@
 #ifdef HAVE_SDL3
 #include "audio_core/sink/sdl3_sink.h"
 #endif
+#ifdef HAVE_XAUDIO2
+#include "audio_core/sink/xaudio2_sink.h"
+#endif
 #include "audio_core/sink/null_sink.h"
 #include "common/logging.h"
 #include "common/settings_enums.h"
@@ -51,6 +54,16 @@ struct SinkDetails {
 
 // sink_details is ordered in terms of desirability, with the best choice at the top.
 constexpr SinkDetails sink_details[] = {
+#ifdef HAVE_XAUDIO2
+    SinkDetails{
+        Settings::AudioEngine::XAudio2,
+        [](std::string_view device_id) -> std::unique_ptr<Sink> {
+            return std::make_unique<XAudio2Sink>(device_id);
+        },
+        &ListXAudio2SinkDevices,
+        &GetXAudio2Latency,
+    },
+#endif
 #ifdef HAVE_OBOE
     SinkDetails{
         Settings::AudioEngine::Oboe,

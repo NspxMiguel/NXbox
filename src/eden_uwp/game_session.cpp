@@ -3,8 +3,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -130,7 +132,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     }
     Common::Log::Initialize();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
-    Settings::values.sink_id = Settings::AudioEngine::Null;
+    // XAudio2 is the audio path available to UWP; NXBOX_AUDIO=null (LocalState\nxbox_env.txt)
+    // falls back to silence.
+    {
+        const char* audio = std::getenv("NXBOX_AUDIO");
+        Settings::values.sink_id = audio != nullptr && std::string_view{audio} == "null"
+                                       ? Settings::AudioEngine::Null
+                                       : Settings::AudioEngine::XAudio2;
+    }
     Settings::values.cpuopt_fastmem = false;
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;

@@ -229,6 +229,14 @@ endif()
 target_include_directories(audio_core PRIVATE ${OPUS_INCLUDE_DIRS})
 target_link_libraries(audio_core PUBLIC common core Opus::opus)
 
+if (CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+    target_sources(audio_core PRIVATE
+        sink/xaudio2_sink.cpp
+        sink/xaudio2_sink.h)
+    target_link_libraries(audio_core PRIVATE xaudio2)
+    target_compile_definitions(audio_core PRIVATE HAVE_XAUDIO2=1)
+endif()
+
 if (ENABLE_CUBEB)
     target_sources(audio_core PRIVATE
         sink/cubeb_sink.cpp
