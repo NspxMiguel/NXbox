@@ -467,3 +467,27 @@ Audited the exact pinned `aerisarn/mesa-uwp` revision `15acdd7ea2b9dcdd62f26fe86
 This makes a missing generic readback barrier or missing readback fence wait an unlikely explanation for a stable all-black texture. It is not proof that Xbox's D3D12 implementation honors Mesa's command-list/fence behavior correctly, nor that the tracked state is correct for every subresource/alias. If the sampled object truly is the display source, the next discriminating test belongs in the external Mesa fork: instrument resource identity, subresource, state-before/state-after, batch/fence values, and a known non-black clear followed by readback on that *same* resource; compare a direct `CopyTextureRegion` staging readback with a shader sampling that texture into a known-good render target. Also inspect whether the rendering commands target the same underlying `ID3D12Resource` (and layer/mip) whose view is sampled by presentation. A transition should only be patched if that trace shows the state tracker emitting the wrong resource/subresource state or failing to submit/wait; adding an unconditional barrier in `patch_mesa_uwp.py` would duplicate the existing Gallium path and is not currently justified.
 
 Evidence: pinned source [`d3d12_resource.cpp`](https://github.com/aerisarn/mesa-uwp/blob/15acdd7ea2b9dcdd62f26fe86b88280d79efc46b/src/gallium/drivers/d3d12/d3d12_resource.cpp) (`copy_texture_region`, `d3d12_transfer_map`) and [`d3d12_context.cpp`](https://github.com/aerisarn/mesa-uwp/blob/15acdd7ea2b9dcdd62f26fe86b88280d79efc46b/src/gallium/drivers/d3d12/d3d12_context.cpp) (`d3d12_flush_cmdlist_and_wait`).
+
+## Black screen: driver-side measurements (28/09/2026)
+
+Instrumented the pinned Mesa d3d12 driver (`tools/nxbox/patch_mesa_uwp.py`, reported through
+process environment variables and logged by the presentation pass):
+
+- Graphics PSO creation: 16 created, 0 failed.
+- DXIL.dll loads (validator 1.8, Windows SDK build). Every shader fails validation with
+  `0x80AA0013` (DXC_E_LLVM_UNREACHABLE) at shader model 6.8 and at 6.7, so no shader is signed;
+  the Xbox runtime still accepts them. The DXC release validator cannot load in the package
+  (error 126, it imports the desktop CRT).
+- `d3d12_draw_vbo`: about 96k draws, none dropped early (no zero-count, cull front-and-back,
+  or stream-output failures). Issued draws have no predication, no rasterizer discard, no clip
+  planes, full sample mask and full color write mask. The presentation quad was issued with
+  back-face culling; it is now drawn with culling off.
+- **Readback self test**: clearing a fresh 4x4 RGBA8 texture to 37,99,201 and reading it back
+  returns 0,0,0 in the running session. GPU work is not executing at all, which is why every
+  earlier pixel sample was zero.
+- Suspect: `ID3D12GraphicsCommandList::Close()` failing. Mesa then skips `ExecuteCommandLists`
+  and leaves the batch without a fence, which the null-fence patch treats as complete. Now
+  reporting close failures, the device removed reason and the last debug layer message.
+
+`LocalState\nxbox_env.txt` (KEY=VALUE lines) sets environment variables before Mesa loads, e.g.
+`D3D12_DEBUG=debuglayer` or `NXBOX_D3D12_MAX_SM=7`, without a rebuild.
