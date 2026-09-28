@@ -80,7 +80,13 @@ std::string ResolveGamePath(const std::string& bundled) {
     const std::string url =
         fs::exists(local / "game.url") ? read_line(local / "game.url") : std::string{};
     if (!url.empty() && !DownloadFile(url, target)) {
-        return bundled;
+        // The download source can go away (the LAN host was reinstalled); a copy that is
+        // already on the console is still usable.
+        std::error_code ec;
+        if (!fs::exists(target, ec) || fs::file_size(target, ec) == 0) {
+            return bundled;
+        }
+        Diagnostic("GAME_DOWNLOAD_UNAVAILABLE using the local copy");
     }
     if (!fs::exists(target)) {
         Diagnostic("GAME_MISSING " + target.string());
