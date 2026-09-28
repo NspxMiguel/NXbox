@@ -155,19 +155,42 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     constexpr int kW = 16;
                     constexpr int kH = 9;
                     std::vector<unsigned char> thumb(kW * kH * 3);
-                    unsigned peak = 0;
-                    for (int y = 0; y < kH; ++y) {
-                        for (int x = 0; x < kW; ++x) {
-                            unsigned char px[4]{};
-                            glGetTextureSubImage(textures[i], 0, x * tex_w / kW, y * tex_h / kH, 0,
-                                                 1, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, 4, px);
-                            peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
-                            const size_t o = (static_cast<size_t>(y) * kW + x) * 3;
-                            thumb[o] = px[0];
-                            thumb[o + 1] = px[1];
-                            thumb[o + 2] = px[2];
+                    const auto sample = [&] {
+                        unsigned peak = 0;
+                        for (int y = 0; y < kH; ++y) {
+                            for (int x = 0; x < kW; ++x) {
+                                unsigned char px[4]{};
+                                glGetTextureSubImage(textures[i], 0, x * tex_w / kW,
+                                                     y * tex_h / kH, 0, 1, 1, 1, GL_RGBA,
+                                                     GL_UNSIGNED_BYTE, 4, px);
+                                peak = std::max<unsigned>(peak, std::max({px[0], px[1], px[2]}));
+                                const size_t o = (static_cast<size_t>(y) * kW + x) * 3;
+                                thumb[o] = px[0];
+                                thumb[o + 1] = px[1];
+                                thumb[o + 2] = px[2];
+                            }
                         }
-                    }
+                        return peak;
+                    };
+                    // Sync experiment: if only the synced samples are non-zero, the game's draws
+                    // land but the D3D12 backend reads the resource before they are visible.
+                    const unsigned peak_raw = sample();
+                    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+                    const unsigned peak_barrier = sample();
+                    glFinish();
+                    const unsigned peak = sample();
+                    // Also read what this pass just drew into the presented framebuffer.
+                    unsigned char out_px[4]{};
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, old_draw_fb);
+                    glReadPixels(static_cast<GLint>(layout.width / 2),
+                                 static_cast<GLint>(layout.height / 2), 1, 1, GL_RGBA,
+                                 GL_UNSIGNED_BYTE, out_px);
+                    glBindFramebuffer(GL_READ_FRAMEBUFFER, old_read_fb);
+                    LOG_CRITICAL(Render_OpenGL,
+                                 "NXBOX sync peak_raw={} peak_barrier={} peak_finish={} "
+                                 "out_center={},{},{} draw_fb={} err={:#x}",
+                                 peak_raw, peak_barrier, peak, out_px[0], out_px[1], out_px[2],
+                                 old_draw_fb, glGetError());
                     const unsigned slot = saved % 4;
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
                                           fmt::format("thumb_{}.ppm", slot),
