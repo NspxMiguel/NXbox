@@ -134,8 +134,6 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     Settings::values.cpuopt_fastmem = false;
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;
-    // Diagnostic: a red present background shows whether the present quad itself rasterizes.
-    Settings::values.bg_red.SetValue(255);
     XboxGamepad::Configure(gamepad);
     RegisterUnsupportedEngines();
     SCOPE_EXIT {

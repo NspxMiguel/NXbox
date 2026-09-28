@@ -13,6 +13,7 @@
 
 #ifdef _WIN32
 #include <algorithm>
+#include <cstdlib>
 #include <fstream>
 #include <vector>
 #include "common/fs/path_util.h"
@@ -138,7 +139,10 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
             static unsigned saved = 0;
             // Keeps sampling for as long as the game runs, cycling through 4 files so a late
             // thumbnail (after a long intro) can still be pulled.
-            if (++draws % 300 == 1) {
+            // Off by default: each sample waits for the GPU (glFinish) and reads pixels back.
+            // Enable with NXBOX_DIAG=1 in LocalState\nxbox_env.txt.
+            static const bool diagnostics = std::getenv("NXBOX_DIAG") != nullptr;
+            if (diagnostics && ++draws % 300 == 1) {
                 NxboxPackBufferGuard pack_guard;
                 GLint tex_w = 0;
                 GLint tex_h = 0;
