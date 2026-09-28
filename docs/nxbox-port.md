@@ -491,3 +491,33 @@ process environment variables and logged by the presentation pass):
 
 `LocalState\nxbox_env.txt` (KEY=VALUE lines) sets environment variables before Mesa loads, e.g.
 `D3D12_DEBUG=debuglayer` or `NXBOX_D3D12_MAX_SM=7`, without a rebuild.
+
+## Persona 5 Royal is playable on Xbox Series X (28/09/2026)
+
+Measured on the console with remote input:
+
+- Boot → Thieves Guild network prompt → title screen → New Game → voice language → the opening
+  movie → the first playable scene ("Escape from the casino"). The character walks with the left
+  stick. Steady ~28-30 FPS; app memory about 4.0 GB of the 5 GiB budget.
+
+What it took, in order:
+
+1. **Black screen**: in Mesa d3d12, accumulating a full query heap resumes every active query, and
+   that began the other subquery of PRIMITIVES_GENERATED a second time. BeginQuery twice, then
+   `Close()` fails with "queries outstanding", and the reused list fails every later batch, so no
+   GPU work ran. Fix: `begin_subquery` returns early when the subquery is already active
+   (`tools/nxbox/patch_mesa_uwp.py`, `patch_query`).
+2. **Freeze after declining the network**: the default error applet never invoked its finished
+   callback. It now finishes at once (`src/core/frontend/applets/error.cpp`).
+3. **Suspended at the intro (5 GiB budget)**: the kernel's `memset(0)` of every guest allocation
+   committed the whole heap. On UWP the backing is demand-committed, so zero-filling now
+   decommits (`HostMemory::ClearBackingRegion`); peak memory fell from 5.36 GB to 3.6-4.0 GB. The
+   JIT code cache bound (128 MiB per core) and smaller texture-cache thresholds also apply now,
+   through a `NXBOX_UWP` definition in core and video_core.
+4. **Audio**: new XAudio2 sink (`src/audio_core/sink/xaudio2_sink.cpp`), 48 kHz stereo;
+   `NXBOX_AUDIO=null` in `LocalState\nxbox_env.txt` restores the silent sink. It initialises on the
+   console; sound on the TV has not been confirmed by ear yet.
+
+Still open: listening test for audio, a real paired controller (the tests used Device Portal
+remote input), longer play sessions, and removing the Mesa diagnostic counters once they are no
+longer needed.
