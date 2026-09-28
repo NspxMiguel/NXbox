@@ -438,6 +438,18 @@ This narrows the black screen to something specific to `libgallium_wgl.dll` (the
 (NVIDIA here) rendering OpenGL directly. Screenshots kept in
 `~/.local/share/nxbox/artifacts/p5r-desktop-proof/` (not committed — real box art/game screens).
 
+**Correction (2026-09-28):** that run used the **Vulkan** backend (`backend=1` in
+`qt-config.ini`, Eden's desktop default), so it did not exercise the OpenGL path this port uses.
+Re-ran the same build with `backend=0` (`OpenGL_GLSL`, the exact backend `game_session.cpp` forces)
+on the NVIDIA OpenGL driver (`nvoglv64.dll` confirmed loaded): the same diagnostic in
+`window_adapt_pass.cpp` reports `peak=183` at 17.7s, reading the same framebuffer addresses
+(`0x9ae71000` / `0x9a601000`) the Xbox resolves. Eden's OpenGL GLSL path renders P5R; the black
+screen is specific to Mesa D3D12.
+
+Loading the UWP Mesa build into desktop Eden (`QT_OPENGL_DLL` pointing at its `opengl32.dll`) does
+load it, but Qt aborts with "OpenGL shared contexts are not supported", so reproducing on desktop
+needs the share-context path working in this Mesa build first.
+
 Practical note for next time: on this PC, GUI apps launched over SSH run in Session 0 (services,
 no real display) and screenshots there fail with "the handle is invalid". A `schtasks /Create ...
 /IT /RL HIGHEST` (interactive) run against the active console session (`query session` shows it)
