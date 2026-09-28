@@ -76,7 +76,7 @@ jobs:
             python tools/nxbox/prepare_dxil.py --output $executables[0].DirectoryName
             if ($LASTEXITCODE -ne 0) { throw 'DXIL runtime staging failed' }
           }
-          python tools/nxbox/package_uwp.py --kind "$env:PACKAGE_KIND" --exe $executables[0].FullName --version "0.1.$env:GITHUB_RUN_NUMBER.0" --output out
+          python tools/nxbox/package_uwp.py --kind "$env:PACKAGE_KIND" --exe $executables[0].FullName --version "0.3.$env:GITHUB_RUN_NUMBER.0" --output out
           if ($LASTEXITCODE -ne 0) { throw 'Package creation failed' }
           @{
             emulatorRevision = $env:SOURCE_REVISION
