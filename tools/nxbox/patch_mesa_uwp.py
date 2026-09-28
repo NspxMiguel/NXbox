@@ -192,6 +192,7 @@ def patch_dxil(root: Path) -> None:
     anchor = "static HMODULE\nload_dxil_mod()\n"
     helper = (
         "#include <stdio.h>\n\n"
+        "static const char *nxbox_dxil_source = \"search_path\";\n\n"
         "static void\n"
         "nxbox_report_dxil(const char *stage, unsigned long detail)\n"
         "{\n"
@@ -217,8 +218,20 @@ def patch_dxil(root: Path) -> None:
         "   }\n"
         "}\n\n"
     )
+    # A UWP process may only load package DLLs through LoadPackagedLibrary.
+    packaged_old = "   return LoadLibraryA(self_path);\n}\n"
+    packaged_new = (
+        "   nxbox_dxil_source = \"next_to_module\";\n"
+        "   HMODULE local = LoadLibraryA(self_path);\n"
+        "   if (local)\n"
+        "      return local;\n"
+        "   nxbox_dxil_source = \"packaged\";\n"
+        "   return LoadPackagedLibrary(L\"dxil.dll\", 0);\n"
+        "}\n"
+    )
     replacements = {
         anchor: helper + anchor,
+        packaged_old: packaged_new,
         "   val->dxil_mod = load_dxil_mod();\n   if (!val->dxil_mod) {\n":
             "   val->dxil_mod = load_dxil_mod();\n   if (!val->dxil_mod) {\n"
             "      nxbox_report_dxil(\"load_failed\", GetLastError());\n",
@@ -227,7 +240,7 @@ def patch_dxil(root: Path) -> None:
             "      nxbox_report_dxil(\"validator_failed\", 0);\n      goto fail;\n   }\n",
         "   val->version = get_filtered_validator_version(\n      val->dxil_mod,\n      get_validator_version(val->dxc_validator));\n":
             "   val->version = get_filtered_validator_version(\n      val->dxil_mod,\n      get_validator_version(val->dxc_validator));\n"
-            "   nxbox_report_dxil(\"loaded\", val->version);\n",
+            "   nxbox_report_dxil(nxbox_dxil_source, val->version);\n",
         "   HRESULT hr;\n   result->GetStatus(&hr);\n":
             "   HRESULT hr;\n   result->GetStatus(&hr);\n   nxbox_report_validation(hr);\n",
     }
