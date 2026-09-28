@@ -103,7 +103,25 @@ def patch_query(root: Path) -> None:
     )
     if begin_old not in query_source:
         raise RuntimeError("Pinned Mesa d3d12_query.cpp does not match the reentrancy patch")
-    query.write_text(query_source.replace(begin_old, begin_new))
+    query_source = query_source.replace(begin_old, begin_new)
+    # The accumulation above resumes every active query, which begins the *other* subqueries of
+    # this query too (e.g. the stream-output statistics half of PRIMITIVES_GENERATED); the outer
+    # begin_query() loop then began them a second time. D3D12 rejects BeginQuery on an index
+    # that is already open, and Close() then fails with "queries outstanding", dropping the
+    # whole batch and, through list reuse, every batch after it. Beginning must be idempotent.
+    guard_old = (
+        "   struct d3d12_query_impl *q = &q_parent->subqueries[sub_query];\n"
+        "   if (q->curr_query == q->num_queries) {\n"
+    )
+    guard_new = (
+        "   struct d3d12_query_impl *q = &q_parent->subqueries[sub_query];\n"
+        "   if (q->active && q_parent->type != PIPE_QUERY_TIMESTAMP)\n"
+        "      return;\n"
+        "   if (q->curr_query == q->num_queries) {\n"
+    )
+    if query_source.count(guard_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_query.cpp does not match the double-begin patch")
+    query.write_text(query_source.replace(guard_old, guard_new))
 
 def patch_fence(root: Path) -> None:
     query_dir = root / "src/gallium/drivers/d3d12"
