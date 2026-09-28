@@ -101,6 +101,12 @@ std::string ResolveGamePath(const std::string& bundled) {
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
     Diagnostic("GAME_BEGIN");
+    const auto memory_stage = [](const char* stage) {
+        Diagnostic(fmt::format("MEM {} commit={} MiB limit={} MiB", stage,
+                               winrt::Windows::System::MemoryManager::AppMemoryUsage() >> 20,
+                               winrt::Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
+    };
+    memory_stage("begin");
     const std::string path = ResolveGamePath(bundled_path);
     {
         // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a
@@ -153,6 +159,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     std::atomic<bool> guest_exited{false};
     Core::System system{};
     system.Initialize();
+    memory_stage("initialized");
     system.ApplySettings();
     system.RegisterExitCallback([&] { guest_exited.store(true, std::memory_order_release); });
     system.SetContentProvider(std::make_unique<FileSys::ContentProviderUnion>());
@@ -167,7 +174,9 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         .applet_id = Service::AM::AppletId::Application,
         .applet_type = Service::AM::AppletType::Application,
     };
+    memory_stage("before_load");
     const auto result = system.Load(window, path, parameters);
+    memory_stage("after_load");
     if (result != Core::SystemResultStatus::Success) {
         Diagnostic("GAME_LOAD_FAILED status=" + std::to_string(static_cast<int>(result)));
         return;
@@ -188,6 +197,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     system.GetCpuManager().OnGpuReady();
     void(system.Run());
     Diagnostic("GAME_RUNNING");
+    memory_stage("loaded");
     // The guest's own HID resource manager applies Settings::values.players lazily, on its first
     // HID service call. Poll() runs immediately on the host thread regardless of guest timing, so
     // without this the controller stays at its construction default (NpadStyleIndex::None,
