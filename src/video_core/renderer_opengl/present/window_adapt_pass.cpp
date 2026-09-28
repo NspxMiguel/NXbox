@@ -192,11 +192,17 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                     // Published by the patched Mesa d3d12 driver (tools/nxbox/patch_mesa_uwp.py).
                     char pso_report[96] = "unavailable";
                     GetEnvironmentVariableA("NXBOX_D3D12_PSO", pso_report, sizeof(pso_report));
+                    char dxil_report[96] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_DXIL", dxil_report, sizeof(dxil_report));
+                    char validate_report[96] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_DXIL_VALIDATE", validate_report,
+                                            sizeof(validate_report));
                     LOG_CRITICAL(Render_OpenGL,
                                  "NXBOX sync peak_raw={} peak_barrier={} peak_finish={} "
-                                 "out_center={},{},{} draw_fb={} err={:#x} pso=[{}]",
+                                 "out_center={},{},{} draw_fb={} err={:#x} pso=[{}] dxil=[{}] validate=[{}]",
                                  peak_raw, peak_barrier, peak, out_px[0], out_px[1], out_px[2],
-                                 old_draw_fb, glGetError(), pso_report);
+                                 old_draw_fb, glGetError(), pso_report, dxil_report,
+                                 validate_report);
                     const unsigned slot = saved % 4;
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
                                           fmt::format("thumb_{}.ppm", slot),

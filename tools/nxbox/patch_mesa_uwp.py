@@ -51,6 +51,10 @@ def patch(root: Path) -> None:
         print("skipping the PSO report patch")
     else:
         patch_pso(root)
+    if "dxil" in SKIP:
+        print("skipping the DXIL report patch")
+    else:
+        patch_dxil(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -177,6 +181,61 @@ def patch_pso(root: Path) -> None:
     source = source.replace(anchor, helper + anchor)
     source = source.replace(stream_old, stream_new).replace(v0_old, v0_new)
     pso.write_text(source)
+
+
+def patch_dxil(root: Path) -> None:
+    # Without DXIL.dll Mesa emits unsigned DXIL, which the D3D12 runtime rejects when the PSO is
+    # created; the validator failures also only reach debug_printf. Publish whether DXIL.dll
+    # loaded and how validation went, for the frontend to log.
+    path = root / "src/microsoft/compiler/dxil_validator.cpp"
+    source = path.read_text()
+    anchor = "static HMODULE\nload_dxil_mod()\n"
+    helper = (
+        "#include <stdio.h>\n\n"
+        "static void\n"
+        "nxbox_report_dxil(const char *stage, unsigned long detail)\n"
+        "{\n"
+        "   char text[96];\n"
+        "   snprintf(text, sizeof(text), \"%s detail=0x%08lx\", stage, detail);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_DXIL\", text);\n"
+        "}\n\n"
+        "static void\n"
+        "nxbox_report_validation(HRESULT hr)\n"
+        "{\n"
+        "   static long passed = 0, failed = 0, last_hr = 0;\n"
+        "   if (SUCCEEDED(hr))\n"
+        "      passed++;\n"
+        "   else {\n"
+        "      failed++;\n"
+        "      last_hr = (long)hr;\n"
+        "   }\n"
+        "   if (FAILED(hr) || passed <= 4 || (passed & (passed - 1)) == 0) {\n"
+        "      char text[96];\n"
+        "      snprintf(text, sizeof(text), \"passed=%ld failed=%ld last_hr=0x%08lx\",\n"
+        "               passed, failed, (unsigned long)last_hr);\n"
+        "      SetEnvironmentVariableA(\"NXBOX_DXIL_VALIDATE\", text);\n"
+        "   }\n"
+        "}\n\n"
+    )
+    replacements = {
+        anchor: helper + anchor,
+        "   val->dxil_mod = load_dxil_mod();\n   if (!val->dxil_mod) {\n":
+            "   val->dxil_mod = load_dxil_mod();\n   if (!val->dxil_mod) {\n"
+            "      nxbox_report_dxil(\"load_failed\", GetLastError());\n",
+        "   val->dxc_validator = create_dxc_validator(val->dxil_mod);\n   if (!val->dxc_validator)\n      goto fail;\n":
+            "   val->dxc_validator = create_dxc_validator(val->dxil_mod);\n   if (!val->dxc_validator) {\n"
+            "      nxbox_report_dxil(\"validator_failed\", 0);\n      goto fail;\n   }\n",
+        "   val->version = get_filtered_validator_version(\n      val->dxil_mod,\n      get_validator_version(val->dxc_validator));\n":
+            "   val->version = get_filtered_validator_version(\n      val->dxil_mod,\n      get_validator_version(val->dxc_validator));\n"
+            "   nxbox_report_dxil(\"loaded\", val->version);\n",
+        "   HRESULT hr;\n   result->GetStatus(&hr);\n":
+            "   HRESULT hr;\n   result->GetStatus(&hr);\n   nxbox_report_validation(hr);\n",
+    }
+    for old, new in replacements.items():
+        if old not in source:
+            raise RuntimeError(f"Pinned Mesa dxil_validator.cpp does not match patch: {old[:60]}")
+        source = source.replace(old, new, 1)
+    path.write_text(source)
 
 
 if __name__ == "__main__":
