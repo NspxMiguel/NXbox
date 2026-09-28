@@ -47,6 +47,10 @@ def patch(root: Path) -> None:
         print("skipping the query reentrancy patch")
     else:
         patch_query(root)
+    if "pso" in SKIP:
+        print("skipping the PSO report patch")
+    else:
+        patch_pso(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -110,6 +114,69 @@ def patch_fence(root: Path) -> None:
     if fence_old not in fence_source:
         raise RuntimeError("Pinned Mesa d3d12_fence.cpp does not match the null-fence patch")
     fence.write_text(fence_source.replace(fence_old, fence_new))
+
+
+def patch_pso(root: Path) -> None:
+    # A failed CreateGraphicsPipelineState only reaches debug_printf, which is invisible on the
+    # Xbox, and the draw then silently produces nothing. Publish counters and the last HRESULT
+    # in the process environment so the frontend can log them.
+    pso = root / "src/gallium/drivers/d3d12/d3d12_pipeline_state.cpp"
+    source = pso.read_text()
+    anchor = "static ID3D12PipelineState *\ncreate_gfx_pipeline_state(struct d3d12_context *ctx)\n"
+    helper = (
+        "#include <stdio.h>\n\n"
+        "static void\n"
+        "nxbox_report_pso(bool ok, HRESULT hr)\n"
+        "{\n"
+        "   static long created = 0, failed = 0, last_hr = 0;\n"
+        "   if (ok)\n"
+        "      created++;\n"
+        "   else {\n"
+        "      failed++;\n"
+        "      last_hr = (long)hr;\n"
+        "   }\n"
+        "   if (!ok || created <= 4 || (created & (created - 1)) == 0) {\n"
+        "      char text[96];\n"
+        "      snprintf(text, sizeof(text), \"created=%ld failed=%ld last_hr=0x%08lx\",\n"
+        "               created, failed, (unsigned long)last_hr);\n"
+        "      SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", text);\n"
+        "   }\n"
+        "}\n\n"
+    )
+    stream_old = (
+        "      if (FAILED(screen->dev->CreatePipelineState(&pso_stream_desc,\n"
+        "                                                  IID_PPV_ARGS(&ret)))) {\n"
+        "         debug_printf(\"D3D12: CreateGraphicsPipelineState failed!\\n\");\n"
+        "         return NULL;\n"
+        "      }\n"
+    )
+    stream_new = (
+        "      HRESULT nxbox_hr = screen->dev->CreatePipelineState(&pso_stream_desc,\n"
+        "                                                          IID_PPV_ARGS(&ret));\n"
+        "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
+        "      if (FAILED(nxbox_hr))\n"
+        "         return NULL;\n"
+    )
+    v0_old = (
+        "      if (FAILED(screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
+        "                                                       IID_PPV_ARGS(&ret)))) {\n"
+        "         debug_printf(\"D3D12: CreateGraphicsPipelineState failed!\\n\");\n"
+        "         return NULL;\n"
+        "      }\n"
+    )
+    v0_new = (
+        "      HRESULT nxbox_hr = screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
+        "                                                               IID_PPV_ARGS(&ret));\n"
+        "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
+        "      if (FAILED(nxbox_hr))\n"
+        "         return NULL;\n"
+    )
+    for old in (anchor, stream_old, v0_old):
+        if old not in source:
+            raise RuntimeError("Pinned Mesa d3d12_pipeline_state.cpp does not match the PSO patch")
+    source = source.replace(anchor, helper + anchor)
+    source = source.replace(stream_old, stream_new).replace(v0_old, v0_new)
+    pso.write_text(source)
 
 
 if __name__ == "__main__":

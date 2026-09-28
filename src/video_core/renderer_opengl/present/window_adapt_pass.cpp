@@ -17,6 +17,9 @@
 #include <vector>
 #include "common/fs/path_util.h"
 #include "common/logging.h"
+// Declared directly: windows.h in GL code clashes with glad.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetEnvironmentVariableA(const char*, char*,
+                                                                                 unsigned long);
 #endif
 #include "video_core/host_shaders/opengl_present_vert.h"
 #include "video_core/renderer_opengl/gl_device.h"
@@ -186,11 +189,14 @@ void WindowAdaptPass::DrawToFramebuffer(ProgramManager& program_manager, std::li
                                  static_cast<GLint>(layout.height / 2), 1, 1, GL_RGBA,
                                  GL_UNSIGNED_BYTE, out_px);
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, old_read_fb);
+                    // Published by the patched Mesa d3d12 driver (tools/nxbox/patch_mesa_uwp.py).
+                    char pso_report[96] = "unavailable";
+                    GetEnvironmentVariableA("NXBOX_D3D12_PSO", pso_report, sizeof(pso_report));
                     LOG_CRITICAL(Render_OpenGL,
                                  "NXBOX sync peak_raw={} peak_barrier={} peak_finish={} "
-                                 "out_center={},{},{} draw_fb={} err={:#x}",
+                                 "out_center={},{},{} draw_fb={} err={:#x} pso=[{}]",
                                  peak_raw, peak_barrier, peak, out_px[0], out_px[1], out_px[2],
-                                 old_draw_fb, glGetError());
+                                 old_draw_fb, glGetError(), pso_report);
                     const unsigned slot = saved % 4;
                     std::ofstream out(Common::FS::GetEdenPath(Common::FS::EdenPath::LogDir) /
                                           fmt::format("thumb_{}.ppm", slot),
