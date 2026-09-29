@@ -36,6 +36,8 @@
 #include "eden_uwp/setup_ui.h"
 #include "eden_uwp/usb_library.h"
 #include "video_core/gpu.h"
+#include "video_core/rasterizer_interface.h"
+#include "video_core/renderer_base.h"
 
 namespace EdenXbox {
 namespace {
@@ -234,6 +236,17 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     };
     system.GPU().Start();
     system.GetCpuManager().OnGpuReady();
+    // Load (and precompile) the per-title shader cache, and set the file new shaders are saved to.
+    // Without this every session compiled each shader the first time it appeared, stalling for
+    // seconds at scene changes.
+    if (Settings::values.use_disk_shader_cache.GetValue()) {
+        Diagnostic("SHADER_CACHE loading");
+        system.Renderer().ReadRasterizer()->LoadDiskResources(
+            system.GetApplicationProcessProgramID(), std::stop_token{},
+            [](VideoCore::LoadCallbackStage, size_t value, size_t total) {});
+        Diagnostic("SHADER_CACHE ready");
+        memory_stage("shader_cache");
+    }
     void(system.Run());
     Diagnostic("GAME_RUNNING");
     memory_stage("loaded");

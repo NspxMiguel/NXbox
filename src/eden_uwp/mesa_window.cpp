@@ -237,6 +237,9 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     window_info.type = Core::Frontend::WindowSystemType::Windows;
     window_info.render_surface = get_abi(window);
     window_info.render_surface_scale = 1.0f;
+    // Build shader-cache pipelines on the emulator's own context: shared worker contexts hang P5R
+    // on Mesa d3d12 (the same failure as use_asynchronous_shaders).
+    strict_context_required = true;
     UpdateCurrentFramebufferLayout(width, height);
 }
 
