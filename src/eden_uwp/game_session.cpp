@@ -149,6 +149,39 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     Settings::values.cpuopt_fastmem = false;
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;
+    // LocalState\eden_settings.txt: "label=value" lines applied over the defaults above, by the
+    // same labels as Eden's qt-config (e.g. accelerate_astc=0), so settings can be tried on the
+    // console without a rebuild.
+    {
+        const std::filesystem::path settings_file =
+            std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+            "eden_settings.txt";
+        std::ifstream settings_in(settings_file);
+        std::string line;
+        while (std::getline(settings_in, line)) {
+            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+                line.pop_back();
+            }
+            const auto eq = line.find('=');
+            if (line.empty() || line[0] == '#' || eq == std::string::npos) {
+                continue;
+            }
+            const std::string label = line.substr(0, eq);
+            const std::string value = line.substr(eq + 1);
+            bool applied = false;
+            for (auto& [category, settings] : Settings::values.linkage.by_category) {
+                for (Settings::BasicSetting* setting : settings) {
+                    if (setting->GetLabel() == label) {
+                        setting->LoadString(value);
+                        applied = true;
+                    }
+                }
+            }
+            Diagnostic(fmt::format("SETTING {}={} {}", label, value,
+                                   applied ? "applied" : "unknown"));
+        }
+    }
     XboxGamepad::Configure(gamepad);
     RegisterUnsupportedEngines();
     SCOPE_EXIT {
