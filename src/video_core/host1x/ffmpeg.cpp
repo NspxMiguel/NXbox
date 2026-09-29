@@ -212,7 +212,13 @@ bool HardwareContext::InitializeWithType(AVHWDeviceType type) {
 DecoderContext::DecoderContext(const Decoder& decoder) : m_decoder{decoder} {
     m_codec_context = avcodec_alloc_context3(m_decoder.GetCodec());
     av_opt_set(m_codec_context->priv_data, "tune", "zerolatency", 0);
+#ifdef NXBOX_UWP
+    // One decode thread per core starved the Xbox's system services (Device Portal, input) while
+    // the emulator's CPU threads were busy; two slice threads are enough for the game's movies.
+    m_codec_context->thread_count = 2;
+#else
     m_codec_context->thread_count = 0;
+#endif
     m_codec_context->thread_type &= ~FF_THREAD_FRAME;
 }
 
