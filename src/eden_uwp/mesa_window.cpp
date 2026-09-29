@@ -182,7 +182,14 @@ public:
         // Shared worker contexts (shader compilation) never draw to the window. Binding them to
         // the window DC made Mesa build a second swap chain for the one CoreWindow, which hangs;
         // Mesa's WGL accepts a context current without a drawable.
-        if (!runtime->make_current(surfaceless ? nullptr : runtime->dc, context)) {
+        if (surfaceless) {
+            Diagnostic("CTX make_current surfaceless begin");
+        }
+        const bool made = runtime->make_current(surfaceless ? nullptr : runtime->dc, context);
+        if (surfaceless) {
+            Diagnostic(made ? "CTX make_current surfaceless ok" : "CTX make_current surfaceless FAILED");
+        }
+        if (!made) {
             throw std::runtime_error("Mesa context activation failed");
         }
         // Eden's renderer draws with vertex buffers and no vertex array object, which only a
@@ -262,6 +269,9 @@ std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext
     };
     HANDLE context = nullptr;
     const auto dispatcher = window.Dispatcher();
+    const int ordinal = shared_contexts_created.load();
+    Diagnostic("CTX create begin #" + std::to_string(ordinal) +
+               (dispatcher.HasThreadAccess() ? " ui-thread" : " via-dispatcher"));
     if (dispatcher.HasThreadAccess()) {
         context = create();
     } else {
@@ -276,6 +286,7 @@ std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext
         });
         context = result.get();
     }
+    Diagnostic("CTX create end #" + std::to_string(ordinal));
     // The first shared context is the renderer's (video_core CreateGPU) and presents to the
     // window; later ones are shader workers and the CPU-side context, which stay surfaceless.
     const bool surfaceless = shared_contexts_created++ > 0;
