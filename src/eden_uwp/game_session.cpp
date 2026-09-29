@@ -239,7 +239,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     // Load (and precompile) the per-title shader cache, and set the file new shaders are saved to.
     // Without this every session compiled each shader the first time it appeared, stalling for
     // seconds at scene changes.
-    if (Settings::values.use_disk_shader_cache.GetValue()) {
+    // Off by default: the precompile creates a second (shared) GL context, and a second context
+    // hangs on the Xbox's Mesa d3d12 (same failure as use_asynchronous_shaders). NXBOX_SHADER_CACHE=1
+    // in LocalState\nxbox_env.txt enables it while that is investigated.
+    const char* shader_cache = std::getenv("NXBOX_SHADER_CACHE");
+    if (Settings::values.use_disk_shader_cache.GetValue() && shader_cache != nullptr &&
+        std::string_view{shader_cache} == "1") {
         Diagnostic("SHADER_CACHE loading");
         system.Renderer().ReadRasterizer()->LoadDiskResources(
             system.GetApplicationProcessProgramID(), std::stop_token{},
