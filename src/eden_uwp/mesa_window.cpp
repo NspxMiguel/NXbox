@@ -272,7 +272,11 @@ std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext
     const int ordinal = shared_contexts_created.load();
     Diagnostic("CTX create begin #" + std::to_string(ordinal) +
                (dispatcher.HasThreadAccess() ? " ui-thread" : " via-dispatcher"));
-    if (dispatcher.HasThreadAccess()) {
+    // NXBOX_CTX_DIRECT=1: create worker contexts on the calling thread. Creation through the UI
+    // dispatcher hung for the second context (the first, the renderer's, succeeds that way).
+    const char* direct = std::getenv("NXBOX_CTX_DIRECT");
+    const bool create_here = ordinal > 0 && direct != nullptr && direct[0] == '1';
+    if (dispatcher.HasThreadAccess() || create_here) {
         context = create();
     } else {
         std::promise<HANDLE> promise;
