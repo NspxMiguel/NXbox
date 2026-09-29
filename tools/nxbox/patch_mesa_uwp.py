@@ -36,12 +36,20 @@ def patch(root: Path) -> None:
     )
     present_new = (
         "   // The Xbox compositor is a fixed-refresh sink; DXGI_PRESENT_ALLOW_TEARING is untested\n"
-        "   // there and is not needed on a console. Always present with vsync.\n"
-        "   return S_OK == framebuffer->swapchain->Present(interval < 1 ? 1 : interval, 0);"
+        "   // there and is not needed on a console. Present with vsync by default;\n"
+        "   // NXBOX_PRESENT_INTERVAL=0 queues without blocking (flip model, still no tearing), so a\n"
+        "   // frame that just misses 33 ms does not wait a third vblank (30 FPS -> 20 FPS).\n"
+        "   const char *nxbox_interval = getenv(\"NXBOX_PRESENT_INTERVAL\");\n"
+        "   UINT nxbox_sync = nxbox_interval && *nxbox_interval ? (UINT)atoi(nxbox_interval)\n"
+        "                                                      : (interval < 1 ? 1 : interval);\n"
+        "   return S_OK == framebuffer->swapchain->Present(nxbox_sync, 0);"
     )
     if present_old not in present_source:
         raise RuntimeError("Pinned Mesa source does not match the present patch")
-    present_path.write_text(present_source.replace(present_old, present_new))
+    present_source = present_source.replace(present_old, present_new)
+    if "#include <new>\n" not in present_source:
+        raise RuntimeError("Pinned Mesa present source does not match the stdlib include patch")
+    present_path.write_text(present_source.replace("#include <new>\n", "#include <new>\n#include <stdlib.h>\n", 1))
 
     if "query" in SKIP:
         print("skipping the query reentrancy patch")
