@@ -24,5 +24,6 @@ private:
     winrt::Windows::UI::Core::CoreWindow window;
     std::shared_ptr<MesaRuntime> runtime;
     std::atomic<u64> frames{0};
+    mutable std::atomic<int> shared_contexts_created{0};
 };
 } // namespace EdenXbox
