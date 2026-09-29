@@ -544,3 +544,20 @@ longer needed.
 - The Plus button does not skip P5R movies over remote input; this is not investigated yet.
 - While the CPU decoded video and ASTC, the Device Portal stopped answering (remote input,
   screenshots, file API all timed out). Being investigated.
+
+### Shader cache (29/09/2026)
+
+- The UWP session never called `LoadDiskResources`, so the OpenGL shader cache was neither saved
+  nor precompiled. A second GL context cannot be made current on the Xbox's Mesa WGL: surfaceless
+  `wglMakeCurrent` fails, and the window DC would need a second swap chain. The precompile
+  therefore runs on the renderer's own context before the GPU thread starts
+  (`EmuWindow::PrecompileOnCurrentContext`, `NXBOX_SHADER_CACHE=0` disables it).
+- Measured on P5R to the casino: with an empty cache, gameplay gaps of up to 7.8 s; with the cache
+  (971 KB after one run), every 5 s window in the casino has a worst frame gap of 36-64 ms and no
+  hitch over 100 ms. The remaining stalls (up to 3.7 s) happen during the intro, the logos and the
+  menu load.
+- Sharing between consoles: `ShaderCache::MergeCacheFiles` merges entries byte for byte. With
+  `NXBOX_SHADER_SHARE_URL` set, the session downloads and merges before the precompile and uploads
+  on suspend. The server is `tools/shader-share/server.ts` (Bun, one cache per title, keeps the
+  larger valid upload). A cache from a shader-derived artifact is independent of the GPU; a future
+  compiled-DXIL cache would need a Series S/X + OS + Mesa key.
