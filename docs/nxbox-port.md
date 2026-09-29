@@ -521,3 +521,15 @@ What it took, in order:
 Still open: listening test for audio, a real paired controller (the tests used Device Portal
 remote input), longer play sessions, and removing the Mesa diagnostic counters once they are no
 longer needed.
+
+### Performance and glitch notes (28/09/2026, night)
+
+- Pacing measured with the per-window `worst_gap_ms`/`hitches` fields: 60-70 gaps over 100 ms per
+  run, some of 3-6 s. Most fall on scene transitions, when shaders compile synchronously.
+- `use_asynchronous_shaders=true` (through `LocalState\eden_settings.txt`) hangs P5R during
+  `system.Load` on Mesa d3d12 (the log stops at `MEM before_load`); leave it off.
+- `NXBOX_PRESENT_INTERVAL=0` (Present(0, 0)) changed nothing in the menu (21.3 vs 21.0 FPS).
+- Screenshots show heavy aliasing and moiré on distant textures, which looks like missing or
+  garbage mip levels. Being tested: `accelerate_astc=0` (CPU ASTC decoding).
+- The console's internal storage was 99.9% full from old crash dumps and diagnostic dumps;
+  they were archived to the PC (`/srv/nxbox-archive`) and removed from the console.
