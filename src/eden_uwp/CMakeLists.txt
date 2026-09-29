@@ -14,6 +14,8 @@ add_executable(eden-uwp WIN32
     game_session.cpp
     game_session.h
     game_download.cpp
+    shader_share.cpp
+    shader_share.h
     game_download.h
     gamepad.h
     usb_library.cpp

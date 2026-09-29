@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/game_session.h"
+#include "eden_uwp/shader_share.h"
 
 #include <algorithm>
 #include <atomic>
@@ -241,6 +242,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     const char* shader_cache = std::getenv("NXBOX_SHADER_CACHE");
     if (Settings::values.use_disk_shader_cache.GetValue() &&
         !(shader_cache != nullptr && std::string_view{shader_cache} == "0")) {
+        DownloadSharedShaderCache(system.GetApplicationProcessProgramID());
         Diagnostic("SHADER_CACHE loading");
         {
             auto& render_context = system.Renderer().Context();
@@ -284,6 +286,8 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 void(system.Pause());
                 paused = true;
                 Diagnostic("GAME_SUSPENDED");
+                // Leaving through Home suspends the app: share the shaders met this session.
+                UploadSharedShaderCache(system.GetApplicationProcessProgramID());
             }
             lifecycle.CompleteDeferral();
         } else if (request == Lifecycle::Resume && paused) {

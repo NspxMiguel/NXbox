@@ -4,12 +4,15 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <array>
 #include <atomic>
 #include <fstream>
 #include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
+#include <unordered_set>
 
 #include "common/alignment.h"
 #include "common/assert.h"
@@ -257,6 +260,88 @@ ShaderCache::ShaderCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
 }
 
 ShaderCache::~ShaderCache() = default;
+
+namespace {
+/// Splits an OpenGL pipeline cache into its raw entries; empty when the header does not match.
+std::vector<std::string> ReadCacheEntries(const std::filesystem::path& path, bool& valid) {
+    std::vector<std::string> entries;
+    valid = false;
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        return entries;
+    }
+    const auto end = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::array<char, 8> magic{};
+    u32 version{};
+    file.read(magic.data(), magic.size()).read(reinterpret_cast<char*>(&version), sizeof(version));
+    static constexpr std::array<char, 8> expected_magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+    if (!file || magic != expected_magic || version != CACHE_VERSION) {
+        return entries;
+    }
+    valid = true;
+    try {
+        file.exceptions(std::ifstream::failbit);
+        while (file.tellg() != end) {
+            const auto start = file.tellg();
+            u32 num_envs{};
+            file.read(reinterpret_cast<char*>(&num_envs), sizeof(num_envs));
+            if (num_envs == 0 || num_envs > 6) {
+                break;
+            }
+            std::vector<FileEnvironment> envs(num_envs);
+            for (FileEnvironment& env : envs) {
+                env.Deserialize(file);
+            }
+            if (envs.front().ShaderStage() == Shader::Stage::Compute) {
+                ComputePipelineKey key;
+                file.read(reinterpret_cast<char*>(&key), sizeof(key));
+            } else {
+                GraphicsPipelineKey key;
+                file.read(reinterpret_cast<char*>(&key), sizeof(key));
+            }
+            const auto stop = file.tellg();
+            std::string raw(static_cast<size_t>(stop - start), '\0');
+            file.seekg(start);
+            file.read(raw.data(), static_cast<std::streamsize>(raw.size()));
+            entries.push_back(std::move(raw));
+        }
+    } catch (const std::ios_base::failure&) {
+        // A truncated tail is dropped; the complete entries before it are kept.
+    }
+    return entries;
+}
+} // Anonymous namespace
+
+long ShaderCache::MergeCacheFiles(const std::filesystem::path& local,
+                                  const std::filesystem::path& incoming) {
+    bool incoming_valid = false;
+    const auto remote = ReadCacheEntries(incoming, incoming_valid);
+    if (!incoming_valid) {
+        return -1;
+    }
+    bool local_valid = false;
+    const auto existing = ReadCacheEntries(local, local_valid);
+    std::unordered_set<std::string> known(existing.begin(), existing.end());
+    if (!local_valid) {
+        // No usable local cache: start one with the incoming header.
+        std::ofstream out(local, std::ios::binary | std::ios::trunc);
+        static constexpr std::array<char, 8> magic{'y', 'u', 'z', 'u', 'c', 'a', 'c', 'h'};
+        const u32 version = CACHE_VERSION;
+        out.write(magic.data(), magic.size()).write(reinterpret_cast<const char*>(&version),
+                                                    sizeof(version));
+        known.clear();
+    }
+    std::ofstream out(local, std::ios::binary | std::ios::app);
+    long added = 0;
+    for (const std::string& entry : remote) {
+        if (known.insert(entry).second) {
+            out.write(entry.data(), static_cast<std::streamsize>(entry.size()));
+            ++added;
+        }
+    }
+    return added;
+}
 
 void ShaderCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
                                     const VideoCore::DiskResourceLoadCallback& callback) {
