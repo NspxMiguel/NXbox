@@ -533,3 +533,14 @@ longer needed.
   garbage mip levels. Being tested: `accelerate_astc=0` (CPU ASTC decoding).
 - The console's internal storage was 99.9% full from old crash dumps and diagnostic dumps;
   they were archived to the PC (`/srv/nxbox-archive`) and removed from the console.
+- **Fixed: texture glitches.** With `accelerate_astc=0` (CPU ASTC decoding) the casino renders
+  cleanly: no sparkling dots, no moiré, smooth arches and panels. The GPU ASTC compute decoder
+  leaves garbage in the lower mip levels on Mesa d3d12. CPU decoding is now the default
+  (`game_session.cpp`). Worth trying later: `CpuAsynchronous` (2), to take decode stalls off the
+  emulation thread.
+- **Fixed: frozen intro movie.** GPU video decoding (`d3d11va`) froze the casino movie on one
+  frame while the game kept presenting at 30 FPS. `nvdec_emulation=1` (CPU) plays it through,
+  and it is now the default.
+- The Plus button does not skip P5R movies over remote input; this is not investigated yet.
+- While the CPU decoded video and ASTC, the Device Portal stopped answering (remote input,
+  screenshots, file API all timed out). Being investigated.
