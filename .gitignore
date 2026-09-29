@@ -69,3 +69,4 @@ vulkansdk*.exe
 /homebrew/**/build/
 /build-port-tests*/
 /PEDIDOS.md
+tools/shader-share/data/
