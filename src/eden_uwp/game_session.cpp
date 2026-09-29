@@ -150,6 +150,11 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     Settings::values.cpuopt_fastmem = false;
     Settings::values.cpuopt_fastmem_exclusives = false;
     Settings::values.use_asynchronous_shaders = false;
+    // Mesa d3d12: the GPU ASTC decoder leaves garbage in the lower mip levels (sparkling dots and
+    // moire on every distant texture in P5R), and GPU video decoding (d3d11va) freezes the intro
+    // movie on a frame. Decode both on the CPU, which renders cleanly on the Xbox.
+    Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::Cpu);
+    Settings::values.nvdec_emulation.SetValue(Settings::NvdecEmulation::Cpu);
     // LocalState\eden_settings.txt: "label=value" lines applied over the defaults above, by the
     // same labels as Eden's qt-config (e.g. accelerate_astc=0), so settings can be tried on the
     // console without a rebuild.
