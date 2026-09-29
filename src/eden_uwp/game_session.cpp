@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/game_session.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
@@ -239,6 +240,10 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     auto* controller = system.HIDCore().GetEmulatedControllerByIndex(0);
     auto measured_at = std::chrono::steady_clock::now();
     auto measured_frames = window.FrameCount();
+    auto last_frame_count = measured_frames;
+    auto last_frame_at = std::chrono::steady_clock::now();
+    double worst_gap_ms = 0.0;
+    int hitches = 0;
     bool paused = false;
     int stall_dumps = 0;
     const auto started_at = std::chrono::steady_clock::now();
@@ -268,18 +273,33 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         }
         gamepad->Poll(*controller);
         const auto now = std::chrono::steady_clock::now();
+        // Stutter: the longest gap between two presented frames in each window.
+        if (const auto count = window.FrameCount(); count != last_frame_count) {
+            const double gap =
+                std::chrono::duration<double, std::milli>(now - last_frame_at).count();
+            if (last_frame_count != 0) {
+                worst_gap_ms = std::max(worst_gap_ms, gap);
+                hitches += gap > 100.0 ? 1 : 0;
+            }
+            last_frame_count = count;
+            last_frame_at = now;
+        }
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
         if (elapsed >= 5.0) {
             const auto frames = window.FrameCount();
             const auto stats = system.GetAndResetPerfStats();
             Diagnostic(fmt::format("GAME_PRESENT frames={} seconds={:.3f} fps={:.2f} "
                                    "game_fps={:.2f} system_fps={:.2f} "
-                                   "frametime_ms={:.2f} speed={:.1f}% memory={}",
+                                   "frametime_ms={:.2f} speed={:.1f}% memory={} "
+                                   "worst_gap_ms={:.0f} hitches={}",
                                    frames - measured_frames, elapsed,
                                    (frames - measured_frames) / elapsed, stats.average_game_fps,
                                    stats.system_fps, stats.frametime * 1000.0,
                                    stats.emulation_speed * 100.0,
-                                   winrt::Windows::System::MemoryManager::AppMemoryUsage()));
+                                   winrt::Windows::System::MemoryManager::AppMemoryUsage(),
+                                   worst_gap_ms, hitches));
+            worst_gap_ms = 0.0;
+            hitches = 0;
             measured_at = now;
             measured_frames = frames;
             // While no frame has appeared, record what every guest thread is doing (state, wait
