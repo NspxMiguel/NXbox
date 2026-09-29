@@ -234,24 +234,27 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     SCOPE_EXIT {
         Kernel::Svc::SetDebugStringObserver(nullptr);
     };
-    system.GPU().Start();
-    system.GetCpuManager().OnGpuReady();
-    // Load (and precompile) the per-title shader cache, and set the file new shaders are saved to.
+    // Load (and precompile) the per-title shader cache on the renderer's own context, before the
+    // GPU thread takes it: a second GL context cannot be made current on the Xbox's Mesa.
     // Without this every session compiled each shader the first time it appeared, stalling for
-    // seconds at scene changes.
-    // Off by default: the precompile creates a second (shared) GL context, and a second context
-    // hangs on the Xbox's Mesa d3d12 (same failure as use_asynchronous_shaders). NXBOX_SHADER_CACHE=1
-    // in LocalState\nxbox_env.txt enables it while that is investigated.
+    // seconds at scene changes. NXBOX_SHADER_CACHE=0 in LocalState\nxbox_env.txt disables it.
     const char* shader_cache = std::getenv("NXBOX_SHADER_CACHE");
-    if (Settings::values.use_disk_shader_cache.GetValue() && shader_cache != nullptr &&
-        std::string_view{shader_cache} == "1") {
+    if (Settings::values.use_disk_shader_cache.GetValue() &&
+        !(shader_cache != nullptr && std::string_view{shader_cache} == "0")) {
         Diagnostic("SHADER_CACHE loading");
-        system.Renderer().ReadRasterizer()->LoadDiskResources(
-            system.GetApplicationProcessProgramID(), std::stop_token{},
-            [](VideoCore::LoadCallbackStage, size_t value, size_t total) {});
+        {
+            auto& render_context = system.Renderer().Context();
+            render_context.MakeCurrent();
+            system.Renderer().ReadRasterizer()->LoadDiskResources(
+                system.GetApplicationProcessProgramID(), std::stop_token{},
+                [](VideoCore::LoadCallbackStage, size_t value, size_t total) {});
+            render_context.DoneCurrent();
+        }
         Diagnostic("SHADER_CACHE ready");
         memory_stage("shader_cache");
     }
+    system.GPU().Start();
+    system.GetCpuManager().OnGpuReady();
     void(system.Run());
     Diagnostic("GAME_RUNNING");
     memory_stage("loaded");

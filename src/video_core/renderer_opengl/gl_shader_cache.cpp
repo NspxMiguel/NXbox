@@ -276,7 +276,11 @@ void ShaderCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
     }
     std::optional<Context> strict_context;
     if (strict_context_required) {
-        strict_context.emplace(emu_window);
+        if (emu_window.PrecompileOnCurrentContext()) {
+            strict_context.emplace();
+        } else {
+            strict_context.emplace(emu_window);
+        }
     }
 
     struct {

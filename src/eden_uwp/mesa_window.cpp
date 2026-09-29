@@ -252,6 +252,9 @@ MesaWindow::MesaWindow(const CoreWindow& window_, u32 width, u32 height)
     // Build shader-cache pipelines on the emulator's own context: shared worker contexts hang P5R
     // on Mesa d3d12 (the same failure as use_asynchronous_shaders).
     strict_context_required = true;
+    // Mesa's WGL on the Xbox cannot make a second context current (no surfaceless contexts, and the
+    // window DC would need a second swap chain), so precompile on the renderer's own context.
+    precompile_on_current_context = true;
     UpdateCurrentFramebufferLayout(width, height);
 }
 

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <optional>
+
 #include "core/frontend/emu_window.h"
 #include "core/frontend/graphics_context.h"
 #include "shader_recompiler/frontend/ir/basic_block.h"
@@ -23,10 +25,13 @@ struct ShaderPools {
 
 struct Context {
     explicit Context(Core::Frontend::EmuWindow& emu_window)
-        : gl_context{emu_window.CreateSharedContext()}, scoped{*gl_context} {}
+        : gl_context{emu_window.CreateSharedContext()}, scoped{std::in_place, *gl_context} {}
+
+    /// Uses the context that is already current on this thread (no shared context is created).
+    Context() = default;
 
     std::unique_ptr<Core::Frontend::GraphicsContext> gl_context;
-    Core::Frontend::GraphicsContext::Scoped scoped;
+    std::optional<Core::Frontend::GraphicsContext::Scoped> scoped;
     ShaderPools pools;
 };
 
