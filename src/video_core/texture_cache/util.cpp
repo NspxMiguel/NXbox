@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "common/alignment.h"
+#include "common/nxbox_stall.h"
 #include "common/assert.h"
 #include "common/bit_util.h"
 #include "common/common_types.h"
@@ -924,6 +925,7 @@ boost::container::small_vector<BufferImageCopy, 16> UnswizzleImage(Tegra::Memory
 
 void ConvertImage(std::span<const u8> input, const ImageInfo& info, std::span<u8> output,
                   std::span<BufferImageCopy> copies) {
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Convert};
     u32 output_offset = 0;
     Common::ScratchBuffer<u8> decode_scratch;
 

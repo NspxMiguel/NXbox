@@ -5,6 +5,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
+#include "common/nxbox_stall.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -247,6 +248,7 @@ bool DecoderContext::OpenContext(const Decoder& decoder) {
 }
 
 bool DecoderContext::SendPacket(const Packet& packet) {
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Video};
     if (const int ret = avcodec_send_packet(m_codec_context, packet.GetPacket()); ret < 0 && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
         LOG_ERROR(HW_GPU, "avcodec_send_packet error: {}", AVError(ret));
         return false;

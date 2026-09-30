@@ -15,6 +15,7 @@
 #include <unordered_set>
 
 #include "common/alignment.h"
+#include "common/nxbox_stall.h"
 #include "common/assert.h"
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
@@ -537,6 +538,7 @@ std::unique_ptr<GraphicsPipeline> ShaderCache::CreateGraphicsPipeline(
     ShaderContext::ShaderPools& pools, const GraphicsPipelineKey& key,
     std::span<Shader::Environment* const> envs, bool use_shader_workers,
     bool force_context_flush) try {
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Shader};
     auto hash = key.Hash();
     LOG_INFO(Render_OpenGL, "0x{:016x}", hash);
     size_t env_index{};
@@ -658,6 +660,7 @@ std::unique_ptr<ComputePipeline> ShaderCache::CreateComputePipeline(
 std::unique_ptr<ComputePipeline> ShaderCache::CreateComputePipeline(
     ShaderContext::ShaderPools& pools, const ComputePipelineKey& key, Shader::Environment& env,
     bool force_context_flush) try {
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Shader};
     auto hash = key.Hash();
     LOG_INFO(Render_OpenGL, "0x{:016x}", hash);
 

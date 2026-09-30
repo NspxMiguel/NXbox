@@ -3,11 +3,13 @@
 #include "eden_uwp/shader_share.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <string_view>
 #include <mutex>
 #include <optional>
@@ -17,6 +19,7 @@
 #include <winrt/Windows.System.h>
 
 #include <fmt/format.h>
+#include "common/nxbox_stall.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
@@ -328,6 +331,22 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                    stats.emulation_speed * 100.0,
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage(),
                                    worst_gap_ms, hitches));
+            // Host work in the window, as total/longest milliseconds and call count, so each
+            // hitch can be traced to shader builds, texture uploads, decoding or cache eviction.
+            std::string stall_line = "GAME_STALL";
+            constexpr std::array<std::pair<NxboxStall::Kind, const char*>, 5> stall_kinds{{
+                {NxboxStall::Kind::Shader, "shader"},
+                {NxboxStall::Kind::Upload, "upload"},
+                {NxboxStall::Kind::Convert, "convert"},
+                {NxboxStall::Kind::GarbageCollect, "gc"},
+                {NxboxStall::Kind::Video, "video"},
+            }};
+            for (const auto& [kind, name] : stall_kinds) {
+                const auto taken = NxboxStall::Take(kind);
+                stall_line += fmt::format(" {}={:.0f}/{:.0f}/{}", name, taken.total_us / 1000.0,
+                                          taken.max_us / 1000.0, taken.calls);
+            }
+            Diagnostic(stall_line);
             worst_gap_ms = 0.0;
             hitches = 0;
             measured_at = now;

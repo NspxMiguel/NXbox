@@ -13,6 +13,7 @@
 #include <boost/container/small_vector.hpp>
 
 #include "common/alignment.h"
+#include "common/nxbox_stall.h"
 #include "common/settings.h"
 #include "common/slot_vector.h"
 #include "video_core/control/channel_state.h"
@@ -174,6 +175,7 @@ void TextureCache<P>::TickFrame() {
         total_used_memory = runtime.GetDeviceMemoryUsage();
     }
     if (total_used_memory > minimum_memory) {
+        NxboxStall::Scope stall_scope{NxboxStall::Kind::GarbageCollect};
         RunGarbageCollector();
     }
     sentenced_images.Tick();
@@ -1137,6 +1139,7 @@ void TextureCache<P>::RefreshContents(Image& image, ImageId image_id) {
 template <class P>
 template <typename StagingBuffer>
 void TextureCache<P>::UploadImageContents(Image& image, StagingBuffer& staging) {
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Upload};
     const std::span<u8> mapped_span = staging.mapped_span;
     const GPUVAddr gpu_addr = image.gpu_addr;
 
