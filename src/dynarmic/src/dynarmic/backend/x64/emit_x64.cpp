@@ -348,7 +348,10 @@ Xbyak::Label EmitX64::EmitCond(IR::Cond cond) {
 }
 
 EmitX64::BlockDescriptor EmitX64::RegisterBlock(const IR::LocationDescriptor& descriptor, CodePtr entrypoint, size_t size) {
+#if !defined(NXBOX_UWP)
+    // Windows has no perf-map writer; do not format a name for its no-op callback.
     PerfMapRegister(entrypoint, code.getCurr(), LocationDescriptorToFriendlyName(descriptor));
+#endif
     Patch(descriptor, entrypoint);
 
     BlockDescriptor block_desc{entrypoint, size};
@@ -357,8 +360,18 @@ EmitX64::BlockDescriptor EmitX64::RegisterBlock(const IR::LocationDescriptor& de
 }
 
 void EmitX64::Patch(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
-    const CodePtr save_code_ptr = code.getCurr();
+#if defined(NXBOX_UWP)
+    // Most new blocks have no incoming patch sites. A lookup must not allocate four
+    // empty vectors per block. Retain existing sites for invalidation and relinking.
+    const auto patch = patch_information.find(target_desc);
+    if (patch == patch_information.end()) {
+        return;
+    }
+    const PatchInformation& patch_info = patch->second;
+#else
     const PatchInformation& patch_info = patch_information[target_desc];
+#endif
+    const CodePtr save_code_ptr = code.getCurr();
 
     for (CodePtr location : patch_info.jg) {
         code.SetCodePtr(location);

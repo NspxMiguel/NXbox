@@ -605,3 +605,81 @@ pipelines):
   Mesa's normal-priority threads had to signal. Every emulator thread now runs at normal priority
   on Xbox (`common/thread.cpp`). The next build also attributes time to JIT compiles, code-cache
   evacuations, file reads, AES and GPU-thread busy time.
+
+### ProsperoEden comparison and bounded JIT changes (01/10/2026)
+
+The PS5 homebrew port is **ProsperoEden**. Its [v1.000.030 release](https://github.com/blackbearreloaded/ProsperoEden/releases/tag/v1.000.030)
+and tagged source are now public; older search results saying source is unavailable are stale.
+The release claims shared compiled CPU code and roughly 40% less compilation CPU time. These are
+the author's results, not a P5R comparison or a guarantee that demanding games run smoothly. The
+published build overlays inspected below still describe per-core caches; the release claim alone
+is insufficient to reconstruct a safe cross-core sharing implementation for NXbox.
+
+What the inspected sources establish:
+
+- **JIT:** Dynarmic on x86-64, with [separate writable/executable aliases](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/jit-alias.cmake)
+  and [bounded compilation of unconditional chains](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/jit-compile-batch.inc).
+  [Successful assertions stay inline](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/jit_assert.inc).
+  The [build overlays](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/CMakeLists.txt)
+  also enable Dynarmic ThinLTO, avoid empty patch records and unused perf names, and budget A64 code
+  at 256/192/192/16 MiB for cores 0/1/2/3. NXbox uses 128 MiB per core, page-table memory access
+  (fastmem is disabled in the session), and its own Windows AppContainer JIT allocation path.
+- **GPU:** the [release build](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/tools/build-package.sh)
+  enables Vulkan/RADV; OpenGL remains available. [Pinned dependencies](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/tools/deps.json)
+  include PS5_Mesa, PS5_Vulkan and the PS5 OpenGL 4.6 SDK. This is a native PS5 driver stack, not
+  the OpenGL-to-D3D12 path NXbox must use. Switching an Eden setting cannot supply that driver on Xbox.
+- **Shaders:** [startup code](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/main.cpp)
+  configures RADV's disk cache, a native OpenGL compiler cache and `PS5_GLTHREAD=1`. These are
+  driver-specific facilities. NXbox already precompiles Eden's disk cache on the renderer context;
+  enabling asynchronous shaders previously hung Mesa WGL. Keep that working configuration.
+- **Threading:** [topology tests](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/tools/check-worker-affinity.py)
+  exercise placement of four CPU workers and the GPU on separate physical cores, excluding SMT
+  siblings and falling back when topology is unavailable. NXbox already lowered emulator priorities
+  to normal. PS5 affinity masks are not transferable to the Xbox UWP CPU allocation.
+- **Memory:** [per-thread allocation arenas](https://github.com/blackbearreloaded/ProsperoEden/blob/v1.000.030/headless/heap_arenas.inc)
+  reduce contention on Sony's mspace allocator. The build reserves a 3 GiB heap and describes 12 GiB
+  of direct memory. NXbox has a 5 GiB process budget and demand-committed guest backing; replacing
+  the Windows allocator or copying those reservations is not justified.
+
+Applied only to the UWP Dynarmic target:
+
+1. `EmitX64::Patch` uses `find` and returns when no incoming patch sites exist. Previously
+   `operator[]` retained an empty four-vector record for every such compiled block. Existing
+   sites remain intact for unlinking and relinking after invalidation.
+2. `RegisterBlock` skips friendly-name formatting for the Windows no-op perf-map writer.
+3. `ASSERT_MSG` keeps the successful condition inline and outlines only the logging/failure path.
+   Conditions still execute once; failed assertions still log and invoke `AssertFailSoftImpl`.
+   The extra `NXBOX_INLINE_JIT_ASSERTS` definition is private to Dynarmic, so assertions in the
+   other libraries are unchanged. `NXBOX_UWP` guards the emitter changes.
+
+These reduce JIT bookkeeping/allocation overhead; they do not establish the cause of the 1-4 s
+gaps. No shared JIT, larger code cache, affinity change, shader-thread change or new GPU backend
+is included. The fence flush fix remains intact.
+
+Validation: `python3 tests/port/test_jit_hot_paths.py` passes two tests with five compiled host
+variants. It exercises the production Patch/Unpatch/RegisterBlock methods with a mock code writer:
+100,000 absent targets, all four patch types, cursor restoration, unlink/relink and the unchanged
+desktop path. It also includes the real assertion header with a logging stub and checks condition
+and message side effects plus failure handling. This is not an x86 emitter or Windows SDK build.
+
+Console verification:
+
+1. Build baseline and candidate from the same base, including the fence flush fix, using
+   `tools\nxbox\build-uwp.cmd` on Windows. Verify the candidate Dynarmic compile command contains
+   `NXBOX_UWP=1` and `NXBOX_INLINE_JIT_ASSERTS=1`. Package/install using the existing UWP workflow.
+2. Preserve the same P5R save, settings and warmed shader-cache snapshot for both packages. Keep
+   async shaders off, normal priorities and the 128 MiB caches; remove verbose/per-line logging
+   overrides for both runs. Restart the app for each trial: CPU JIT caches are session-local even
+   with a warm shader cache. Alternate baseline/candidate at least three times each.
+3. Follow the same sequence through logos, menu, movie and casino traversal. Collect
+   `LocalState\eden_uwp_diag.txt` after each run. Compare equal phases using `GAME_PRESENT`
+   `worst_gap_ms`/`hitches`, `GAME_STALL jit=total_ms/max_ms/count`, and process memory. Sum
+   `jit` totals and counts across the phase before computing time per compile. Also record
+   `jitflush` counts (its current times are always zero), `shader`, `glsync`, `readback`, `io`
+   and `decommit`; lower JIT cost cannot explain a window with no JIT work.
+4. Check movie playback, audio, controls, a repeated area transition and a 15-minute gameplay
+   session for crashes, visual regressions or memory growth. Report loading and gameplay results
+   separately. Profiler categories can overlap across threads/nested scopes, and scopes record
+   on completion; their totals are not an additive decomposition of a frame gap.
+
+No Xbox run or complete UWP compilation was performed for this change on the macOS host.

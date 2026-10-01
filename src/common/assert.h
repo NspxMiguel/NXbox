@@ -23,6 +23,21 @@ void AssertFailSoftImpl();
 #define YUZU_NO_INLINE __attribute__((noinline))
 #endif
 
+#if defined(NXBOX_UWP) && defined(NXBOX_INLINE_JIT_ASSERTS)
+// JIT IR construction checks invariants repeatedly. Keep the successful path inline;
+// only logging and failure handling need an out-of-line call. Both defines are private
+// to the UWP dynarmic target, so other users retain their existing assertion policy.
+#define ASSERT_MSG(_a_, ...)                                                                       \
+    ([&]() {                                                                                       \
+        auto&& assert_condition = (_a_);                                                           \
+        if (!(assert_condition)) [[unlikely]] {                                                    \
+            [&]() YUZU_NO_INLINE {                                                                 \
+                LOG_CRITICAL(Debug, __FILE__ ": assert " __VA_ARGS__);                             \
+                AssertFailSoftImpl();                                                              \
+            }();                                                                                   \
+        }                                                                                          \
+    }())
+#else
 #define ASSERT_MSG(_a_, ...)                                                                       \
     ([&]() YUZU_NO_INLINE {                                                                         \
         auto&& assert_condition = (_a_);                                                           \
@@ -31,6 +46,7 @@ void AssertFailSoftImpl();
             AssertFailSoftImpl();                                                                  \
         }                                                                                          \
     }())
+#endif
 #define ASSERT(_a_) ASSERT_MSG(_a_, "{}", #_a_)
 
 #define UNREACHABLE_MSG(...)                                                                       \
