@@ -170,3 +170,10 @@ releases it fully before the game boots.
   - user-added sources in the Tinfoil shop format (`{"files":[{"url","size"}],"directories":[...]}`),
     which download games, updates and DLC into `LocalState\games`.
 - No source of games ships configured; the user adds their own.
+
+Focus model (owner, 2026-10-01): three vertical layers, as on the Xbox dashboard.
+1. The game rail is the default focus, and A on a tile launches that game.
+2. Up from the rail moves focus to the hero actions (Jogar, Mods, Detalhes) of the focused game.
+3. Up again moves focus to the top nav (Biblioteca, Configurações).
+
+Down goes back one layer. X (Mods) and Y (Detalhes) also work directly from the rail.
