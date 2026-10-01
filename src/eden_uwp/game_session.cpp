@@ -261,9 +261,11 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 [](VideoCore::LoadCallbackStage stage, size_t value, size_t total) {
                     // Progress goes to the flushed diagnostic file, so a load that hangs or
                     // dies shows how far it got.
-                    if (stage == VideoCore::LoadCallbackStage::Build &&
-                        (value % 32 == 0 || value == total)) {
-                        Diagnostic(fmt::format("SHADER_CACHE built {}/{}", value, total));
+                    // Inline builds report a running count with no total; the final call
+                    // reports the total with a count of zero.
+                    if (stage == VideoCore::LoadCallbackStage::Build && value % 32 == 0) {
+                        Diagnostic(total == 0 ? fmt::format("SHADER_CACHE built {}", value)
+                                              : fmt::format("SHADER_CACHE total {}", total));
                     }
                 });
             render_context.DoneCurrent();

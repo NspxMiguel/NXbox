@@ -378,7 +378,10 @@ void ShaderCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading,
 
     const auto queue_work{[&](Common::UniqueFunction<void, Context*>&& work) {
         if (strict_context_required) {
+            // Built inline while the file is still being read, so the total is not known yet:
+            // report how far the build got, which is what a hang or crash needs to show.
             work(&strict_context.value());
+            callback(VideoCore::LoadCallbackStage::Build, state.built, 0);
         } else {
             workers->QueueWork(std::move(work));
         }
