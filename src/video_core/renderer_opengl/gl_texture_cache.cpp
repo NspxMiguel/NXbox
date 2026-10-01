@@ -7,11 +7,15 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstdlib>
+#include <cstring>
+#include <vector>
 #include <string>
 
 #include <glad/glad.h>
 
 #include "common/bit_util.h"
+#include "common/nxbox_gl_readback.h"
 #include "common/literals.h"
 #include "common/settings.h"
 #include "video_core/renderer_opengl/gl_device.h"
@@ -671,6 +675,58 @@ void TextureCacheRuntime::AccelerateImageUpload(Image& image, const StagingBuffe
     default:
         ASSERT(false);
         break;
+    }
+}
+
+bool TextureCacheRuntime::NxboxAstcCheckWanted() const noexcept {
+    static const bool wanted = std::getenv("NXBOX_ASTC_CHECK") != nullptr;
+    return wanted && nxbox_astc_checks < 24;
+}
+
+void TextureCacheRuntime::NxboxCompareAstcUpload(
+    Image& image, std::span<const u8> expected,
+    std::span<const VideoCommon::BufferImageCopy> copies) {
+    const u32 check = ++nxbox_astc_checks;
+    glMemoryBarrier(GL_ALL_BARRIER_BITS);
+    const NxboxPackBufferGuard guard;
+    std::vector<u8> actual;
+    for (const VideoCommon::BufferImageCopy& copy : copies) {
+        const u32 level = copy.image_subresource.base_level;
+        const size_t size = static_cast<size_t>(copy.image_extent.width) *
+                            copy.image_extent.height * copy.image_extent.depth *
+                            copy.image_subresource.num_layers * 4;
+        actual.assign(size, 0xCD);
+        while (glGetError() != GL_NO_ERROR) {
+        }
+        glGetTextureImage(image.Handle(), static_cast<GLint>(level), GL_RGBA, GL_UNSIGNED_BYTE,
+                          static_cast<GLsizei>(size), actual.data());
+        const GLenum error = glGetError();
+        const auto reference = expected.subspan(copy.buffer_offset, size);
+        size_t mismatched = 0;
+        size_t first = size;
+        for (size_t i = 0; i < size; ++i) {
+            if (actual[i] != reference[i]) {
+                first = (std::min)(first, i);
+                ++mismatched;
+            }
+        }
+        u32 gpu_word = 0;
+        u32 cpu_word = 0;
+        if (first < size && first + 4 <= size) {
+            const size_t aligned = first & ~size_t{3};
+            std::memcpy(&gpu_word, actual.data() + aligned, 4);
+            std::memcpy(&cpu_word, reference.data() + aligned, 4);
+        }
+        LOG_WARNING(Render_OpenGL,
+                    "NXBOX_ASTC_CHECK #{} format={} srgb={} size={}x{}x{} levels={} level={} "
+                    "extent={}x{} bytes={} mismatched={} first={} gpu={:08x} cpu={:08x} "
+                    "gl_error={:#x}",
+                    check, static_cast<u32>(image.info.format),
+                    VideoCore::Surface::IsPixelFormatSRGB(image.info.format) ? 1 : 0,
+                    image.info.size.width, image.info.size.height,
+                    image.info.resources.layers, image.info.resources.levels, level,
+                    copy.image_extent.width, copy.image_extent.height, size, mismatched,
+                    first, gpu_word, cpu_word, error);
     }
 }
 

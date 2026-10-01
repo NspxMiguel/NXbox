@@ -1148,6 +1148,18 @@ void TextureCache<P>::UploadImageContents(Image& image, StagingBuffer& staging) 
                               VideoCommon::CacheType::NoTextureCache);
         const auto uploads = FullUploadSwizzles(image.info);
         runtime.AccelerateImageUpload(image, staging, FixSmallVectorADL(uploads), 0, 0);
+        // NXBOX_ASTC_CHECK: decode the same guest data on the CPU and compare every mip level.
+        if constexpr (requires { runtime.NxboxAstcCheckWanted(); }) {
+            if (VideoCore::Surface::IsPixelFormatASTC(image.info.format) &&
+                runtime.NxboxAstcCheckWanted()) {
+                std::vector<u8> unswizzled(image.unswizzled_size_bytes);
+                auto copies = FixSmallVectorADL(UnswizzleImage(*gpu_memory, gpu_addr, image.info,
+                                                               mapped_span, unswizzled));
+                std::vector<u8> converted(image.converted_size_bytes);
+                ConvertImage(unswizzled, image.info, converted, copies);
+                runtime.NxboxCompareAstcUpload(image, converted, copies);
+            }
+        }
         return;
     }
 
