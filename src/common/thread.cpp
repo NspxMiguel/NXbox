@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: 2014 Citra Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <string>
@@ -54,6 +55,13 @@ namespace Common {
 
 void SetCurrentThreadPriority(ThreadPriority new_priority) {
 #ifdef _WIN32
+#ifdef YUZU_UWP_APPCONTAINER
+    // On the Xbox a UWP app shares its cores with the system. The guest CPU and GPU threads ask for
+    // TIME_CRITICAL; when they spin (waiting on a fence the driver's normal-priority threads must
+    // signal) they starve those threads, the game freezes, and the console's own services (the
+    // Device Portal included) stop answering for hours. Nothing runs above normal there.
+    new_priority = (std::min)(new_priority, ThreadPriority::Normal);
+#endif
     int windows_priority = [&]() {
         switch (new_priority) {
         case ThreadPriority::Low: return THREAD_PRIORITY_BELOW_NORMAL;
