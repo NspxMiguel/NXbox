@@ -77,13 +77,20 @@ jobs:
           SOURCE_REVISION: ${{ steps.source.outputs.revision || github.sha }}
           RELEASE_VERSION: ${{ inputs.package_version }}
           PACKAGE_KIND: ${{ inputs.kind || 'game' }}
-          MESA_RUN: ${{ inputs.mesa_run || '35928958265' }}
+          MESA_RUN: ${{ inputs.mesa_run }}
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
           $executables = @(Get-ChildItem build-artifact -Recurse -Filter eden-uwp.exe)
           if ($executables.Count -ne 1) { throw 'Expected exactly one built UWP executable' }
           if ($env:PACKAGE_KIND -eq 'game') {
+            if (-not $env:MESA_RUN) {
+              # A pinned default went stale once and shipped a Mesa without the query fixes, so
+              # take the newest successful Mesa build from main unless a run is given.
+              $env:MESA_RUN = gh run list --repo $env:GITHUB_REPOSITORY --workflow mesa-uwp.yml --branch main --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+              if (-not $env:MESA_RUN) { throw 'No successful Mesa build found on main' }
+            }
+            Write-Host "Mesa runtime from run $env:MESA_RUN"
             python tools/nxbox/fetch_mesa_build.py --run "$env:MESA_RUN" --output $executables[0].DirectoryName
             if ($LASTEXITCODE -ne 0) { throw 'Mesa runtime staging failed' }
             python tools/nxbox/prepare_dxil.py --output $executables[0].DirectoryName
