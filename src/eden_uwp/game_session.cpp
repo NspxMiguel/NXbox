@@ -258,7 +258,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             render_context.MakeCurrent();
             system.Renderer().ReadRasterizer()->LoadDiskResources(
                 system.GetApplicationProcessProgramID(), std::stop_token{},
-                [](VideoCore::LoadCallbackStage, size_t value, size_t total) {});
+                [](VideoCore::LoadCallbackStage stage, size_t value, size_t total) {
+                    // Progress goes to the flushed diagnostic file, so a load that hangs or
+                    // dies shows how far it got.
+                    if (stage == VideoCore::LoadCallbackStage::Build &&
+                        (value % 32 == 0 || value == total)) {
+                        Diagnostic(fmt::format("SHADER_CACHE built {}/{}", value, total));
+                    }
+                });
             render_context.DoneCurrent();
         }
         EndShaderCacheLoad(title_id);
