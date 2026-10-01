@@ -683,3 +683,21 @@ Console verification:
    on completion; their totals are not an additive decomposition of a frame gap.
 
 No Xbox run or complete UWP compilation was performed for this change on the macOS host.
+
+## Storage, stale Mesa and the first library build on the console (01/10/2026)
+
+- **Disk.** The devkit's internal storage left for apps is about 5 GB beyond the installed
+  games. A stale 5 GB crash dump filled it: a game download then failed at the same byte twenty
+  times, and banner caching and the diagnostic log stopped silently. Downloads now check free
+  space first (`DOWNLOAD_NO_SPACE`), the log rotates past 4 MiB, and games can live on a
+  removable drive in `<drive>\NXbox\games` (read, downloaded and converted in place through
+  the `...FromApp` Win32 calls; plain Win32 and `std::filesystem` are refused there).
+- **Stale Mesa in automatic packages.** `package-nxbox.yml` defaulted to a Mesa run pinned
+  weeks ago, without the d3d12 query reentrancy and double-begin fixes. 0.3.183 then died about
+  five seconds into Persona 5 Royal: the dump shows `0xc00000fd` with 15,391 nested
+  `begin_subquery` → `accumulate_subresult_gpu` → `d3d12_set_active_query_state` cycles. The
+  package now takes the newest successful `mesa-uwp.yml` run on main unless one is given.
+- **Pacing on 0.3.184 (correct Mesa, cold shader cache).** To the casino: 79 windows of 5 s,
+  average 26.1 FPS, 21 windows with a gap of 200 ms or more, worst 5.3 s. The worst window is a
+  single 4.9 s GPU-thread job; shader builds (0.95 s) and query waits (0.55 s) explain only part
+  of it. The cache was cold because the precompile guard discarded it after the 0.3.183 crashes.
