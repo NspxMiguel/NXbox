@@ -41,6 +41,13 @@ enum class Font {
     Glyph,      // the letter inside a controller button glyph
     Heading,    // sheet titles, wraps
     Body,       // paragraphs, wraps
+    ModsTitle,  // the title of the mod store, 64 px
+    RowTitle,   // the name of a mod
+    RowSub,     // the author line of a mod
+    Stat,       // a mod's download count, monospaced
+    StatCaption, // the unit under the count
+    ChipCount,  // the number on a category chip, monospaced
+    Code,       // the sign-in code, monospaced and large
     Count,
 };
 

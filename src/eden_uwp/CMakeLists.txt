@@ -26,23 +26,36 @@ add_executable(eden-uwp WIN32
     setup_ui.h
     diagnostic.h
     ui/anim.h
+    ui/art.cpp
+    ui/art.h
     ui/input.cpp
     ui/input.h
     ui/library.cpp
     ui/library.h
     ui/library_screen.cpp
     ui/library_screen.h
+    ui/mods.cpp
+    ui/mods.h
+    ui/mods_screen.cpp
+    ui/mods_screen.h
     ui/renderer.cpp
     ui/renderer.h
+    ui/savesync_ui.cpp
+    ui/savesync_ui.h
     ui/strings.cpp
     ui/strings.h
     ui/theme.h
+    ui/widgets.cpp
+    ui/widgets.h
 )
 
 # core transitively pulls common/video_core/audio_core/hid_core/dynarmic etc.; name the ones we touch
 # directly so the dependency graph is explicit. frontend_common provides PlayTimeManager (pulled by
 # core's NS query service).
 target_link_libraries(eden-uwp PRIVATE common core video_core audio_core frontend_common input_common glad)
+
+# ui/mods.cpp unpacks the mods' .zip files with zlib, which core already links privately.
+target_link_libraries(eden-uwp PRIVATE ZLIB::ZLIB)
 
 # WinRT (CoreApplication, IFrameworkView, ApplicationData) comes from the Store umbrella import lib.
 target_link_libraries(eden-uwp PRIVATE WindowsApp.lib)

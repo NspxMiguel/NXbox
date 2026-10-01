@@ -236,3 +236,89 @@ flow) was run on a host with fakes.
 - To check on the console first: that Mesa gets the window after the library's swap chain is
   released (`UI renderer released`, then the normal `GAME_*` lines); that the icons decode and the
   hero gradients look right; that Segoe UI, the monospaced face and the CJK fallback exist.
+
+### Hero banner status (2026-10-01)
+
+Written, syntax-checked against stand-in headers, not yet compiled on Windows or run on the console.
+
+- The hero shows the official eShop banner full bleed instead of the icon gradient. The index is
+  `dist/art/eshop-art.json` on `main` (`{"base","ext","titles":{"<TITLEID16>":["<banner>","<icon>"]}}`);
+  `ui/art.cpp` downloads it once into `LocalState\library\eshop-art.json` and refreshes it weekly (a
+  failed refresh keeps the old copy). Each banner (1920x1080 JPEG) is cached in
+  `LocalState\library\<TITLEID>.banner.jpg`, so a banner seen once also works offline. One worker
+  thread does all of it; the newest request is served first.
+- The banner covers the top 760 px with object-fit cover at 50% / 18%, under the preview's scrim
+  (0.5 at 0%, 0 at 16% and 52%, 0.72 at 76%, black at 98%). It fades in over 320 ms when it arrives
+  and crossfades with the previous game's banner. With a banner there is no big title (the banner
+  carries the logo) and no icon on the right; both fade out as the banner fades in. The meta line and
+  the pills stay where they were.
+- Fallback: offline, no banner for the title, or still downloading, the icon gradient, title and icon
+  show as before. At most three decoded banners stay on the GPU (8 MB each).
+- Log lines: `UI art index ...`, `UI art banner <id> cached`, `UI banner shown <id>`.
+
+### Increment 2 status: the mod store (2026-10-01)
+
+Written, syntax-checked against stand-in headers, not yet compiled on Windows or run on the console.
+The zip reader, the archive search and the HTML clean-up were also run on a host against a real zip.
+
+- Code: `ui/mods.cpp` (GameBanana client, installer, zip reader), `ui/mods_screen.cpp` (the screen),
+  `ui/widgets.cpp` (the ring, pills, hint bar, tabs and sheets that the library and the new screens
+  share; they moved out of `library_screen.cpp` unchanged). It opens from the Mods pill or X, on a
+  game, and returns with B.
+- The game is found with `Util/Search/Results`, preferring the "(Switch)" record, and its id is cached
+  in `LocalState\library\<TITLEID>.mods.json`, together with the installed mods and the disabled
+  ones. All networking runs on worker threads (a search/list thread, a thumbnail thread, an install
+  thread); thumbnails are decoded on the render thread, two per frame.
+- Chips: Mais baixados (GameBanana's own order), Gráficos, Interface, Jogabilidade, Instalados with
+  its count. LB/RB move between them. GameBanana's categories differ from game to game, so the three
+  middle chips filter what is loaded by keyword on the root category (prefix match on its words), and
+  the screen keeps loading pages while such a chip shows fewer than five rows (at most eight pages).
+  Instalados comes from the record file, so it works offline.
+- Install: the mod's files come from `Mod/<id>?_csvProperties=_sName,_nDownloadCount,_aFiles,_sText`.
+  The first `.zip` is downloaded (progress on the row: "Baixando 64%"), unpacked into
+  `LocalState\mods_tmp\<id>\x` (stored and deflate entries, CRC checked, zip64 and encrypted archives
+  refused, `..` paths refused), and the shallowest folder holding `romfs`, `exefs` or `cheats` (up to
+  six levels down, so `atmosphere\contents\<titleid>\` works) is moved to
+  `LocalState\eden\load\<TITLEID16>\<mod name>\`. An archive with no such folder fails with a log
+  line. A mod that only has `.7z` or `.rar` files shows "Formato ainda não suportado" on its row.
+- On/off: X toggles an installed mod. Eden's disabled add-ons list (`Settings::values.disabled_addons`,
+  keyed by title ID and folder name) is not reachable from `eden_settings.txt`, so the disabled names
+  are kept in the record file and `Ui::ApplyDisabledMods` puts them in that list at boot (called in
+  `RunGame` after the settings file). Nothing is renamed.
+- Y opens the details sheet (author, category, count, first file with its size, description as plain
+  text, 700 characters at most).
+- Left out: `.7z` and `.rar`; a download resumes nothing (a cancelled one starts over); the count on
+  the rows is likes when the listing carries no download count (the sheet shows downloads once the
+  details arrive); no "Feito pro Xbox" badge (no field says it).
+- Log lines: `UI mods ...`.
+
+### Increment 4 status: SwitchSaveSync (2026-10-01)
+
+Written, syntax-checked against stand-in headers, not yet compiled on Windows or run on the console.
+The backend is `save_sync.h/.cpp`; `ui/savesync_ui.cpp` is the part the player sees.
+
+- First run: when `LocalState\setup_done.txt` is missing, `RunLibrary` asks "Sincronizar saves com o
+  SwitchSaveSync?" (Sim / Agora não) before the library shows, and writes `setup_done.txt` at the
+  end (not when the window was closed meanwhile). Sim opens the sign-in screen; without
+  `savesync.json` it explains that the OAuth client file is missing and goes on.
+- Sign-in: `StartDeviceLogin()` then `PollDeviceLogin()` on a worker thread; the screen shows the
+  verification URL, the user code large, a countdown to its expiry and the result. B cancels. No QR
+  code (it would need an encoder; the code and the URL are enough).
+- Settings tab: a list with "SwitchSaveSync" (Desligado / Conectado / Não configurado; A signs in
+  or out) and "Fontes" (a placeholder that says "em breve"; Increment 3 fills it). Sync is enabled
+  exactly when the account is configured and signed in.
+- Before boot (only for a game chosen in the library): after the library returns, with sync enabled,
+  `RunBootSync` reconciles the save behind a progress screen. On a conflict it shows both sides (time,
+  files, size) and asks "Manter o save do Xbox" / "Usar o da nuvem" (focus starts on the newer side;
+  B plays without syncing). The name given to SwitchSaveSync is `GameNameFromNames` over the NACP
+  names, which the library cache now stores (`nacp_names` in `<TITLEID>.json`; an older record is
+  rebuilt on the next scan). `eden_settings.txt` is applied first so the active profile is right.
+- After the game: `SyncAfterExit` runs on the game's worker thread right after `RunGame` returns,
+  which is after the guest stopped and `ShutdownMainProcess` released the save files. No screen
+  (nothing owns the window then). Home suspends the app and the system may end it, and the window
+  can be closed, so there is no safe point in those paths: `savesync_pending.txt` (title ID and name)
+  is written before the boot and removed once the upload succeeded, and a leftover one is finished
+  at the next launch, behind a progress screen, before the library shows.
+- A game launched through `game.txt` with `skip_library.txt` has no title ID known to the UI and is
+  not synced.
+- Log lines: `UI setup ...`, `UI savesync ...`.

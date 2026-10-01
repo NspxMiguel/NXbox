@@ -62,6 +62,91 @@ constexpr Entry kTable[] = {
     {L"Formato", L"Format"},        // DetailsFormat
     {L"Tamanho", L"Size"},          // DetailsSize
     {L"Arquivo", L"File"},          // DetailsFile
+    {L"Mods", L"Mods"}, // ModsTitle
+    {L"mods da versão de Switch no GameBanana. Instala com um botão, desliga quando quiser.", L"Switch mods on GameBanana. Install with one button, turn off whenever you like."}, // ModsSourceLine
+    {L"Mais baixados", L"Most downloaded"}, // ChipTop
+    {L"Gráficos", L"Graphics"}, // ChipGraphics
+    {L"Interface", L"Interface"}, // ChipInterface
+    {L"Jogabilidade", L"Gameplay"}, // ChipGameplay
+    {L"Instalados", L"Installed"}, // ChipInstalled
+    {L"Instalar", L"Install"}, // ModInstall
+    {L"Instalado", L"Installed"}, // ModInstalled
+    {L"Desligado", L"Off"}, // ModDisabled
+    {L"Baixando", L"Downloading"}, // ModDownloading
+    {L"Instalando", L"Installing"}, // ModInstalling
+    {L"Formato ainda não suportado", L"Format not supported yet"}, // ModUnsupported
+    {L"Falhou, tentar de novo", L"Failed, try again"}, // ModFailed
+    {L"downloads", L"downloads"}, // ModDownloadsCaption
+    {L"curtidas", L"likes"}, // ModLikesCaption
+    {L"Procurando o jogo no GameBanana", L"Looking for the game on GameBanana"}, // ModsSearching
+    {L"Carregando os mods", L"Loading the mods"}, // ModsLoading
+    {L"Este jogo não está no GameBanana.", L"This game is not on GameBanana."}, // ModsNoGame
+    {L"Sem conexão com o GameBanana. Pressione A para tentar de novo.", L"Cannot reach GameBanana. Press A to try again."}, // ModsOffline
+    {L"Nada nesta categoria ainda.", L"Nothing in this category yet."}, // ModsNothing
+    {L"Você ainda não instalou nenhum mod.", L"You have not installed any mod yet."}, // ModsNoneInstalled
+    {L"Instalar", L"Install"}, // HintInstall
+    {L"Ver o mod", L"View the mod"}, // HintViewMod
+    {L"Ligar/desligar", L"Turn on/off"}, // HintToggle
+    {L"Autor", L"Author"}, // ModAuthor
+    {L"Categoria", L"Category"}, // ModCategory
+    {L"Downloads", L"Downloads"}, // ModDownloadsLabel
+    {L"Arquivos", L"Files"}, // ModFiles
+    {L"Carregando…", L"Loading…"}, // ModLoadingDetails
+    {L"Mod instalado", L"Mod installed"}, // ToastModInstalled
+    {L"Mod ligado", L"Mod on"}, // ToastModOn
+    {L"Mod desligado", L"Mod off"}, // ToastModOff
+    {L"Já instalado. Use X para ligar ou desligar.", L"Already installed. Press X to turn it on or off."}, // ToastModAlready
+    {L"Sincronizar saves com o SwitchSaveSync?", L"Sync saves with SwitchSaveSync?"}, // SyncSetupTitle
+    {L"Os saves ficam no Google Drive, os mesmos do seu Switch: o app baixa antes de abrir um jogo e envia depois que você fecha. Dá para mudar depois em Configurações.", L"Saves live on Google Drive, the same ones your Switch uses: they are downloaded before a game opens and uploaded after you close it. You can change this later in Settings."}, // SyncSetupBody
+    {L"Sim", L"Yes"}, // SyncYes
+    {L"Agora não", L"Not now"}, // SyncNotNow
+    {L"Entre pelo celular", L"Sign in with your phone"}, // SyncCodeTitle
+    {L"Abra este endereço no celular e digite o código.", L"Open this address on your phone and enter the code."}, // SyncCodeBody
+    {L"Esperando você entrar…", L"Waiting for you to sign in…"}, // SyncWaiting
+    {L"Conectado. Os saves vão sincronizar sozinhos.", L"Signed in. Saves will sync on their own."}, // SyncSignedIn
+    {L"O acesso foi recusado.", L"Access was denied."}, // SyncDenied
+    {L"O código expirou. Tente de novo em Configurações.", L"The code expired. Try again in Settings."}, // SyncExpired
+    {L"Não deu para entrar. O arquivo de diagnóstico tem o motivo.", L"Sign-in failed. The diagnostics file has the reason."}, // SyncLoginFailed
+    {L"Falta o arquivo savesync.json, com o cliente OAuth, na pasta do app. Sem ele a sincronização não funciona. Você pode ligá-la depois em Configurações.", L"The savesync.json file with the OAuth client is missing from the app folder. Sync cannot work without it. You can turn it on later in Settings."}, // SyncNotConfiguredBody
+    {L"SwitchSaveSync", L"SwitchSaveSync"}, // SyncRowTitle
+    {L"Desligado", L"Off"}, // SyncStateOff
+    {L"Conectado", L"Signed in"}, // SyncStateOn
+    {L"Não configurado", L"Not configured"}, // SyncStateNotConfigured
+    {L"Saves na nuvem, iguais aos do Switch. Pressione A para entrar.", L"Cloud saves, the same as on the Switch. Press A to sign in."}, // SyncRowOffHint
+    {L"Os saves sincronizam ao abrir e fechar um jogo. Pressione A para sair da conta.", L"Saves sync when a game opens and closes. Press A to sign out."}, // SyncRowOnHint
+    {L"Falta o arquivo savesync.json na pasta do app.", L"The savesync.json file is missing from the app folder."}, // SyncRowMissingHint
+    {L"Fontes", L"Sources"}, // SourcesRowTitle
+    {L"em breve", L"coming soon"}, // SourcesRowState
+    {L"Fontes de jogos, mods e arte entram aqui.", L"Sources for games, mods and art will live here."}, // SourcesRowHint
+    {L"Entrar", L"Sign in"}, // HintSignIn
+    {L"Sair da conta", L"Sign out"}, // HintSignOut
+    {L"Cancelar", L"Cancel"}, // HintCancel
+    {L"Continuar", L"Continue"}, // HintContinue
+    {L"Sincronizando os saves", L"Syncing saves"}, // SyncingTitle
+    {L"Enviando o save do último jogo", L"Uploading the last game's save"}, // SyncingAfterTitle
+    {L"Conectando ao Google Drive", L"Connecting to Google Drive"}, // SyncStageConnecting
+    {L"Comparando os saves", L"Comparing the saves"}, // SyncStageComparing
+    {L"Baixando da nuvem", L"Downloading from the cloud"}, // SyncStageDownloading
+    {L"Aplicando o save", L"Applying the save"}, // SyncStageApplying
+    {L"Enviando para a nuvem", L"Uploading to the cloud"}, // SyncStageUploading
+    {L"Limpando a nuvem", L"Tidying the cloud"}, // SyncStageCleaning
+    {L"Pronto", L"Done"}, // SyncStageFinished
+    {L"Os saves são diferentes", L"The saves differ"}, // SyncConflictTitle
+    {L"O save do Xbox e o da nuvem mudaram desde a última sincronização. Qual você quer manter? O outro é substituído.", L"The Xbox save and the cloud save both changed since the last sync. Which one do you want to keep? The other is replaced."}, // SyncConflictBody
+    {L"Manter o save do Xbox", L"Keep the Xbox save"}, // SyncKeepXbox
+    {L"Usar o da nuvem", L"Use the cloud save"}, // SyncKeepCloud
+    {L"Xbox", L"Xbox"}, // SyncSideXbox
+    {L"Nuvem", L"Cloud"}, // SyncSideCloud
+    {L"arquivos", L"files"}, // SyncFilesSuffix
+    {L"Save enviado para a nuvem.", L"Save uploaded to the cloud."}, // SyncResultUploaded
+    {L"Save da nuvem aplicado.", L"Cloud save applied."}, // SyncResultDownloaded
+    {L"Os saves já estão iguais.", L"The saves already match."}, // SyncResultUpToDate
+    {L"Ainda não há save deste jogo.", L"There is no save for this game yet."}, // SyncResultNothing
+    {L"A conta saiu. Entre de novo em Configurações.", L"The account signed out. Sign in again in Settings."}, // SyncResultNotSignedIn
+    {L"A sincronização falhou. O jogo abre mesmo assim.", L"Sync failed. The game starts anyway."}, // SyncResultFailed
+    {L"A sincronização não está configurada.", L"Sync is not configured."}, // SyncResultNotConfigured
+    {L"Jogar sem sincronizar", L"Play without syncing"}, // SyncSkip
+    {L"O código vale por", L"The code is valid for"}, // SyncExpiresIn
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

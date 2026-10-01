@@ -51,12 +51,14 @@ struct CacheRecord {
     std::wstring path;
     std::uint64_t size = 0;
     std::int64_t mtime = 0;
+    std::vector<std::string> nacp_names;
 };
 
 // What reading a package yields.
 struct PackageInfo {
     std::uint64_t title_id = 0;
     std::wstring name;
+    std::vector<std::string> nacp_names;
     std::vector<std::uint8_t> icon; // JPEG bytes, empty when the package has none
     bool keys_problem = false;      // set when the package could not be read for want of keys
 };
@@ -134,6 +136,12 @@ bool ReadRecord(const fs::path& json_file, CacheRecord& record) {
         record.path = object.GetNamedString(L"path").c_str();
         record.size = static_cast<std::uint64_t>(object.GetNamedNumber(L"size"));
         record.mtime = static_cast<std::int64_t>(object.GetNamedNumber(L"mtime"));
+        // A record from before the names were cached has no such array: it is rebuilt, which is
+        // how the names get into the cache.
+        const winrt::Windows::Data::Json::JsonArray names = object.GetNamedArray(L"nacp_names");
+        for (uint32_t i = 0; i < names.Size(); ++i) {
+            record.nacp_names.push_back(winrt::to_string(names.GetAt(i).GetString()));
+        }
         return true;
     } catch (const winrt::hresult_error&) {
         return false; // a field is missing or has the wrong type: the entry is rebuilt
@@ -150,6 +158,11 @@ bool WriteRecord(const fs::path& json_file, const GameEntry& game) {
         object.SetNamedValue(L"size", JsonValue::CreateNumberValue(static_cast<double>(game.size)));
         object.SetNamedValue(L"mtime",
                              JsonValue::CreateNumberValue(static_cast<double>(game.mtime)));
+        winrt::Windows::Data::Json::JsonArray names;
+        for (const std::string& name : game.nacp_names) {
+            names.Append(JsonValue::CreateStringValue(winrt::to_hstring(name)));
+        }
+        object.SetNamedValue(L"nacp_names", names);
         std::ofstream out(json_file, std::ios::binary | std::ios::trunc);
         out << winrt::to_string(object.Stringify());
         return static_cast<bool>(out);
@@ -239,6 +252,7 @@ std::string ReadPackage(FileSys::RealVfsFilesystem& vfs, const fs::path& file, P
     }
     const FileSys::NACP nacp(nacp_file);
     info.name = winrt::to_hstring(nacp.GetApplicationName()).c_str();
+    info.nacp_names = nacp.GetApplicationNames();
     if (info.name.empty()) {
         info.name = file.stem().wstring();
     }
@@ -276,6 +290,7 @@ std::optional<GameEntry> LoadGame(FileSys::RealVfsFilesystem& vfs, const fs::pat
         hit->second.mtime == game.mtime) {
         game.title_id = hit->second.title_id;
         game.name = hit->second.name;
+        game.nacp_names = hit->second.nacp_names;
         const fs::path icon = library_dir / (game.title_id + ".jpg");
         std::error_code icon_error;
         if (fs::exists(icon, icon_error)) {
@@ -301,6 +316,7 @@ std::optional<GameEntry> LoadGame(FileSys::RealVfsFilesystem& vfs, const fs::pat
 
     game.title_id = fmt::format("{:016X}", info.title_id);
     game.name = info.name;
+    game.nacp_names = info.nacp_names;
     if (!info.icon.empty()) {
         const fs::path icon = library_dir / (game.title_id + ".jpg");
         std::ofstream out(icon, std::ios::binary | std::ios::trunc);
@@ -511,7 +527,10 @@ std::vector<GameEntry> LibraryScan::Scan() {
         if (!error) {
             for (const fs::directory_entry& entry : iterator) {
                 CacheRecord record;
+                // <TITLEID16>.json only: the folder also holds <TITLEID16>.mods.json and the art
+                // index, which is large and not a game record.
                 if (Lowercase(entry.path().extension().wstring()) == L".json" &&
+                    entry.path().stem().wstring().size() == 16 &&
                     ReadRecord(entry.path(), record)) {
                     cached.emplace(record.path, record);
                 }

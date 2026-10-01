@@ -39,6 +39,8 @@
 #include "eden_uwp/mesa_window.h"
 #include "eden_uwp/setup_ui.h"
 #include "eden_uwp/ui/library_screen.h"
+#include "eden_uwp/ui/mods.h"
+#include "eden_uwp/ui/savesync_ui.h"
 #include "eden_uwp/usb_library.h"
 #include "video_core/gpu.h"
 #include "video_core/rasterizer_interface.h"
@@ -126,6 +128,41 @@ void RememberChosenGame(const std::filesystem::path& local, const std::string& c
     Diagnostic("GAME_CHOSEN " + selected.string());
 }
 
+// LocalState\eden_settings.txt: "label=value" lines applied over the defaults, by the same labels
+// as Eden's qt-config (e.g. accelerate_astc=0), so settings can be tried on the console without a
+// rebuild. The save sync needs the active profile (current_user) before the game boots, so this
+// runs once ahead of the boot when a sync is due and again in RunGame; applying it twice is
+// harmless.
+void ApplyEdenSettingsFile() {
+    const std::filesystem::path settings_file =
+        std::filesystem::path(winrt::to_string(
+            winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+        "eden_settings.txt";
+    std::ifstream settings_in(settings_file);
+    std::string line;
+    while (std::getline(settings_in, line)) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
+            line.pop_back();
+        }
+        const auto eq = line.find('=');
+        if (line.empty() || line[0] == '#' || eq == std::string::npos) {
+            continue;
+        }
+        const std::string label = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        bool applied = false;
+        for (auto& [category, settings] : Settings::values.linkage.by_category) {
+            for (Settings::BasicSetting* setting : settings) {
+                if (setting->GetLabel() == label) {
+                    setting->LoadString(value);
+                    applied = true;
+                }
+            }
+        }
+        Diagnostic(fmt::format("SETTING {}={} {}", label, value, applied ? "applied" : "unknown"));
+    }
+}
+
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle,
              bool chosen_in_library) {
@@ -183,39 +220,10 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     // movie on a frame. Decode both on the CPU, which renders cleanly on the Xbox.
     Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::Cpu);
     Settings::values.nvdec_emulation.SetValue(Settings::NvdecEmulation::Cpu);
-    // LocalState\eden_settings.txt: "label=value" lines applied over the defaults above, by the
-    // same labels as Eden's qt-config (e.g. accelerate_astc=0), so settings can be tried on the
-    // console without a rebuild.
-    {
-        const std::filesystem::path settings_file =
-            std::filesystem::path(winrt::to_string(
-                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
-            "eden_settings.txt";
-        std::ifstream settings_in(settings_file);
-        std::string line;
-        while (std::getline(settings_in, line)) {
-            while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
-                line.pop_back();
-            }
-            const auto eq = line.find('=');
-            if (line.empty() || line[0] == '#' || eq == std::string::npos) {
-                continue;
-            }
-            const std::string label = line.substr(0, eq);
-            const std::string value = line.substr(eq + 1);
-            bool applied = false;
-            for (auto& [category, settings] : Settings::values.linkage.by_category) {
-                for (Settings::BasicSetting* setting : settings) {
-                    if (setting->GetLabel() == label) {
-                        setting->LoadString(value);
-                        applied = true;
-                    }
-                }
-            }
-            Diagnostic(fmt::format("SETTING {}={} {}", label, value,
-                                   applied ? "applied" : "unknown"));
-        }
-    }
+    ApplyEdenSettingsFile();
+    // Mods the player turned off in the mod store go into Eden's disabled add-ons list.
+    Ui::ApplyDisabledMods(std::filesystem::path(winrt::to_string(
+        winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())));
     XboxGamepad::Configure(gamepad);
     RegisterUnsupportedEngines();
     SCOPE_EXIT {
@@ -442,14 +450,44 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
     // returns. A chosen game is written to game.txt and booted by the normal path below; leaving
     // with B boots whatever game.txt names, or the bundled homebrew, exactly as before.
     // LocalState\skip_library.txt skips the screen, for unattended runs where nobody can press A.
+    //
+    // SwitchSaveSync (docs/nxbox-ui.md, Increment 4) hangs off the same flow, and only for a game
+    // chosen in the library, because that is where its title ID and NACP names are known:
+    //  - an upload still owed from the last session (the app was closed or suspended before the
+    //    game's save went to the cloud) is done first, behind a progress screen;
+    //  - before the chosen game boots, with sync enabled, its save is reconciled with the cloud;
+    //  - after the game closed (the worker below, once Eden released the save files), the Xbox
+    //    save is uploaded. The window has no renderer then, so that step has no screen.
+    // A marker in LocalState (savesync_pending.txt) is written before the boot and removed once the
+    // upload succeeded, so a session that never reached the upload (Home suspends the app and the
+    // system may end it; the window can be closed) is finished at the next launch.
     bool chosen_in_library = false;
+    bool sync_after_exit = false;
+    Ui::SyncGame sync_game;
     const std::filesystem::path local_state(
         winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
     if (!std::filesystem::exists(local_state / "skip_library.txt")) {
-        const std::string chosen = Ui::RunLibrary(window);
+        if (Ui::HasPendingSync(local_state)) {
+            ApplyEdenSettingsFile(); // the active profile decides which save folder is synced
+            if (Ui::RunPendingSync(window, local_state)) {
+                return; // the window was closed
+            }
+        }
+        Ui::ChosenGame choice;
+        const std::string chosen = Ui::RunLibrary(window, &choice);
         if (!chosen.empty()) {
             RememberChosenGame(local_state, chosen);
             chosen_in_library = true;
+            if (Ui::SyncEnabled()) {
+                sync_game.title_id = choice.title_id;
+                sync_game.name = choice.sync_name;
+                sync_game.display_name = choice.display_name;
+                ApplyEdenSettingsFile();
+                if (Ui::RunBootSync(window, local_state, sync_game)) {
+                    return; // the window was closed
+                }
+                sync_after_exit = true;
+            }
         }
     }
     std::atomic<bool> closed{false};
@@ -497,6 +535,10 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         };
         try {
             RunGame(*graphics, path, closed, gamepad, lifecycle, chosen_in_library);
+            // The game is over and Eden released the save files: this is the safe point to upload.
+            if (sync_after_exit) {
+                Ui::SyncAfterExitHeadless(local_state, sync_game);
+            }
         } catch (const winrt::hresult_error& error) {
             Diagnostic("GAME_FAIL " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {

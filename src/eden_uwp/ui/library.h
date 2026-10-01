@@ -19,6 +19,9 @@ struct GameEntry {
     std::uint64_t size = 0;     // bytes
     std::int64_t mtime = 0;     // last write time, in seconds
     std::filesystem::path icon; // cached JPEG in LocalState\library, empty when there is none
+    // The 16 NACP application names in language order (empty ones kept), UTF-8. SwitchSaveSync
+    // names the cloud folder from the first non-empty one, whatever the UI language is.
+    std::vector<std::string> nacp_names;
 };
 
 // Scans LocalState\games (.nsp and .xci, not recursive) on a worker thread, so the screen keeps
@@ -30,7 +33,7 @@ struct GameEntry {
 // that. A failed or cancelled conversion leaves the .nsz alone and removes the partial file.
 //
 // Each game's title ID, name and icon are cached in LocalState\library\<TITLEID16>.json and .jpg
-// (name, path, size, mtime), and the cache is reused as long as path, size and mtime still match,
+// (name, nacp_names, path, size, mtime), and the cache is reused as long as path, size and mtime still match,
 // so later launches never reparse a package. A file that cannot be parsed is logged and skipped.
 class LibraryScan {
 public:

@@ -14,9 +14,21 @@ namespace EdenXbox::Ui {
 // frame, until the player decides, and releases every D3D11/D2D/DXGI object, the swap chain
 // included, before it returns.
 //
+// The first time (LocalState\setup_done.txt missing) it asks whether to sync saves with
+// SwitchSaveSync before the library shows.
+//
 // Returns the absolute path (UTF-8) of the game the player launched, or an empty string when the
-// player left with B or the screen could not be shown. Must be called on the thread that owns the
+// player left with B or the screen could not be shown. When a game was launched and `chosen` is
+// given, it is filled with what the save sync needs. Must be called on the thread that owns the
 // window, before the window is handed to Mesa.
-std::string RunLibrary(const winrt::Windows::UI::Core::CoreWindow& window);
+struct ChosenGame {
+    std::string path;
+    std::string title_id;  // 16 upper-case hex digits
+    std::string sync_name; // the game's name as SwitchSaveSync names it (from the NACP names)
+    std::wstring display_name;
+};
+
+std::string RunLibrary(const winrt::Windows::UI::Core::CoreWindow& window,
+                       ChosenGame* chosen = nullptr);
 
 } // namespace EdenXbox::Ui

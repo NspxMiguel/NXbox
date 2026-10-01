@@ -47,6 +47,13 @@ constexpr FontSpec kFontSpecs[] = {
     {false, DWRITE_FONT_WEIGHT_EXTRA_BOLD, 15.0f, false}, // Glyph
     {false, DWRITE_FONT_WEIGHT_BOLD, 40.0f, true},       // Heading
     {false, DWRITE_FONT_WEIGHT_REGULAR, 24.0f, true},    // Body
+    {false, DWRITE_FONT_WEIGHT_EXTRA_BOLD, 64.0f, false}, // ModsTitle
+    {false, kWeight650, 25.0f, false},                   // RowTitle
+    {false, DWRITE_FONT_WEIGHT_REGULAR, 19.0f, false},   // RowSub
+    {true, DWRITE_FONT_WEIGHT_SEMI_BOLD, 22.0f, false},  // Stat
+    {false, DWRITE_FONT_WEIGHT_MEDIUM, 15.0f, false},    // StatCaption
+    {true, DWRITE_FONT_WEIGHT_REGULAR, 16.0f, false},    // ChipCount
+    {true, DWRITE_FONT_WEIGHT_EXTRA_BOLD, 112.0f, false}, // Code
 };
 static_assert(std::size(kFontSpecs) == kFontCount, "every Font needs a row in kFontSpecs");
 

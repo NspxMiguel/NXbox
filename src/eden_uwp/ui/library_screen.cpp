@@ -24,12 +24,17 @@
 
 #include "common/scope_exit.h"
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/save_sync.h"
 #include "eden_uwp/ui/anim.h"
+#include "eden_uwp/ui/art.h"
 #include "eden_uwp/ui/input.h"
 #include "eden_uwp/ui/library.h"
+#include "eden_uwp/ui/mods_screen.h"
 #include "eden_uwp/ui/renderer.h"
+#include "eden_uwp/ui/savesync_ui.h"
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/theme.h"
+#include "eden_uwp/ui/widgets.h"
 
 namespace EdenXbox::Ui {
 namespace {
@@ -43,13 +48,6 @@ using winrt::Windows::UI::Core::CoreWindow;
 // Layout, in canvas units (the canvas is 1920x1080), from the approved preview.
 constexpr float kMargin = 96.0f; // left and right edge of the content
 
-// The top row: the tab capsule on the left, the clock on the right, both centered on y = 74.
-constexpr float kTopCenter = 74.0f;
-constexpr float kTabsPadding = 6.0f;
-constexpr float kTabsGap = 8.0f;
-constexpr float kTabHeight = 48.0f;
-constexpr float kTabLabelPadding = 24.0f;
-
 // The hero lives on the top 760 px: the gradient and the scrim are laid out on that box, and the
 // rail sits on plain black below it. Text on the left, the game's icon on the right.
 constexpr float kHeroHeight = 760.0f;
@@ -61,11 +59,6 @@ constexpr float kMetaHeight = 24.0f;
 constexpr float kMetaGap = 22.0f; // between a run of the meta line and the dot after it
 constexpr float kMetaDot = 5.0f;
 constexpr float kPillTop = 622.0f;
-constexpr float kPillHeight = 64.0f;
-constexpr float kPillPadding = 34.0f;
-constexpr float kPillGap = 18.0f;
-constexpr float kPlayGlyph = 22.0f;
-constexpr float kPlayGap = 12.0f;
 constexpr float kArtSize = 520.0f;
 constexpr float kArtTop = kPillTop + kPillHeight - kArtSize; // its bottom lines up with the pills
 constexpr float kArtRadius = 32.0f;
@@ -85,20 +78,10 @@ constexpr float kTilePitch = kTileSize + kTileGap;
 constexpr float kLiftScale = 0.08f;
 constexpr float kLiftRise = 16.0f;
 constexpr float kLiftTilt = -1.2f; // degrees
-constexpr float kRingGap = 6.0f;   // from the element to the outer edge of the ring
-constexpr float kRingWidth = 3.0f;
 constexpr float kNameOffset = 22.0f; // from the bottom of the tile to the name under it
 constexpr float kNameWidth = 520.0f;
 constexpr float kNameHeight = 28.0f;
 constexpr int kSkeletonTiles = 6;
-
-// The hint bar floats 44 px above the bottom edge.
-constexpr float kHintHeight = 62.0f;
-constexpr float kHintTop = kCanvasHeight - 44.0f - kHintHeight;
-constexpr float kGlyphSize = 30.0f;
-constexpr float kHintPadding = 30.0f;
-constexpr float kHintLabelGap = 10.0f;
-constexpr float kHintItemGap = 34.0f;
 
 // The details sheet.
 constexpr float kSheetLeft = 420.0f;
@@ -128,6 +111,11 @@ constexpr int kActionMods = 1;
 constexpr int kActionDetails = 2;
 constexpr int kActionCount = 3;
 
+// The rows of the settings list.
+constexpr int kSettingSaveSync = 0;
+constexpr int kSettingSources = 1;
+constexpr int kSettingsRowCount = 2;
+
 constexpr std::size_t Idx(int index) {
     return static_cast<std::size_t>(index);
 }
@@ -144,16 +132,11 @@ constexpr Palette kNeutralPalette = {Theme::Rgb(0x26262B), Theme::Rgb(0x151518),
 constexpr Palette kBlackPalette = {Theme::Rgb(0x000000), Theme::Rgb(0x000000),
                                    Theme::Rgb(0x000000)};
 
-// The brand ribbon, green to red through two warm stops: the focus ring and the progress bar.
-constexpr D2D1_GRADIENT_STOP kRibbonStops[4] = {{0.0f, Theme::kRibbon0},
-                                                {0.38f, Theme::kRibbon1},
-                                                {0.64f, Theme::kRibbon2},
-                                                {1.0f, Theme::kRibbon3}};
-
 // What the hero shows: a gradient and the icon of one game (an index into the games, or -1).
 struct Look {
     Palette palette = kBlackPalette;
-    int art = -1;
+    int art = -1; // the game whose icon is drawn, when its icon decoded
+    int key = -1; // the game this look belongs to, -1 for the others
 };
 
 // A game's icon on the GPU and the colors taken from it, loaded the first time it is needed.
@@ -161,27 +144,17 @@ struct Visual {
     bool loaded = false;
     Image image;
     Palette palette = kNeutralPalette;
+    // The eShop banner of the hero. It is decoded when the download (or the cache) has it, and it
+    // fades in over 320 ms from then on. `banner_final` is set once there is nothing more to wait
+    // for: it is on the GPU, or the title has none.
+    Image banner;
+    Tween banner_fade{0.0f};
+    bool banner_final = false;
 };
 
-struct Hint {
-    D2D1_COLOR_F color;
-    const wchar_t* glyph;
-    const wchar_t* label;
-};
-
-D2D1_COLOR_F Mix(const D2D1_COLOR_F& from, const D2D1_COLOR_F& to, float t) {
-    return {from.r + (to.r - from.r) * t, from.g + (to.g - from.g) * t,
-            from.b + (to.b - from.b) * t, from.a + (to.a - from.a) * t};
-}
-
-Palette Mix(const Palette& from, const Palette& to, float t) {
+Palette MixPalette(const Palette& from, const Palette& to, float t) {
     return {Mix(from.top, to.top, t), Mix(from.middle, to.middle, t),
             Mix(from.bottom, to.bottom, t)};
-}
-
-D2D1_COLOR_F WithOpacity(D2D1_COLOR_F color, float opacity) {
-    color.a *= opacity;
-    return color;
 }
 
 // Scales a color down until its luma is at most `cap`, so the white text on it stays readable.
@@ -261,25 +234,6 @@ Palette ExtractPalette(const Pixels& pixels) {
     return {Dim(picked[0], 0.44f), Dim(picked[1], 0.30f), Dim(picked[2], 0.16f)};
 }
 
-D2D1_RECT_F Inflate(const D2D1_RECT_F& rect, float amount) {
-    return RectF(rect.left - amount, rect.top - amount, rect.right + amount, rect.bottom + amount);
-}
-
-std::vector<std::uint8_t> ReadFileBytes(const std::filesystem::path& file) {
-    std::ifstream in(file, std::ios::binary | std::ios::ate);
-    if (!in) {
-        return {};
-    }
-    const std::streamsize size = in.tellg();
-    if (size <= 0) {
-        return {};
-    }
-    in.seekg(0);
-    std::vector<std::uint8_t> bytes(static_cast<std::size_t>(size));
-    in.read(reinterpret_cast<char*>(bytes.data()), size);
-    return bytes;
-}
-
 // A size as a number and its unit ("14,2" "GB"), so the number can be emphasized.
 struct SizeText {
     std::wstring amount;
@@ -311,15 +265,13 @@ std::wstring FormatName(const GameEntry& game) {
     return name;
 }
 
-std::wstring Widen(const std::string& ascii) {
-    return std::wstring(ascii.begin(), ascii.end());
-}
-
 class LibraryScreen {
 public:
     LibraryScreen(Renderer& renderer, const CoreWindow& window,
                   const std::filesystem::path& local_state)
-        : renderer_(renderer), window_(window), input_(window), local_state_(local_state) {
+        : renderer_(renderer), window_(window), input_(window), local_state_(local_state),
+          banners_(local_state) {
+        sync_account_ = GetSyncAccount();
         StartScan();
     }
 
@@ -358,6 +310,11 @@ public:
         return launching_ ? result_ : std::string();
     }
 
+    // The game that was launched, or null when none was.
+    const GameEntry* Chosen() const {
+        return launching_ && launched_ >= 0 && launched_ < GameCount() ? &Game(launched_) : nullptr;
+    }
+
 private:
     // ---- State ----
 
@@ -386,6 +343,7 @@ private:
         keep_title_id_ = SelectedTitleId();
         games_.clear();
         visuals_.clear();
+        banner_order_.clear();
         lift_.clear();
         name_.clear();
         hero_from_ = Look{};
@@ -443,10 +401,71 @@ private:
             return Look{};
         }
         if (key >= GameCount()) {
-            return Look{kNeutralPalette, -1}; // the "add games" tile
+            return Look{kNeutralPalette, -1, -1}; // the "add games" tile
         }
         const Visual& visual = EnsureVisual(key);
-        return Look{visual.palette, visual.image.bitmap ? key : -1};
+        return Look{visual.palette, visual.image.bitmap ? key : -1, key};
+    }
+
+    // ---- The eShop banner of the hero ----
+
+    bool HasBanner(int index) const {
+        return index >= 0 && index < GameCount() && visuals_[Idx(index)].banner.bitmap;
+    }
+
+    // How much of the banner shows: 0 until it is on the GPU, then it fades in over 320 ms.
+    float BannerOpacity(int index, Clock::time_point now) const {
+        return HasBanner(index) ? visuals_[Idx(index)].banner_fade.Value(now) : 0.0f;
+    }
+
+    // Picks the banner up once the worker has downloaded it (or found it in the cache). Decoding
+    // and uploading happen here, on the render thread, once per game.
+    void PollBanner(int index, Clock::time_point now) {
+        if (index < 0 || index >= GameCount()) {
+            return;
+        }
+        Visual& visual = visuals_[Idx(index)];
+        if (visual.banner_final) {
+            return;
+        }
+        const GameEntry& game = Game(index);
+        std::filesystem::path file;
+        const BannerState state = banners_.Get(game.title_id, file);
+        if (state == BannerState::Pending) {
+            return;
+        }
+        visual.banner_final = true;
+        if (state == BannerState::None) {
+            return; // offline or no banner: the icon gradient stays
+        }
+        Pixels pixels;
+        if (!renderer_.DecodeImage(ReadFileBytes(file), pixels) ||
+            !renderer_.UploadImage(pixels, visual.banner)) {
+            Diagnostic("UI banner unusable for " + game.title_id);
+            banners_.Discard(game.title_id);
+            return;
+        }
+        visual.banner_fade = Tween(0.0f);
+        visual.banner_fade.To(1.0f, now, kDurationPanel);
+        banner_order_.push_back(index);
+        Diagnostic("UI banner shown " + game.title_id);
+        EvictBanners();
+    }
+
+    // A banner is 8 MB on the GPU: keep the last few, never the one on screen.
+    void EvictBanners() {
+        constexpr std::size_t kKeep = 3;
+        for (std::size_t i = 0; i < banner_order_.size() && banner_order_.size() > kKeep;) {
+            const int index = banner_order_[i];
+            if (index == selected_ || index == hero_from_.key || index == hero_to_.key) {
+                ++i;
+                continue;
+            }
+            Visual& visual = visuals_[Idx(index)];
+            visual.banner = Image{};
+            visual.banner_final = false; // asked for again if the game is selected later
+            banner_order_.erase(banner_order_.begin() + static_cast<std::ptrdiff_t>(i));
+        }
     }
 
     // ---- Input ----
@@ -457,6 +476,7 @@ private:
             HandleInput(now);
         }
         Refresh(now);
+        PollBanner(hero_key_, now);
     }
 
     void HandleInput(Clock::time_point now) {
@@ -486,7 +506,7 @@ private:
         }
         // X and Y are shortcuts for the focused game, from any layer.
         if (input_.Pressed(Button::X) && HasGame()) {
-            ShowModsNotice(now);
+            OpenMods();
         }
         if (input_.Pressed(Button::Y) && HasGame()) {
             details_open_ = true;
@@ -510,6 +530,9 @@ private:
     void MoveHorizontal(int direction) {
         switch (layer_) {
         case Layer::Rail:
+            if (tab_ == Tab::Settings) {
+                break; // the settings are a list: left and right do nothing
+            }
             if (!scan_) {
                 selected_ = std::clamp(selected_ + direction, 0, GameCount());
             }
@@ -526,6 +549,19 @@ private:
     }
 
     void MoveVertical(int direction) {
+        if (tab_ == Tab::Settings && layer_ == Layer::Rail) {
+            // The settings list: up and down walk the rows, and up from the first leaves it.
+            if (direction < 0) {
+                if (settings_row_ > 0) {
+                    --settings_row_;
+                } else {
+                    layer_ = Layer::Nav;
+                }
+            } else {
+                settings_row_ = std::min(settings_row_ + 1, kSettingsRowCount - 1);
+            }
+            return;
+        }
         if (direction < 0) {
             if (layer_ == Layer::Rail) {
                 layer_ = HasGame() ? Layer::Actions : Layer::Nav;
@@ -534,15 +570,21 @@ private:
             }
         } else if (layer_ == Layer::Actions) {
             layer_ = Layer::Rail;
-        } else if (layer_ == Layer::Nav && tab_ == Tab::Library) {
-            layer_ = HasGame() ? Layer::Actions : Layer::Rail;
+        } else if (layer_ == Layer::Nav) {
+            if (tab_ == Tab::Settings) {
+                layer_ = Layer::Rail;
+            } else {
+                layer_ = HasGame() ? Layer::Actions : Layer::Rail;
+            }
         }
     }
 
     void Activate(Clock::time_point now) {
         switch (layer_) {
         case Layer::Rail:
-            if (HasGame()) {
+            if (tab_ == Tab::Settings) {
+                ActivateSetting(now);
+            } else if (HasGame()) {
                 Launch(now);
             } else if (OnAddTile()) {
                 StartScan();
@@ -552,7 +594,7 @@ private:
             if (action_ == kActionPlay) {
                 Launch(now);
             } else if (action_ == kActionMods) {
-                ShowModsNotice(now);
+                OpenMods();
             } else if (action_ == kActionDetails) {
                 details_open_ = true;
             }
@@ -566,13 +608,61 @@ private:
         const GameEntry& game = Game(selected_);
         result_ = winrt::to_string(game.path.wstring());
         Diagnostic("UI library launch " + game.title_id + " " + result_);
+        launched_ = selected_;
         launching_ = true;
         launch_started_ = now;
     }
 
-    // The mod store is the next increment; until then the Mods pill and X only say so.
-    void ShowModsNotice(Clock::time_point now) {
-        toast_ = Tr(Text::ModsSoon);
+    // The mod store of the focused game, on this window and this renderer. It runs its own loop
+    // and returns when the player leaves with B.
+    void OpenMods() {
+        if (!HasGame()) {
+            return;
+        }
+        const Visual& visual = EnsureVisual(selected_);
+        ModsGame mods;
+        mods.title_id = Game(selected_).title_id;
+        mods.name = Game(selected_).name;
+        mods.icon = visual.image.bitmap ? &visual.image : nullptr;
+        mods.glow = visual.palette.top;
+        Diagnostic("UI library open mods " + mods.title_id);
+        if (RunModsScreen(renderer_, window_, input_, mods, local_state_)) {
+            closed_ = true;
+        }
+    }
+
+    // A on a settings row.
+    void ActivateSetting(Clock::time_point now) {
+        if (settings_row_ == kSettingSources) {
+            Toast(Tr(Text::SourcesRowState), now); // Sources: Increment 3 fills it in
+            return;
+        }
+        switch (sync_account_) {
+        case SyncAccount::SignedIn:
+            SaveSync::SignOut();
+            Diagnostic("UI settings savesync signed out");
+            sync_account_ = GetSyncAccount();
+            Toast(Tr(Text::SyncStateOff), now);
+            break;
+        case SyncAccount::SignedOut: {
+            bool window_closed = false;
+            const SignInOutcome outcome = RunSignIn(renderer_, window_, input_, window_closed);
+            Diagnostic("UI settings savesync sign-in outcome " +
+                       std::to_string(static_cast<int>(outcome)));
+            if (window_closed) {
+                closed_ = true;
+            }
+            sync_account_ = GetSyncAccount();
+            break;
+        }
+        case SyncAccount::NotConfigured:
+            Toast(Tr(Text::SyncRowMissingHint), now);
+            break;
+        }
+    }
+
+    void Toast(const std::wstring& text, Clock::time_point now) {
+        toast_ = text;
         toast_until_ = now + kToastDuration;
     }
 
@@ -581,7 +671,9 @@ private:
     // Keeps focus on a layer that exists, and points every animation at where it should be.
     void Refresh(Clock::time_point now) {
         if (tab_ == Tab::Settings) {
-            layer_ = Layer::Nav;
+            if (layer_ == Layer::Actions) {
+                layer_ = Layer::Rail; // the settings have no hero pills
+            }
         } else if (layer_ == Layer::Actions && !HasGame()) {
             layer_ = Layer::Rail;
         }
@@ -624,10 +716,14 @@ private:
         // What is on screen right now is where the new fade starts from.
         const float shown = hero_blend_.Value(now);
         Look from;
-        from.palette = Mix(hero_from_.palette, hero_to_.palette, shown);
+        from.palette = MixPalette(hero_from_.palette, hero_to_.palette, shown);
         from.art = shown < 0.5f ? hero_from_.art : hero_to_.art;
+        from.key = shown < 0.5f ? hero_from_.key : hero_to_.key;
         hero_from_ = from;
         hero_to_ = LookFor(key);
+        if (key >= 0 && key < GameCount()) {
+            banners_.Request(Game(key).title_id);
+        }
         hero_blend_ = Tween(0.0f);
         hero_blend_.To(1.0f, now, kDurationScreen);
     }
@@ -637,19 +733,23 @@ private:
     void Draw(Clock::time_point now) {
         DrawBackdrop(now);
         if (tab_ == Tab::Library) {
+            DrawHeroBanner(now);
+        }
+        DrawScrim();
+        if (tab_ == Tab::Library) {
             DrawHeroArt(now);
-            DrawHeroText();
+            DrawHeroText(now);
             DrawRail(now);
         } else {
-            DrawMessage(Tr(Text::SettingsTitle), Tr(Text::SettingsBody));
+            DrawSettings();
         }
-        DrawNav();
-        DrawClock();
+        DrawTabs(renderer_, static_cast<int>(tab_), layer_ == Layer::Nav);
+        DrawClock(renderer_);
         DrawToast(now);
         if (details_open_) {
             DrawDetails();
         }
-        DrawHints(); // above the sheet's veil: the sheet's own hint says how to close it
+        DrawHints(renderer_, CurrentHints()); // above the sheet's veil: the sheet's own hint says how to close it
         if (launching_) {
             const float progress =
                 std::chrono::duration<float>(now - launch_started_).count() /
@@ -663,42 +763,81 @@ private:
         return renderer_.MeasureString(text, font).width;
     }
 
-    // The light line along the top edge of glass, fading out down the sides.
-    void DrawGlassEdge(const D2D1_RECT_F& rect, float radius) {
-        const D2D1_GRADIENT_STOP light[2] = {{0.0f, Theme::kHighlight},
-                                             {0.5f, Theme::Rgb(0xFFFFFF, 0.0f)}};
-        renderer_.StrokeGradient(Inflate(rect, -0.5f), radius - 0.5f, 1.0f, light, 2,
-                                 Point2F(0.0f, rect.top), Point2F(0.0f, rect.bottom));
-    }
-
+    // The gradient that stands in for the banner while there is none (offline, no banner for the
+    // title, or still on its way).
     void DrawBackdrop(Clock::time_point now) {
         const Palette palette =
-            Mix(hero_from_.palette, hero_to_.palette, hero_blend_.Value(now));
+            MixPalette(hero_from_.palette, hero_to_.palette, hero_blend_.Value(now));
         // Three stops with the middle one pulled forward (0 / 48 / 72%): a two-stop ramp is the
         // default gradient of every tool.
         const D2D1_GRADIENT_STOP ramp[3] = {
             {0.0f, palette.top}, {0.48f, palette.middle}, {0.72f, palette.bottom}};
-        // The scrim is its own layer: a veil under the tabs, clear through the middle, closing to
-        // the page black at the bottom of the hero.
+        renderer_.FillGradient(RectF(0.0f, 0.0f, kCanvasWidth, kHeroHeight), 0.0f, ramp, 3,
+                               Point2F(0.0f, 0.0f), Point2F(0.0f, kHeroHeight));
+    }
+
+    // The scrim is its own layer over the gradient and the banner: a veil under the tabs, clear
+    // through the middle, closing to the page black at the bottom of the hero (the approved
+    // preview: 180deg, 0.5 at 0%, 0 at 16% and 52%, 0.72 at 76%, black at 98%).
+    void DrawScrim() {
         const D2D1_GRADIENT_STOP scrim[5] = {{0.0f, Theme::Rgb(0x000000, 0.5f)},
                                              {0.16f, Theme::Rgb(0x000000, 0.0f)},
                                              {0.52f, Theme::Rgb(0x000000, 0.0f)},
                                              {0.76f, Theme::Rgb(0x000000, 0.72f)},
                                              {0.98f, Theme::Rgb(0x000000, 1.0f)}};
-        const D2D1_RECT_F hero = RectF(0.0f, 0.0f, kCanvasWidth, kHeroHeight);
-        renderer_.FillGradient(hero, 0.0f, ramp, 3, Point2F(0.0f, 0.0f),
-                               Point2F(0.0f, kHeroHeight));
-        renderer_.FillGradient(hero, 0.0f, scrim, 5, Point2F(0.0f, 0.0f),
-                               Point2F(0.0f, kHeroHeight));
+        renderer_.FillGradient(RectF(0.0f, 0.0f, kCanvasWidth, kHeroHeight), 0.0f, scrim, 5,
+                               Point2F(0.0f, 0.0f), Point2F(0.0f, kHeroHeight));
+    }
+
+    // One banner covering the hero box, like CSS object-fit: cover with object-position 50% 18%.
+    void DrawBannerImage(const Image& banner, float opacity) {
+        const float scale = std::max(kCanvasWidth / banner.size.width,
+                                     kHeroHeight / banner.size.height);
+        const float width = banner.size.width * scale;
+        const float height = banner.size.height * scale;
+        const float left = (kCanvasWidth - width) * 0.5f;
+        const float top = (kHeroHeight - height) * 0.18f;
+        renderer_.PushClip(RectF(0.0f, 0.0f, kCanvasWidth, kHeroHeight));
+        renderer_.DrawImage(banner, RectF(left, top, left + width, top + height), 0.0f, opacity);
+        renderer_.PopClip();
+    }
+
+    // The full-bleed eShop banner. It fades in when it arrives, and crossfades with the previous
+    // game's banner when the selection changes.
+    void DrawHeroBanner(Clock::time_point now) {
+        const float blend = hero_blend_.Value(now);
+        const auto draw = [&](int key, float opacity) {
+            const float shown = opacity * BannerOpacity(key, now);
+            if (shown > 0.001f) {
+                DrawBannerImage(visuals_[Idx(key)].banner, shown);
+            }
+        };
+        if (hero_from_.key == hero_to_.key) {
+            draw(hero_to_.key, 1.0f);
+        } else {
+            // The old banner stays underneath while the new one fades in over it.
+            draw(hero_from_.key, HasBanner(hero_to_.key) ? 1.0f : 1.0f - blend);
+            draw(hero_to_.key, blend);
+        }
+    }
+
+    // How much of the selected game's banner is showing: the big title and the icon on the right
+    // give way to it, because the banner carries the game's logo.
+    float BannerCover(Clock::time_point now) const {
+        return HasGame() ? BannerOpacity(selected_, now) : 0.0f;
     }
 
     void DrawHeroArt(Clock::time_point now) {
         const float blend = hero_blend_.Value(now);
+        const float uncovered = 1.0f - BannerCover(now);
+        if (uncovered <= 0.001f) {
+            return;
+        }
         const D2D1_RECT_F rect = RectF(kCanvasWidth - kMargin - kArtSize, kArtTop,
                                        kCanvasWidth - kMargin, kArtTop + kArtSize);
         const auto draw = [&](int art, float opacity) {
             if (art >= 0 && opacity > 0.001f) {
-                renderer_.DrawImage(EnsureVisual(art).image, rect, kArtRadius, opacity);
+                renderer_.DrawImage(EnsureVisual(art).image, rect, kArtRadius, opacity * uncovered);
             }
         };
         // The old icon stays underneath while the new one fades in over it.
@@ -710,18 +849,21 @@ private:
         }
         if (hero_to_.art >= 0) {
             renderer_.StrokeRounded(Inflate(rect, -0.5f), kArtRadius - 0.5f, 1.0f,
-                                    Theme::kHairline);
+                                    WithOpacity(Theme::kHairline, uncovered));
         }
     }
 
-    void DrawTitle(const std::wstring& title) {
+    void DrawTitle(const std::wstring& title, float opacity = 1.0f) {
+        if (opacity <= 0.001f) {
+            return;
+        }
         const Font font = renderer_.MeasureString(title, Font::Title, kHeroTextWidth).lines > 2
                               ? Font::TitleSmall
                               : Font::Title;
         renderer_.DrawString(title, font,
                              RectF(kMargin, kTitleBottom - kTitleHeight, kMargin + kHeroTextWidth,
                                    kTitleBottom),
-                             Theme::kText, HAlign::Left, VAlign::Bottom);
+                             WithOpacity(Theme::kText, opacity), HAlign::Left, VAlign::Bottom);
     }
 
     // A title with a paragraph under it, for the states without a game.
@@ -732,7 +874,7 @@ private:
                              Theme::kTextSecondary);
     }
 
-    void DrawHeroText() {
+    void DrawHeroText(Clock::time_point now) {
         if (scan_) {
             const LibraryScan::Conversion conversion = scan_->CurrentConversion();
             if (conversion.active) {
@@ -742,7 +884,7 @@ private:
                                                          std::to_wstring(scan_->Total()));
             }
         } else if (HasGame()) {
-            DrawGameHero(Game(selected_));
+            DrawGameHero(Game(selected_), now);
         } else if (GameCount() == 0 && keys_missing_) {
             // The folder has games, but nothing could be opened: say why, not "no games".
             DrawMessage(Tr(Text::MissingKeysTitle), Tr(Text::MissingKeysBody));
@@ -806,8 +948,9 @@ private:
         return x + 2.0f * kMetaGap + kMetaDot;
     }
 
-    void DrawGameHero(const GameEntry& game) {
-        DrawTitle(game.name);
+    void DrawGameHero(const GameEntry& game, Clock::time_point now) {
+        // With a banner there is no big title: the banner carries the logo.
+        DrawTitle(game.name, 1.0f - BannerCover(now));
 
         // Format, size and title ID in one monospaced line; the number of the size is the one
         // thing set in the brighter, heavier face.
@@ -822,57 +965,6 @@ private:
         DrawActions();
     }
 
-    // The ribbon focus ring: a 3 px band whose outer edge lies 6 px outside the element and keeps
-    // the element's corner radius, green to red at 100 degrees.
-    void DrawRing(const D2D1_RECT_F& element, float outer_radius, float opacity) {
-        const D2D1_RECT_F outer = Inflate(element, kRingGap);
-        const D2D1_RECT_F center_line = Inflate(element, kRingGap - kRingWidth / 2.0f);
-        // A CSS linear-gradient(100deg, ...) runs along the angle through the middle of the box
-        // and just spans the box.
-        constexpr float kSin = 0.98480775f;  // sin(100 degrees)
-        constexpr float kCos = -0.17364818f; // cos(100 degrees)
-        const float half = (std::fabs((outer.right - outer.left) * kSin) +
-                            std::fabs((outer.bottom - outer.top) * kCos)) /
-                           2.0f;
-        const float x = (outer.left + outer.right) / 2.0f;
-        const float y = (outer.top + outer.bottom) / 2.0f;
-        renderer_.StrokeGradient(center_line, std::max(outer_radius - kRingWidth / 2.0f, 0.0f),
-                                 kRingWidth, kRibbonStops, 4,
-                                 Point2F(x - kSin * half, y + kCos * half),
-                                 Point2F(x + kSin * half, y - kCos * half), opacity);
-    }
-
-    // The pills of the hero: Play is the one white pill, with a play glyph; the others are glass.
-    void DrawPill(const D2D1_RECT_F& rect, const std::wstring& label, bool primary, bool focused) {
-        const float radius = (rect.bottom - rect.top) / 2.0f;
-        const float middle = (rect.top + rect.bottom) / 2.0f;
-        if (primary) {
-            renderer_.FillRounded(rect, radius, Theme::kPrimaryFill);
-            const float left = rect.left + kPillPadding;
-            // The triangle of the play icon, from a 24 unit drawing shown at 22 px.
-            const float unit = kPlayGlyph / 24.0f;
-            const float top = middle - kPlayGlyph / 2.0f;
-            const D2D1_POINT_2F triangle[3] = {Point2F(left + 8.0f * unit, top + 5.5f * unit),
-                                               Point2F(left + 8.0f * unit, top + 18.5f * unit),
-                                               Point2F(left + 19.0f * unit, top + 12.0f * unit)};
-            renderer_.FillPolygon(triangle, 3, Theme::kTextOnLight);
-            // The box runs to the edge of the pill, not to the padding: a box exactly as wide as
-            // the text can make DirectWrite trim it with an ellipsis over a rounding error.
-            renderer_.DrawString(
-                label, Font::Button,
-                RectF(left + kPlayGlyph + kPlayGap, rect.top, rect.right, rect.bottom),
-                Theme::kTextOnLight, HAlign::Left, VAlign::Middle);
-        } else {
-            renderer_.FillRounded(rect, radius, Theme::kGlass);
-            DrawGlassEdge(rect, radius);
-            renderer_.DrawString(label, Font::Button, rect, Theme::kText, HAlign::Center,
-                                 VAlign::Middle);
-        }
-        if (focused) {
-            DrawRing(rect, radius + kRingGap, 1.0f);
-        }
-    }
-
     // Play, Mods and Details.
     void DrawActions() {
         const std::array<const wchar_t*, kActionCount> labels = {
@@ -881,10 +973,9 @@ private:
         for (int i = 0; i < kActionCount; ++i) {
             const bool primary = i == kActionPlay;
             const std::wstring label = labels[Idx(i)];
-            const float width = TextWidth(label, Font::Button) + 2.0f * kPillPadding +
-                                (primary ? kPlayGlyph + kPlayGap : 0.0f);
-            DrawPill(RectF(x, kPillTop, x + width, kPillTop + kPillHeight), label, primary,
-                     layer_ == Layer::Actions && action_ == i);
+            const float width = PillWidth(renderer_, label, primary);
+            DrawPill(renderer_, RectF(x, kPillTop, x + width, kPillTop + kPillHeight), label,
+                     primary, layer_ == Layer::Actions && action_ == i);
             x += width + kPillGap;
         }
     }
@@ -950,7 +1041,7 @@ private:
                 WithOpacity(Theme::kText, name_opacity), HAlign::Left, VAlign::Top);
         }
         if (layer_ == Layer::Rail && index == selected_) {
-            DrawRing(rect, kTileRadius, lift);
+            DrawRing(renderer_, rect, kTileRadius, lift);
         }
         renderer_.ClearLocalTransform();
     }
@@ -996,52 +1087,6 @@ private:
                              Theme::kTextSecondary, HAlign::Center, VAlign::Top);
     }
 
-    // The tabs: a dark glass capsule, the selected tab a white pill in it. Focus on a tab selects
-    // it, so the focused pill is always the selected one.
-    void DrawNav() {
-        const std::array<const wchar_t*, kTabCount> labels = {Tr(Text::NavLibrary),
-                                                              Tr(Text::NavSettings)};
-        std::array<float, kTabCount> widths{};
-        float total = 2.0f * kTabsPadding + kTabsGap * static_cast<float>(kTabCount - 1);
-        for (int i = 0; i < kTabCount; ++i) {
-            widths[Idx(i)] = TextWidth(labels[Idx(i)], Font::Nav) + 2.0f * kTabLabelPadding;
-            total += widths[Idx(i)];
-        }
-        const float capsule_height = kTabHeight + 2.0f * kTabsPadding;
-        const D2D1_RECT_F capsule = RectF(kMargin, kTopCenter - capsule_height / 2.0f,
-                                          kMargin + total, kTopCenter + capsule_height / 2.0f);
-        renderer_.FillRounded(capsule, capsule_height / 2.0f, Theme::kGlassTabs);
-        DrawGlassEdge(capsule, capsule_height / 2.0f);
-        float x = capsule.left + kTabsPadding;
-        for (int i = 0; i < kTabCount; ++i) {
-            const bool active = i == static_cast<int>(tab_);
-            const D2D1_RECT_F pill = RectF(x, capsule.top + kTabsPadding, x + widths[Idx(i)],
-                                           capsule.top + kTabsPadding + kTabHeight);
-            if (active) {
-                renderer_.FillRounded(pill, kTabHeight / 2.0f, Theme::kPrimaryFill);
-            }
-            renderer_.DrawString(labels[Idx(i)], Font::Nav, pill,
-                                 active ? Theme::kTextOnLight : Theme::kTextSecondary,
-                                 HAlign::Center, VAlign::Middle);
-            if (active && layer_ == Layer::Nav) {
-                DrawRing(pill, kTabHeight / 2.0f + kRingGap, 1.0f);
-            }
-            x += widths[Idx(i)] + kTabsGap;
-        }
-    }
-
-    void DrawClock() {
-        SYSTEMTIME local_time{};
-        GetLocalTime(&local_time);
-        wchar_t text[8];
-        swprintf_s(text, std::size(text), L"%02u:%02u", static_cast<unsigned>(local_time.wHour),
-                   static_cast<unsigned>(local_time.wMinute));
-        renderer_.DrawString(text, Font::Clock,
-                             RectF(kCanvasWidth - kMargin - 240.0f, kTopCenter - 20.0f,
-                                   kCanvasWidth - kMargin, kTopCenter + 20.0f),
-                             Theme::kText, HAlign::Right, VAlign::Middle);
-    }
-
     // A short message in a glass capsule in the top row, fading in and out.
     void DrawToast(Clock::time_point now) {
         if (toast_.empty() || now >= toast_until_) {
@@ -1049,16 +1094,8 @@ private:
         }
         const float remaining = std::chrono::duration<float>(toast_until_ - now).count();
         const float elapsed = std::chrono::duration<float>(kToastDuration).count() - remaining;
-        const float fade = std::clamp(std::min(elapsed / 0.15f, remaining / 0.22f), 0.0f, 1.0f);
-        const float height = kTabHeight + 2.0f * kTabsPadding;
-        const float width =
-            TextWidth(toast_, Font::Nav) + 2.0f * kTabLabelPadding + 2.0f * kTabsPadding;
-        const float left = (kCanvasWidth - width) / 2.0f;
-        const D2D1_RECT_F rect =
-            RectF(left, kTopCenter - height / 2.0f, left + width, kTopCenter + height / 2.0f);
-        renderer_.FillRounded(rect, height / 2.0f, WithOpacity(Theme::kGlassBar, fade));
-        renderer_.DrawString(toast_, Font::Nav, rect, WithOpacity(Theme::kText, fade),
-                             HAlign::Center, VAlign::Middle);
+        DrawToastCapsule(renderer_, toast_,
+                         std::clamp(std::min(elapsed / 0.15f, remaining / 0.22f), 0.0f, 1.0f));
     }
 
     std::vector<Hint> CurrentHints() const {
@@ -1066,7 +1103,15 @@ private:
             return {{Theme::kButtonB, L"B", Tr(Text::HintBack)}};
         }
         std::vector<Hint> hints;
-        if (HasGame()) {
+        if (tab_ == Tab::Settings) {
+            if (layer_ == Layer::Rail && settings_row_ == kSettingSaveSync) {
+                if (sync_account_ == SyncAccount::SignedIn) {
+                    hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSignOut)});
+                } else if (sync_account_ == SyncAccount::SignedOut) {
+                    hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSignIn)});
+                }
+            }
+        } else if (HasGame()) {
             if (layer_ == Layer::Rail) {
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::ActionPlay)});
             } else if (layer_ == Layer::Actions) {
@@ -1081,32 +1126,60 @@ private:
         return hints;
     }
 
-    // The dark glass bar at the bottom: a round colored glyph for each button, with its label.
-    void DrawHints() {
-        const std::vector<Hint> hints = CurrentHints();
-        std::vector<float> widths;
-        float total = 2.0f * kHintPadding + static_cast<float>(hints.size() - 1) * kHintItemGap;
-        for (const Hint& hint : hints) {
-            widths.push_back(TextWidth(hint.label, Font::Hint));
-            total += kGlyphSize + kHintLabelGap + widths.back();
+    // The settings tab: a list of rows, each with a name, its state and one line of explanation.
+    void DrawSettings() {
+        DrawTitle(Tr(Text::SettingsTitle));
+        struct Row {
+            const wchar_t* name;
+            const wchar_t* state;
+            D2D1_COLOR_F state_color;
+            const wchar_t* hint;
+        };
+        Row sync_row = {Tr(Text::SyncRowTitle), Tr(Text::SyncStateOff), Theme::kTextSecondary,
+                        Tr(Text::SyncRowOffHint)};
+        switch (sync_account_) {
+        case SyncAccount::SignedIn:
+            sync_row.state = Tr(Text::SyncStateOn);
+            sync_row.state_color = Theme::kSuccessText;
+            sync_row.hint = Tr(Text::SyncRowOnHint);
+            break;
+        case SyncAccount::NotConfigured:
+            sync_row.state = Tr(Text::SyncStateNotConfigured);
+            sync_row.state_color = Theme::kTextTertiary;
+            sync_row.hint = Tr(Text::SyncRowMissingHint);
+            break;
+        case SyncAccount::SignedOut:
+            break;
         }
-        const float left = (kCanvasWidth - total) / 2.0f;
-        const D2D1_RECT_F bar = RectF(left, kHintTop, left + total, kHintTop + kHintHeight);
-        renderer_.FillRounded(bar, kHintHeight / 2.0f, Theme::kGlassBar);
-        DrawGlassEdge(bar, kHintHeight / 2.0f);
-        const float glyph_top = kHintTop + (kHintHeight - kGlyphSize) / 2.0f;
-        float x = left + kHintPadding;
-        for (std::size_t i = 0; i < hints.size(); ++i) {
-            renderer_.FillDisc(Point2F(x + kGlyphSize / 2.0f, kHintTop + kHintHeight / 2.0f),
-                               kGlyphSize / 2.0f, hints[i].color);
-            renderer_.DrawString(hints[i].glyph, Font::Glyph,
-                                 RectF(x, glyph_top, x + kGlyphSize, glyph_top + kGlyphSize),
-                                 Theme::kTextOnLight, HAlign::Center, VAlign::Middle);
-            x += kGlyphSize + kHintLabelGap;
-            renderer_.DrawString(hints[i].label, Font::Hint,
-                                 RectF(x, kHintTop, x + widths[i] + 8.0f, kHintTop + kHintHeight),
+        const std::array<Row, kSettingsRowCount> rows = {
+            {sync_row,
+             {Tr(Text::SourcesRowTitle), Tr(Text::SourcesRowState), Theme::kTextTertiary,
+              Tr(Text::SourcesRowHint)}}};
+        constexpr float kRowTop = 580.0f;
+        constexpr float kRowHeight = 88.0f;
+        constexpr float kRowPitch = 98.0f;
+        constexpr float kRowRadius = 22.0f;
+        for (int i = 0; i < kSettingsRowCount; ++i) {
+            const float y = kRowTop + static_cast<float>(i) * kRowPitch;
+            const D2D1_RECT_F row = RectF(kMargin, y, kCanvasWidth - kMargin, y + kRowHeight);
+            const bool focused = layer_ == Layer::Rail && settings_row_ == i;
+            if (focused) {
+                renderer_.FillRounded(row, kRowRadius, Theme::kSurfaceStrong);
+            }
+            renderer_.DrawString(rows[Idx(i)].name, Font::RowTitle,
+                                 RectF(kMargin + 28.0f, y + 12.0f, kMargin + 700.0f, y + 48.0f),
+                                 Theme::kText, HAlign::Left, VAlign::Middle);
+            renderer_.DrawString(rows[Idx(i)].hint, Font::RowSub,
+                                 RectF(kMargin + 28.0f, y + 50.0f, kCanvasWidth - kMargin - 360.0f,
+                                       y + 78.0f),
                                  Theme::kTextSecondary, HAlign::Left, VAlign::Middle);
-            x += widths[i] + kHintItemGap;
+            renderer_.DrawString(rows[Idx(i)].state, Font::Button,
+                                 RectF(kCanvasWidth - kMargin - 340.0f, y, kCanvasWidth - kMargin - 28.0f,
+                                       y + kRowHeight),
+                                 rows[Idx(i)].state_color, HAlign::Right, VAlign::Middle);
+            if (focused) {
+                DrawRing(renderer_, row, kRowRadius + kRingGap, 1.0f);
+            }
         }
     }
 
@@ -1158,6 +1231,8 @@ private:
     CoreWindow window_;
     Input input_;
     std::filesystem::path local_state_;
+    BannerSource banners_; // the eShop banners of the hero, fetched off the render thread
+    std::vector<int> banner_order_; // games whose banner is on the GPU, the oldest first
 
     std::unique_ptr<LibraryScan> scan_; // set while the folder is being read
     std::string keep_title_id_;         // the game to focus again when the scan ends
@@ -1172,6 +1247,9 @@ private:
     Layer layer_ = Layer::Rail;
     int selected_ = 0; // rail index; GameCount() is the "add games" tile
     int action_ = kActionPlay;
+    int settings_row_ = 0;
+    SyncAccount sync_account_ = SyncAccount::SignedOut;
+    int launched_ = -1;
     bool details_open_ = false;
 
     Look hero_from_;
@@ -1191,28 +1269,48 @@ private:
 
 } // namespace
 
-std::string RunLibrary(const winrt::Windows::UI::Core::CoreWindow& window) {
+std::string RunLibrary(const winrt::Windows::UI::Core::CoreWindow& window, ChosenGame* chosen) {
     Diagnostic("UI library begin");
-    std::string chosen;
+    std::string path;
     try {
         const std::filesystem::path local_state(std::wstring_view(
             winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
         Renderer renderer;
         renderer.Initialize(window);
-        {
+        bool window_closed = false;
+        if (!IsSetupDone(local_state)) {
+            // The first run asks once whether to sync saves; the answer is remembered in
+            // setup_done.txt, and Settings has the same switch.
+            Input setup_input(window);
+            window_closed = RunFirstRunSetup(renderer, window, setup_input, local_state);
+        }
+        if (!window_closed) {
             // The screen owns GPU images, so it has to be gone before the renderer is.
             LibraryScreen screen(renderer, window, local_state);
-            chosen = screen.Run();
+            path = screen.Run();
+            if (!path.empty() && chosen != nullptr) {
+                if (const GameEntry* game = screen.Chosen()) {
+                    chosen->path = path;
+                    chosen->title_id = game->title_id;
+                    // SwitchSaveSync names the cloud folder after the first NACP name, not after
+                    // the name in the UI language.
+                    chosen->sync_name = SaveSync::GameNameFromNames(game->nacp_names);
+                    if (chosen->sync_name.empty()) {
+                        chosen->sync_name = winrt::to_string(winrt::hstring(game->name));
+                    }
+                    chosen->display_name = game->name;
+                }
+            }
         }
     } catch (const winrt::hresult_error& error) {
         Diagnostic("UI library failed " + winrt::to_string(error.message()));
-        chosen.clear();
+        path.clear();
     } catch (const std::exception& error) {
         Diagnostic(std::string("UI library failed ") + error.what());
-        chosen.clear();
+        path.clear();
     }
-    Diagnostic(chosen.empty() ? "UI library end, no game chosen" : "UI library end");
-    return chosen;
+    Diagnostic(path.empty() ? "UI library end, no game chosen" : "UI library end");
+    return path;
 }
 
 } // namespace EdenXbox::Ui

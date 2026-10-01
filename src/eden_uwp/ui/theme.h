@@ -40,6 +40,12 @@ inline constexpr D2D1_COLOR_F kRibbon1 = Rgb(0x8FBF6A); // at 38%
 inline constexpr D2D1_COLOR_F kRibbon2 = Rgb(0xE05A45); // at 64%
 inline constexpr D2D1_COLOR_F kRibbon3 = Rgb(0xE8343E); // at 100%
 
+// An installed mod's pill and a failure: a tinted fill with a light text of the same hue.
+inline constexpr D2D1_COLOR_F kSuccessFill = Rgb(0x2FD07A, 0.16);
+inline constexpr D2D1_COLOR_F kSuccessText = Rgb(0x7EE3A8);
+inline constexpr D2D1_COLOR_F kDangerFill = Rgb(0xE5534B, 0.18);
+inline constexpr D2D1_COLOR_F kDangerText = Rgb(0xFF8E87);
+
 // Controller button glyphs of the hint bar.
 inline constexpr D2D1_COLOR_F kButtonA = Rgb(0x5EC26A);
 inline constexpr D2D1_COLOR_F kButtonB = Rgb(0xE5534B);
