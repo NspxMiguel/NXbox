@@ -84,7 +84,7 @@ JsonObject ObjectAt(const JsonObject& object, const wchar_t* key) {
     if (object.HasKey(key)) {
         const IJsonValue value = object.GetNamedValue(key);
         if (value.ValueType() == JsonValueType::Object) {
-            return value.GetObject();
+            return value.as<winrt::Windows::Data::Json::JsonObject>();
         }
     }
     return JsonObject{};
@@ -870,7 +870,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
                 if (value.ValueType() != JsonValueType::Object) {
                     continue;
                 }
-                const JsonObject item = value.GetObject();
+                const JsonObject item = value.as<winrt::Windows::Data::Json::JsonObject>();
                 InstalledRecord record;
                 record.id = static_cast<std::int64_t>(NumberAt(item, L"id", 0.0));
                 record.name = StringAt(item, L"name");
@@ -996,7 +996,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
                 if (value.ValueType() != JsonValueType::Object) {
                     continue;
                 }
-                const JsonObject record = value.GetObject();
+                const JsonObject record = value.as<winrt::Windows::Data::Json::JsonObject>();
                 const auto id = static_cast<std::int64_t>(NumberAt(record, L"_idRow", 0.0));
                 std::string name = StringAt(record, L"_sName");
                 while (!name.empty() && name.back() == ' ') {
@@ -1065,7 +1065,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
             if (value.ValueType() != JsonValueType::Object) {
                 continue;
             }
-            const JsonObject record = value.GetObject();
+            const JsonObject record = value.as<winrt::Windows::Data::Json::JsonObject>();
             const auto mod_id = static_cast<std::int64_t>(NumberAt(record, L"_idRow", 0.0));
             if (mod_id == 0) {
                 continue;
@@ -1075,7 +1075,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
             const JsonObject media = ObjectAt(record, L"_aPreviewMedia");
             const JsonArray images = ArrayAt(media, L"_aImages");
             if (images.Size() > 0 && images.GetAt(0).ValueType() == JsonValueType::Object) {
-                const JsonObject image = images.GetAt(0).GetObject();
+                const JsonObject image = images.GetAt(0).as<winrt::Windows::Data::Json::JsonObject>();
                 std::string file = StringAt(image, L"_sFile220");
                 if (file.empty()) {
                     file = StringAt(image, L"_sFile");
@@ -1127,7 +1127,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
             if (value.ValueType() != JsonValueType::Object) {
                 continue;
             }
-            const JsonObject file = value.GetObject();
+            const JsonObject file = value.as<winrt::Windows::Data::Json::JsonObject>();
             const std::string name = StringAt(file, L"_sFile");
             const std::string address = StringAt(file, L"_sDownloadUrl");
             if (name.empty() || address.empty()) {
