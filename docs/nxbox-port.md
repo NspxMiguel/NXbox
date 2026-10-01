@@ -561,3 +561,31 @@ longer needed.
   on suspend. The server is `tools/shader-share/server.ts` (Bun, one cache per title, keeps the
   larger valid upload). A cache from a shader-derived artifact is independent of the GPU; a future
   compiled-DXIL cache would need a Series S/X + OS + Mesa key.
+
+### Stall attribution and precompile guard (30/09/2026)
+
+With the shader cache in place, the remaining hitches (up to 3.8 s, about 70 per run) all fall in
+loading phases: the intro, the logos and the menu. In every such window the app memory grows, which
+points at new content being loaded rather than at shaders. To tell the causes apart, every 5 s pacing
+window now writes a `GAME_STALL` line with total, longest and count, in milliseconds, for:
+
+- `shader`: `CreateGraphicsPipeline` and `CreateComputePipeline`
+- `upload`: `TextureCache::UploadImageContents`
+- `convert`: CPU ASTC/BCn conversion in `ConvertImage`
+- `gc`: texture cache garbage collection
+- `video`: FFmpeg `SendPacket`
+
+The counters live in the header-only `src/common/nxbox_stall.h`.
+
+The first run of that build after the console lost power never got past `SHADER_CACHE loading`.
+The process vanished with no crash dump, and the Device Portal then stopped answering, which meant
+a manual reboot. The 1,036,492-byte cache that was loading parses cleanly: 264 well-formed entries,
+checked with a standalone parser of the `yuzucach` v15 layout. So the cache file is not corrupt.
+Two changes came out of this:
+
+- The precompile writes `SHADER_CACHE built n/total` to the flushed diagnostic file every 32
+  pipelines. The emulator log is buffered and loses its tail when the process dies.
+- A marker file, `opengl.loading`, sits next to the cache during the precompile. If it is still
+  there at the next launch, the cache is renamed to `opengl.crashed.bin` and that session neither
+  loads it nor downloads the shared copy. A precompile that kills the process can no longer keep
+  the game from starting.
