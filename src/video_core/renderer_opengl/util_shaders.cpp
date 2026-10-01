@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2020 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdlib>
 #include <mutex>
 #include <span>
 #include <string_view>
@@ -23,6 +24,7 @@
 #include "video_core/renderer_opengl/gl_staging_buffer_pool.h"
 #include "video_core/renderer_opengl/gl_texture_cache.h"
 #include "video_core/renderer_opengl/util_shaders.h"
+#include "video_core/surface.h"
 #include "video_core/texture_cache/accelerated_swizzle.h"
 #include "video_core/texture_cache/types.h"
 #include "video_core/texture_cache/util.h"
@@ -79,6 +81,23 @@ void UtilShaders::ASTCDecode(Image& image, const StagingBufferMap& map,
     };
     program_manager.BindComputeProgram(astc_decoder_program.handle);
     glFlushMappedNamedBufferRange(map.buffer, map.offset, image.guest_size_bytes);
+
+    // NXBOX_ASTC_SRGB_VIA_UNORM=1: on D3D12 without relaxed format casting an sRGB texture has no
+    // UAV, so the RGBA8 store view of it cannot be written. Decode into a plain RGBA8 texture and
+    // copy each level into the sRGB one (same format family, so the copy is a raw one).
+    static const bool srgb_via_unorm = [] {
+        const char* value = std::getenv("NXBOX_ASTC_SRGB_VIA_UNORM");
+        return value != nullptr && value[0] == '1';
+    }();
+    OGLTexture scratch;
+    GLuint output_handle = image.StorageHandle();
+    if (srgb_via_unorm && VideoCore::Surface::IsPixelFormatSRGB(image.info.format)) {
+        scratch.Create(GL_TEXTURE_2D_ARRAY);
+        glTextureStorage3D(scratch.handle, image.info.resources.levels, GL_RGBA8,
+                           image.info.size.width, image.info.size.height,
+                           image.info.resources.layers);
+        output_handle = scratch.handle;
+    }
     glUniform2ui(1, tile_size.width, tile_size.height);
 
     // Ensure buffer data is valid before dispatching
@@ -102,10 +121,19 @@ void UtilShaders::ASTCDecode(Image& image, const StagingBufferMap& map,
         // ASTC texture data
         glBindBufferRange(GL_SHADER_STORAGE_BUFFER, BINDING_INPUT_BUFFER, map.buffer, input_offset,
                           image.guest_size_bytes - swizzle.buffer_offset);
-        glBindImageTexture(BINDING_OUTPUT_IMAGE, image.StorageHandle(), swizzle.level, GL_TRUE, 0,
+        glBindImageTexture(BINDING_OUTPUT_IMAGE, output_handle, swizzle.level, GL_TRUE, 0,
                            GL_WRITE_ONLY, GL_RGBA8);
 
         glDispatchCompute(num_dispatches_x, num_dispatches_y, image.info.resources.layers);
+    }
+    if (scratch.handle != 0) {
+        glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_UPDATE_BARRIER_BIT);
+        for (const SwizzleParameters& swizzle : swizzles) {
+            const Extent3D size = VideoCommon::MipSize(image.info.size, swizzle.level);
+            glCopyImageSubData(scratch.handle, GL_TEXTURE_2D_ARRAY, swizzle.level, 0, 0, 0,
+                               image.Handle(), GL_TEXTURE_2D_ARRAY, swizzle.level, 0, 0, 0,
+                               size.width, size.height, image.info.resources.layers);
+        }
     }
     // Precautionary barrier to ensure the compute shader is done decoding prior to texture access.
     // GL_TEXTURE_FETCH_BARRIER_BIT and GL_SHADER_IMAGE_ACCESS_BARRIER_BIT are used in a separate
