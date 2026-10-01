@@ -1,10 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #pragma once
 
+#include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace EdenXbox {
+
+// All StorageFolder helpers below must run on an MTA worker, never the UI thread.
+std::vector<std::filesystem::path> ListExternalGames();
+std::vector<std::filesystem::path> ExternalGameFolders();
+std::optional<std::uint64_t> StorageFreeSpace(const std::filesystem::path& folder);
 
 struct UsbLibraryScan {
     bool drive_found = false;

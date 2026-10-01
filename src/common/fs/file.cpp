@@ -4,6 +4,13 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef YUZU_UWP_APPCONTAINER
+#include <windows.h>
+
+#include <fileapifromapp.h>
+#include <fcntl.h>
+#endif
+
 #include <vector>
 
 #include "common/assert.h"
@@ -259,6 +266,44 @@ void IOFile::Open(const fs::path& path, FileAccessMode mode, FileType type, File
     } else {
         _wfopen_s(&file, path.c_str(), AccessModeToWStr(mode, type));
     }
+#ifdef YUZU_UWP_APPCONTAINER
+    if (!file) {
+        const bool read = mode == FileAccessMode::Read;
+        const bool write = mode == FileAccessMode::Write;
+        const bool append = mode == FileAccessMode::Append || mode == FileAccessMode::ReadAppend;
+        const bool update = mode == FileAccessMode::ReadWrite || mode == FileAccessMode::ReadAppend;
+        const DWORD access = (read || update ? GENERIC_READ : 0) |
+                             (!read ? GENERIC_WRITE : 0);
+        DWORD share = 0;
+        if (flag == FileShareFlag::ShareReadOnly || flag == FileShareFlag::ShareReadWrite) {
+            share |= FILE_SHARE_READ;
+        }
+        if (flag == FileShareFlag::ShareWriteOnly || flag == FileShareFlag::ShareReadWrite) {
+            share |= FILE_SHARE_WRITE;
+        }
+        const HANDLE handle = CreateFileFromAppW(path.c_str(), access, share, nullptr,
+                                                write ? CREATE_ALWAYS : append ? OPEN_ALWAYS : OPEN_EXISTING,
+                                                FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            const int flags = (read ? _O_RDONLY : update ? _O_RDWR : _O_WRONLY) |
+                              (append ? _O_APPEND : 0) |
+                              (type == FileType::BinaryFile ? _O_BINARY : _O_TEXT);
+            const int fd = _open_osfhandle(reinterpret_cast<intptr_t>(handle), flags);
+            if (fd == -1) {
+                CloseHandle(handle);
+            } else {
+                file = _wfdopen(fd, AccessModeToWStr(mode, type));
+                if (!file) {
+                    _close(fd); // The descriptor owns the handle now.
+                }
+            }
+        } else if (const DWORD error = GetLastError();
+                   error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND) {
+            LOG_ERROR(Common_Filesystem, "FromApp open failed path={}, error={}",
+                      PathToUTF8String(path), error);
+        }
+    }
+#endif
 #elif __ANDROID__
     if (Android::IsContentUri(path)) {
         ASSERT_MSG(mode == FileAccessMode::Read, "Content URI file access is for read-only!");
@@ -396,7 +441,14 @@ u64 IOFile::GetSize() const {
     // Flush any unwritten buffered data into the file prior to retrieving the file size.
     std::fflush(file);
 
-#ifdef __ANDROID__
+#ifdef YUZU_UWP_APPCONTAINER
+    // Query the already-open handle; reopening removable files is expensive on Xbox.
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(reinterpret_cast<HANDLE>(_get_osfhandle(fileno(file))), &size)) {
+        return 0;
+    }
+    const auto file_size = static_cast<u64>(size.QuadPart);
+#elif defined(__ANDROID__)
     u64 file_size = 0;
     if (Android::IsContentUri(file_path)) {
         file_size = Android::GetSize(file_path);

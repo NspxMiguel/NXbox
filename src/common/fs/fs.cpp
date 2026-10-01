@@ -4,6 +4,10 @@
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#ifdef YUZU_UWP_APPCONTAINER
+#include "common/fs/fs_uwp.h"
+#endif
+
 #include "common/fs/file.h"
 #include "common/fs/fs.h"
 #ifdef __ANDROID__
@@ -77,6 +81,12 @@ bool RemoveFile(const fs::path& path) {
     std::error_code ec;
 
     fs::remove(path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        ec = DeleteFileFromAppW(path.c_str()) ? std::error_code{} :
+             std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to remove the file at path={}, ec_message={}",
@@ -119,6 +129,12 @@ bool RenameFile(const fs::path& old_path, const fs::path& new_path) {
     std::error_code ec;
 
     fs::rename(old_path, new_path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        ec = MoveFileFromAppW(old_path.c_str(), new_path.c_str()) ? std::error_code{} :
+             std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem,
@@ -189,6 +205,12 @@ bool CreateDir(const fs::path& path) {
     std::error_code ec;
 
     fs::create_directory(path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        ec = CreateDirectoryFromAppW(path.c_str(), nullptr) ? std::error_code{} :
+             std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to create the directory at path={}, ec_message={}",
@@ -217,6 +239,12 @@ bool CreateDirs(const fs::path& path) {
     std::error_code ec;
 
     fs::create_directories(path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        const auto parent = path.parent_path();
+        return !parent.empty() && parent != path && CreateDirs(parent) && CreateDir(path);
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to create the directories at path={}, ec_message={}",
@@ -259,6 +287,12 @@ bool RemoveDir(const fs::path& path) {
     std::error_code ec;
 
     fs::remove(path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        ec = RemoveDirectoryFromAppW(path.c_str()) ? std::error_code{} :
+             std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem, "Failed to remove the directory at path={}, ec_message={}",
@@ -273,6 +307,9 @@ bool RemoveDir(const fs::path& path) {
 }
 
 bool RemoveDirRecursively(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    return RemoveDirContentsRecursively(path) && RemoveDir(path);
+#else
     if (!ValidatePath(path)) {
         LOG_ERROR(Common_Filesystem, "Input path is not valid, path={}", PathToUTF8String(path));
         return false;
@@ -305,9 +342,19 @@ bool RemoveDirRecursively(const fs::path& path) {
               PathToUTF8String(path));
 
     return true;
+#endif
 }
 
 bool RemoveDirContentsRecursively(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    if (!Exists(path)) {
+        return true;
+    }
+    return Uwp::ForEachEntry(path, [](const fs::path& child, const WIN32_FIND_DATAW& data) {
+        return (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirRecursively(child)
+                                                                : RemoveFile(child);
+    });
+#else
     if (!ValidatePath(path)) {
         LOG_ERROR(Common_Filesystem, "Input path is not valid, path={}", PathToUTF8String(path));
         return false;
@@ -364,6 +411,7 @@ bool RemoveDirContentsRecursively(const fs::path& path) {
               PathToUTF8String(path));
 
     return true;
+#endif
 }
 
 bool RenameDir(const fs::path& old_path, const fs::path& new_path) {
@@ -395,6 +443,12 @@ bool RenameDir(const fs::path& old_path, const fs::path& new_path) {
     std::error_code ec;
 
     fs::rename(old_path, new_path, ec);
+#ifdef YUZU_UWP_APPCONTAINER
+    if (ec) {
+        ec = MoveFileFromAppW(old_path.c_str(), new_path.c_str()) ? std::error_code{} :
+             std::error_code{static_cast<int>(GetLastError()), std::system_category()};
+    }
+#endif
 
     if (ec) {
         LOG_ERROR(Common_Filesystem,
@@ -531,6 +585,10 @@ void IterateDirEntriesRecursively(const std::filesystem::path& path,
 // Generic Filesystem Operations
 
 bool Exists(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    return GetFileAttributesExFromAppW(path.c_str(), GetFileExInfoStandard, &data) != FALSE;
+#else
     std::error_code ec;
 #ifdef __ANDROID__
     if (Android::IsContentUri(path)) {
@@ -541,9 +599,14 @@ bool Exists(const fs::path& path) {
 #else
     return fs::exists(path, ec);
 #endif
+#endif
 }
 
 bool IsFile(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    return GetFileAttributesExFromAppW(path.c_str(), GetFileExInfoStandard, &data) && (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+#else
     std::error_code ec;
 #ifdef __ANDROID__
     if (Android::IsContentUri(path)) {
@@ -554,9 +617,14 @@ bool IsFile(const fs::path& path) {
 #else
     return fs::is_regular_file(path, ec);
 #endif
+#endif
 }
 
 bool IsDir(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    return GetFileAttributesExFromAppW(path.c_str(), GetFileExInfoStandard, &data) && (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+#else
     std::error_code ec;
 #ifdef __ANDROID__
     if (Android::IsContentUri(path)) {
@@ -566,6 +634,7 @@ bool IsDir(const fs::path& path) {
     }
 #else
     return fs::is_directory(path, ec);
+#endif
 #endif
 }
 
@@ -597,6 +666,12 @@ bool SetCurrentDir(const fs::path& path) {
 }
 
 fs::file_type GetEntryType(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    if (!Exists(path)) {
+        return fs::file_type::not_found;
+    }
+    return IsDir(path) ? fs::file_type::directory : fs::file_type::regular;
+#else
     std::error_code ec;
 
     const auto file_status = fs::status(path, ec);
@@ -608,9 +683,17 @@ fs::file_type GetEntryType(const fs::path& path) {
     }
 
     return file_status.type();
+#endif
 }
 
 u64 GetSize(const fs::path& path) {
+#ifdef YUZU_UWP_APPCONTAINER
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (GetFileAttributesExFromAppW(path.c_str(), GetFileExInfoStandard, &data)) {
+        return (static_cast<u64>(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+    }
+    return 0;
+#else
 #ifdef __ANDROID__
     if (Android::IsContentUri(path)) {
         return Android::GetSize(path);
@@ -628,6 +711,7 @@ u64 GetSize(const fs::path& path) {
     }
 
     return file_size;
+#endif
 }
 
 u64 GetFreeSpaceSize(const fs::path& path) {

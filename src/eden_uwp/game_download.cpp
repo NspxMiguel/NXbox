@@ -3,7 +3,8 @@
 
 #include <chrono>
 #include <cstdint>
-#include <fstream>
+#include <algorithm>
+#include <stdexcept>
 #include <thread>
 
 #include <fmt/format.h>
@@ -12,7 +13,11 @@
 #include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Web.Http.h>
 
+#include "common/fs/file.h"
+#include "common/fs/fs.h"
+#include "eden_uwp/await_bounded.h"
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/usb_library.h"
 
 namespace EdenXbox {
 namespace {
@@ -22,11 +27,32 @@ using namespace winrt::Windows::Web::Http;
 
 constexpr int MaxAttempts = 20;
 constexpr uint32_t ChunkSize = 4u << 20;
+namespace FS = Common::FS;
+
+// HTTP operations also run off the UI thread, with a timeout per request/read.
+template <typename Operation>
+auto WaitForDownload(Operation operation) {
+    auto result = AwaitBounded(operation, std::chrono::seconds(60));
+    if (!result) {
+        throw std::runtime_error("network operation timed out");
+    }
+    return *result;
+}
+
+std::optional<std::uint64_t> AvailableSpace(const std::filesystem::path& folder) {
+    std::error_code ec;
+    const auto space = std::filesystem::space(folder, ec);
+    return ec ? StorageFreeSpace(folder) : std::optional<std::uint64_t>{space.available};
+}
+
+std::uint64_t DownloadedSize(const std::filesystem::path& file) {
+    return FS::IsFile(file) ? FS::GetSize(file) : 0;
+}
 
 std::uint64_t RemoteSize(HttpClient& client, const Uri& uri) {
     HttpRequestMessage request{HttpMethod::Head(), uri};
     const auto response =
-        client.SendRequestAsync(request, HttpCompletionOption::ResponseHeadersRead).get();
+        WaitForDownload(client.SendRequestAsync(request, HttpCompletionOption::ResponseHeadersRead));
     response.EnsureSuccessStatusCode();
     const auto length = response.Content().Headers().ContentLength();
     if (!length) {
@@ -39,36 +65,41 @@ std::uint64_t RemoteSize(HttpClient& client, const Uri& uri) {
 // stream. Returns the number of bytes written; a dropped connection throws.
 void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& destination,
               std::uint64_t total) {
-    std::error_code ec;
-    std::uint64_t have =
-        std::filesystem::exists(destination, ec) ? std::filesystem::file_size(destination, ec) : 0;
+    std::uint64_t have = DownloadedSize(destination);
     HttpRequestMessage request{HttpMethod::Get(), uri};
     if (have != 0) {
         request.Headers().TryAppendWithoutValidation(
             L"Range", winrt::to_hstring("bytes=" + std::to_string(have) + "-"));
     }
     const auto response =
-        client.SendRequestAsync(request, HttpCompletionOption::ResponseHeadersRead).get();
+        WaitForDownload(client.SendRequestAsync(request, HttpCompletionOption::ResponseHeadersRead));
     response.EnsureSuccessStatusCode();
     if (have != 0 && response.StatusCode() != HttpStatusCode::PartialContent) {
         // The server ignored the Range header and is resending from byte 0.
+        const auto free = AvailableSpace(destination.parent_path());
+        // The existing partial file is reclaimed when opening with Write.
+        if (!free || *free < total - have) {
+            throw std::runtime_error("not enough space to restart the download");
+        }
         have = 0;
     }
-    std::ofstream out(destination, std::ios::binary | (have ? std::ios::app : std::ios::trunc));
-    if (!out) {
+    FS::IOFile out(destination, have ? FS::FileAccessMode::Append : FS::FileAccessMode::Write);
+    if (!out.IsOpen()) {
         throw std::runtime_error("cannot open " + destination.string());
     }
-    const auto stream = response.Content().ReadAsInputStreamAsync().get();
+    const auto stream = WaitForDownload(response.Content().ReadAsInputStreamAsync());
     Buffer buffer{ChunkSize};
     auto sample_at = std::chrono::steady_clock::now();
     std::uint64_t sample_bytes = have;
     while (have < total) {
-        const auto read = stream.ReadAsync(buffer, ChunkSize, InputStreamOptions::Partial).get();
+        const auto read = WaitForDownload(stream.ReadAsync(buffer, ChunkSize, InputStreamOptions::Partial));
         if (read.Length() == 0) {
             throw std::runtime_error("connection closed early");
         }
-        out.write(reinterpret_cast<const char*>(read.data()), read.Length());
-        if (!out) {
+        if (read.Length() > total - have) {
+            throw std::runtime_error("server sent more bytes than expected");
+        }
+        if (out.WriteSpan(std::span<const std::uint8_t>{read.data(), read.Length()}) != read.Length()) {
             throw std::runtime_error("write failed (disk full?)");
         }
         have += read.Length();
@@ -81,39 +112,73 @@ void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& d
             sample_bytes = have;
         }
     }
+    if (!out.Commit()) {
+        throw std::runtime_error("flush failed (disk full?)");
+    }
 }
 } // namespace
 
-bool DownloadFile(const std::string& url, const std::filesystem::path& destination) {
-    std::filesystem::create_directories(destination.parent_path());
+bool DownloadFile(const std::string& url, std::filesystem::path& destination,
+                  const std::function<void(const std::filesystem::path&)>& remember_target) {
     HttpClient client;
     const Uri uri{winrt::to_hstring(url)};
     for (int attempt = 1; attempt <= MaxAttempts; ++attempt) {
         try {
+            if (!FS::CreateDirs(destination.parent_path())) {
+                throw std::runtime_error("cannot create the download folder");
+            }
             const auto total = RemoteSize(client, uri);
-            std::error_code ec;
-            const auto have = std::filesystem::exists(destination, ec)
-                                  ? std::filesystem::file_size(destination, ec)
-                                  : 0;
+            auto have = DownloadedSize(destination);
+            if (have > total) {
+                if (!FS::RemoveFile(destination)) {
+                    throw std::runtime_error("cannot remove an oversized download");
+                }
+                have = 0;
+            }
+            auto free = AvailableSpace(destination.parent_path());
+            if (have != total && free && *free < total - have) {
+                bool selected = false;
+                for (const auto& folder : ExternalGameFolders()) {
+                    const auto candidate = folder / destination.filename();
+                    if (candidate == destination) {
+                        continue;
+                    }
+                    const auto candidate_size = DownloadedSize(candidate);
+                    const auto candidate_free = StorageFreeSpace(folder);
+                    // A partial download on another drive is resumed there. Do not copy the
+                    // internal partial file: restarting externally needs the full remaining size.
+                    if (candidate_size <= total && candidate_free &&
+                        *candidate_free >= total - candidate_size) {
+                        remember_target(candidate);
+                        destination = candidate;
+                        have = candidate_size;
+                        free = candidate_free;
+                        selected = true;
+                        break;
+                    }
+                }
+                if (!selected) {
+                    Diagnostic(fmt::format("DOWNLOAD_NO_SPACE need={} MiB free={} MiB",
+                                           (total - have) >> 20, *free >> 20));
+                    return false;
+                }
+            }
+            if (have != total && !free) {
+                throw std::runtime_error("cannot determine download free space");
+            }
+            Diagnostic(fmt::format("DOWNLOAD_TARGET {} free={} MiB",
+                                   FS::PathToUTF8String(destination), free.value_or(0) >> 20));
             if (have == total) {
                 Diagnostic(fmt::format("DOWNLOAD_COMPLETE {} MiB", total >> 20));
                 return true;
             }
-            if (have > total) {
-                std::filesystem::remove(destination, ec);
-            }
-            const auto space = std::filesystem::space(destination.parent_path(), ec);
-            if (!ec && space.available < total - have) {
-                // Retrying cannot help until something is deleted on the console.
-                Diagnostic(fmt::format("DOWNLOAD_NO_SPACE need={} MiB free={} MiB",
-                                       (total - have) >> 20, space.available >> 20));
-                return false;
-            }
             Diagnostic(fmt::format("DOWNLOAD_START attempt={} have={} MiB total={} MiB free={} MiB",
-                                   attempt, have >> 20, total >> 20,
-                                   ec ? 0 : space.available >> 20));
+                                   attempt, have >> 20, total >> 20, *free >> 20));
             Transfer(client, uri, destination, total);
-            continue;
+            if (DownloadedSize(destination) == total) {
+                Diagnostic(fmt::format("DOWNLOAD_COMPLETE {} MiB", total >> 20));
+                return true;
+            }
         } catch (const winrt::hresult_error& error) {
             Diagnostic("DOWNLOAD_RETRY " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {

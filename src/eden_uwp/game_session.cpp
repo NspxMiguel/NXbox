@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <mutex>
@@ -19,6 +21,7 @@
 #include <winrt/Windows.System.h>
 
 #include <fmt/format.h>
+#include "common/fs/fs.h"
 #include "common/nxbox_stall.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
@@ -66,7 +69,7 @@ struct Lifecycle {
 };
 
 // LocalState\game.txt names the file to boot, relative to LocalState (for example
-// "games\\p5r.nsp"). If LocalState\game.url also exists, that URL is downloaded to that file first
+// "games\\p5r.nsp"), or an absolute removable-drive path. If LocalState\game.url also exists, that URL is downloaded to that file first
 // (resuming a partial download), unless the game was just chosen from the library: game.url then
 // belongs to whatever game.txt named before, and downloading it over the chosen file would replace
 // the player's game. Without game.txt the bundled homebrew boots.
@@ -90,28 +93,36 @@ std::string ResolveGamePath(const std::string& bundled, bool chosen_in_library) 
     if (selected.empty() || selected == "none") {
         return bundled;
     }
-    const fs::path target = local / selected;
+    const fs::path selected_path{Common::FS::ToU8String(selected)};
+    fs::path target = selected_path.is_absolute() ? selected_path : local / selected_path;
+    const auto remember_target = [&local](const fs::path& path) {
+        std::ofstream out(local / "game.txt", std::ios::trunc);
+        out << Common::FS::PathToUTF8String(path) << '\n';
+        out.flush();
+        if (!out) {
+            throw std::runtime_error("cannot persist the download target");
+        }
+    };
     if (chosen_in_library && fs::exists(local / "game.url")) {
         Diagnostic("GAME_URL ignored, the game was chosen in the library");
     }
     const std::string url = !chosen_in_library && fs::exists(local / "game.url")
                                 ? read_line(local / "game.url")
                                 : std::string{};
-    if (!url.empty() && !DownloadFile(url, target)) {
+    if (!url.empty() && !DownloadFile(url, target, remember_target)) {
         // The download source can go away (the LAN host was reinstalled); a copy that is
         // already on the console is still usable.
-        std::error_code ec;
-        if (!fs::exists(target, ec) || fs::file_size(target, ec) == 0) {
+        if (!Common::FS::IsFile(target) || Common::FS::GetSize(target) == 0) {
             return bundled;
         }
         Diagnostic("GAME_DOWNLOAD_UNAVAILABLE using the local copy");
     }
-    if (!fs::exists(target)) {
+    if (!Common::FS::IsFile(target)) {
         Diagnostic("GAME_MISSING " + target.string());
         return bundled;
     }
     Diagnostic("GAME_TARGET " + target.string());
-    return target.string();
+    return Common::FS::PathToUTF8String(target);
 }
 
 // Writes the game the player chose in the library into LocalState\game.txt, in the format
@@ -124,7 +135,7 @@ void RememberChosenGame(const std::filesystem::path& local, const std::string& c
     if (selected.empty() || selected.begin()->native() == L"..") {
         selected = game;
     }
-    std::ofstream(local / "game.txt", std::ios::trunc) << selected.string() << '\n';
+    std::ofstream(local / "game.txt", std::ios::trunc) << Common::FS::PathToUTF8String(selected) << '\n';
     Diagnostic("GAME_CHOSEN " + selected.string());
 }
 
@@ -441,7 +452,16 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             std::filesystem::path(winrt::to_string(
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
             "usb_scan_test.txt")) {
-        const auto scan = ScanUsbForGamesAndKeys();
+        auto scan_worker = std::async(std::launch::async, [] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            SCOPE_EXIT { winrt::uninit_apartment(); };
+            return ScanUsbForGamesAndKeys();
+        });
+        while (scan_worker.wait_for(std::chrono::seconds(0)) != std::future_status::ready) {
+            window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+            Sleep(1);
+        }
+        const auto scan = scan_worker.get();
         ShowSetupScreen(window, "USB drive_found=" + std::string(scan.drive_found ? "yes" : "no") +
                                     " games=" + std::to_string(scan.games.size()));
     }

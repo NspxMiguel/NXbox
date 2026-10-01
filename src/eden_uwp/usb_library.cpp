@@ -1,35 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "eden_uwp/usb_library.h"
 
+#include <algorithm>
+#include <cwctype>
 #include <array>
 #include <chrono>
 #include <future>
 
 #include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.FileProperties.h>
 
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/await_bounded.h"
 
 namespace EdenXbox {
 namespace {
 
 using namespace winrt::Windows::Storage;
 using namespace winrt::Windows::Foundation::Collections;
-
-// Nativra measured a game thread deadlock (the whole process, not just the caller) blocking
-// directly on a WinRT async call with no message pump underneath it: the continuation needed one
-// to run. Running the call on a plain std::async thread and bounding the wait turns a possible
-// forever-hang into "not found" instead. Called from a worker thread only, never the UI thread.
-template <typename Awaitable>
-auto AwaitBounded(Awaitable&& awaitable, std::chrono::seconds timeout)
-    -> std::optional<decltype(awaitable.get())> {
-    auto future = std::async(std::launch::async, [&] { return awaitable.get(); });
-    if (future.wait_for(timeout) != std::future_status::ready) {
-        return std::nullopt;
-    }
-    return future.get();
-}
 
 // Tries "switch\<relative>" first (the common Lockpick-style SD backup layout), then
 // "<relative>" at the drive root, so a dump that was not nested under "switch" still works.
@@ -77,6 +67,100 @@ void ListGames(const StorageFolder& drive, const wchar_t* directory,
 }
 
 } // namespace
+
+std::vector<std::filesystem::path> ListExternalGames() {
+    std::vector<std::filesystem::path> result;
+    try {
+        const auto drives = AwaitBounded(KnownFolders::RemovableDevices().GetFoldersAsync(),
+                                         std::chrono::seconds(5));
+        if (!drives) {
+            return result;
+        }
+        for (const auto& drive : *drives) {
+            try {
+                // TryGetItemAsync: a drive without the folder is the normal case, not an error.
+                const auto item = AwaitBounded(drive.TryGetItemAsync(L"NXbox\\games"),
+                                               std::chrono::seconds(5));
+                const auto folder = item && *item ? item->try_as<StorageFolder>() : nullptr;
+                if (!folder) {
+                    continue;
+                }
+                const auto files = AwaitBounded(folder.GetFilesAsync(), std::chrono::seconds(5));
+                if (!files) {
+                    continue;
+                }
+                for (const auto& file : *files) {
+                    const std::filesystem::path path{std::wstring(file.Path())};
+                    auto extension = path.extension().wstring();
+                    std::transform(extension.begin(), extension.end(), extension.begin(),
+                                   [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
+                    if (extension == L".nsp" || extension == L".nsz" || extension == L".xci") {
+                        result.push_back(path);
+                        Diagnostic("USB_GAME " + winrt::to_string(file.Path()));
+                    }
+                }
+            } catch (const winrt::hresult_error& error) {
+                Diagnostic("USB_LIBRARY_SKIP " + winrt::to_string(error.message()));
+            }
+        }
+    } catch (const winrt::hresult_error& error) {
+        Diagnostic("USB_LIBRARY_FAILED " + winrt::to_string(error.message()));
+    }
+    return result;
+}
+
+std::vector<std::filesystem::path> ExternalGameFolders() {
+    std::vector<std::filesystem::path> result;
+    try {
+        const auto drives = AwaitBounded(KnownFolders::RemovableDevices().GetFoldersAsync(),
+                                         std::chrono::seconds(5));
+        if (!drives) {
+            return result;
+        }
+        for (const auto& drive : *drives) {
+            try {
+                const auto root = AwaitBounded(
+                    drive.CreateFolderAsync(L"NXbox", CreationCollisionOption::OpenIfExists),
+                    std::chrono::seconds(5));
+                if (!root) {
+                    continue;
+                }
+                const auto games = AwaitBounded(
+                    root->CreateFolderAsync(L"games", CreationCollisionOption::OpenIfExists),
+                    std::chrono::seconds(5));
+                if (games) {
+                    result.emplace_back(std::wstring(games->Path()));
+                }
+            } catch (const winrt::hresult_error& error) {
+                Diagnostic("USB_TARGET_SKIP " + winrt::to_string(error.message()));
+            }
+        }
+    } catch (const winrt::hresult_error& error) {
+        Diagnostic("USB_TARGET_FAILED " + winrt::to_string(error.message()));
+    }
+    return result;
+}
+
+std::optional<std::uint64_t> StorageFreeSpace(const std::filesystem::path& path) {
+    try {
+        const auto folder = AwaitBounded(StorageFolder::GetFolderFromPathAsync(path.native()),
+                                         std::chrono::seconds(5));
+        if (folder) {
+            const auto properties = AwaitBounded(
+                folder->Properties().RetrievePropertiesAsync({L"System.FreeSpace"}),
+                std::chrono::seconds(5));
+            if (properties && properties->HasKey(L"System.FreeSpace")) {
+                const auto value = properties->Lookup(L"System.FreeSpace");
+                if (value) {
+                    return value.as<winrt::Windows::Foundation::IPropertyValue>().GetUInt64();
+                }
+            }
+        }
+    } catch (const winrt::hresult_error& error) {
+        Diagnostic("USB_SPACE_FAILED " + winrt::to_string(error.message()));
+    }
+    return std::nullopt;
+}
 
 UsbLibraryScan ScanUsbForGamesAndKeys() {
     UsbLibraryScan result;

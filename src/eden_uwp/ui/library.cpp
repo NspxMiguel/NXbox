@@ -4,6 +4,8 @@
 // calls they name their methods after.
 #include <windows.h>
 
+#include <fileapifromapp.h>
+
 #include "eden_uwp/ui/library.h"
 
 #include <algorithm>
@@ -25,6 +27,7 @@
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.h>
 
+#include "common/fs/fs.h"
 #include "common/fs/fs_util.h"
 #include "core/file_sys/card_image.h"
 #include "core/file_sys/content_archive.h"
@@ -37,6 +40,7 @@
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/loader/loader.h"
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/usb_library.h"
 
 namespace EdenXbox::Ui {
 namespace {
@@ -115,7 +119,13 @@ std::int64_t ModifiedSeconds(const fs::path& file) {
     std::error_code error;
     const auto stamp = fs::last_write_time(file, error);
     if (error) {
-        return 0;
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (!GetFileAttributesExFromAppW(file.c_str(), GetFileExInfoStandard, &data)) {
+            return 0;
+        }
+        const auto ticks = (static_cast<std::uint64_t>(data.ftLastWriteTime.dwHighDateTime) << 32) |
+                           data.ftLastWriteTime.dwLowDateTime;
+        return static_cast<std::int64_t>(ticks / 10000000);
     }
     return std::chrono::duration_cast<std::chrono::seconds>(stamp.time_since_epoch()).count();
 }
@@ -282,12 +292,11 @@ std::optional<GameEntry> LoadGame(FileSys::RealVfsFilesystem& vfs, const fs::pat
                                   const fs::path& file, ScanStats& stats) {
     GameEntry game;
     game.path = file;
-    std::error_code size_error;
-    game.size = fs::file_size(file, size_error);
+    game.size = Common::FS::GetSize(file);
     game.mtime = ModifiedSeconds(file);
 
     const auto hit = cached.find(file.wstring());
-    if (hit != cached.end() && !size_error && hit->second.size == game.size &&
+    if (hit != cached.end() && game.size != 0 && hit->second.size == game.size &&
         hit->second.mtime == game.mtime) {
         game.title_id = hit->second.title_id;
         game.name = hit->second.name;
@@ -358,8 +367,7 @@ std::string ConvertNsz(FileSys::RealVfsFilesystem& vfs, const fs::path& nsz_path
         const FileSys::VirtualFile output =
             vfs.CreateFile(Common::FS::PathToUTF8String(partial), FileSys::OpenMode::ReadWrite);
         if (!output) {
-            std::error_code create_error;
-            void(fs::remove(partial, create_error)); // an empty file may have been left behind
+            void(Common::FS::RemoveFile(partial)); // an empty file may have been left behind
             return "cannot create " + Utf8(partial.filename().wstring());
         }
         converted = FileSys::ConvertNszToNsp(source, output, progress, &error, &cancel);
@@ -368,20 +376,18 @@ std::string ConvertNsz(FileSys::RealVfsFilesystem& vfs, const fs::path& nsz_path
         converted = false;
         error = failure.what();
     }
-    std::error_code file_error;
     if (!converted) {
         // The converter leaves its output undefined after a failure.
-        void(fs::remove(partial, file_error));
+        void(Common::FS::RemoveFile(partial));
         return error.empty() ? "the conversion failed" : error;
     }
-    if (fs::file_size(partial, file_error) == 0 || file_error) {
-        void(fs::remove(partial, file_error));
+    if (Common::FS::GetSize(partial) == 0) {
+        void(Common::FS::RemoveFile(partial));
         return "the converter wrote an empty file";
     }
-    fs::rename(partial, nsp_path, file_error);
-    if (file_error) {
-        const std::string reason = "cannot rename the output: " + file_error.message();
-        void(fs::remove(partial, file_error));
+    if (!Common::FS::RenameFile(partial, nsp_path)) {
+        const std::string reason = "cannot rename the output";
+        void(Common::FS::RemoveFile(partial));
         return reason;
     }
     return {};
@@ -433,8 +439,7 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
     for (const fs::path& nsz : compressed) {
         fs::path nsp = nsz;
         nsp.replace_extension(L".nsp");
-        std::error_code error;
-        if (fs::exists(nsp, error)) {
+        if (Common::FS::Exists(nsp)) {
             Diagnostic("UI nsz convert " + Utf8(nsz.filename().wstring()) + " skip " +
                        Utf8(nsp.filename().wstring()) + " already exists");
             continue;
@@ -474,11 +479,8 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
         }
         Diagnostic("UI nsz convert " + file_name + " ok");
         // The .nsz goes only now that its .nsp is complete and in place.
-        std::error_code remove_error;
-        void(fs::remove(nsz, remove_error));
-        if (remove_error) {
-            Diagnostic("UI nsz convert " + file_name +
-                       " ok, but the .nsz stays: " + remove_error.message());
+        if (!Common::FS::RemoveFile(nsz)) {
+            Diagnostic("UI nsz convert " + file_name + " ok, but the .nsz could not be removed");
         }
         packages.push_back(nsp);
     }
@@ -497,8 +499,7 @@ std::vector<GameEntry> LibraryScan::Scan() {
         std::error_code error;
         fs::directory_iterator iterator(games_dir, error);
         if (error) {
-            Diagnostic("UI library scan: no games folder (" + error.message() + ")");
-            return {};
+            Diagnostic("UI library scan: no local games folder (" + error.message() + ")");
         }
         for (const fs::directory_entry& entry : iterator) {
             std::error_code entry_error;
@@ -511,6 +512,13 @@ std::vector<GameEntry> LibraryScan::Scan() {
             } else if (extension == L".nsz") {
                 compressed.push_back(entry.path());
             }
+        }
+    }
+    for (const auto& file : ListExternalGames()) {
+        if (Lowercase(file.extension().wstring()) == L".nsz") {
+            compressed.push_back(file);
+        } else {
+            packages.push_back(file);
         }
     }
     std::sort(compressed.begin(), compressed.end());
