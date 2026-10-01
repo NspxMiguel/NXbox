@@ -245,7 +245,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     const char* shader_cache = std::getenv("NXBOX_SHADER_CACHE");
     if (Settings::values.use_disk_shader_cache.GetValue() &&
         !(shader_cache != nullptr && std::string_view{shader_cache} == "0")) {
-        DownloadSharedShaderCache(system.GetApplicationProcessProgramID());
+        const auto title_id = system.GetApplicationProcessProgramID();
+        // The shared copy may be what crashed, so a session after a crash skips it too.
+        if (BeginShaderCacheLoad(title_id)) {
+            Diagnostic("SHADER_CACHE previous load crashed; cache set aside");
+        } else {
+            DownloadSharedShaderCache(title_id);
+        }
         Diagnostic("SHADER_CACHE loading");
         {
             auto& render_context = system.Renderer().Context();
@@ -255,6 +261,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 [](VideoCore::LoadCallbackStage, size_t value, size_t total) {});
             render_context.DoneCurrent();
         }
+        EndShaderCacheLoad(title_id);
         Diagnostic("SHADER_CACHE ready");
         memory_stage("shader_cache");
     }

@@ -12,4 +12,10 @@ namespace EdenXbox {
 void DownloadSharedShaderCache(std::uint64_t title_id);
 void UploadSharedShaderCache(std::uint64_t title_id);
 
+/// Crash guard around the cache precompile: a marker file lives next to the cache while it loads.
+/// If the marker is still there at the next launch, that load killed the process, so the cache is
+/// set aside as opengl.crashed.bin and the session starts without it. Returns true when it did so.
+bool BeginShaderCacheLoad(std::uint64_t title_id);
+void EndShaderCacheLoad(std::uint64_t title_id);
+
 } // namespace EdenXbox

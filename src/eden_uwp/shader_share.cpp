@@ -108,4 +108,23 @@ void UploadSharedShaderCache(std::uint64_t title_id) {
     }
 }
 
+bool BeginShaderCacheLoad(std::uint64_t title_id) {
+    const auto local = LocalCache(title_id);
+    const auto marker = local.parent_path() / "opengl.loading";
+    std::error_code error;
+    bool set_aside = false;
+    if (std::filesystem::exists(marker, error) && std::filesystem::exists(local, error)) {
+        std::filesystem::rename(local, local.parent_path() / "opengl.crashed.bin", error);
+        set_aside = !error;
+    }
+    std::filesystem::create_directories(local.parent_path(), error);
+    std::ofstream{marker} << "loading\n";
+    return set_aside;
+}
+
+void EndShaderCacheLoad(std::uint64_t title_id) {
+    std::error_code error;
+    std::filesystem::remove(LocalCache(title_id).parent_path() / "opengl.loading", error);
+}
+
 } // namespace EdenXbox
