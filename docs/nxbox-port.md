@@ -589,3 +589,19 @@ Two changes came out of this:
   there at the next launch, the cache is renamed to `opengl.crashed.bin` and that session neither
   loads it nor downloads the shared copy. A precompile that kills the process can no longer keep
   the game from starting.
+
+Warm-cache measurement (01/10/2026, package 0.3.168, the run that started with 186 precompiled
+pipelines):
+- Shader time is zero in every hitch window. The precompiled cache works, and the remaining
+  shader time is the boot precompile.
+- Persona 5 Royal never converts an ASTC texture (`convert` stays 0), so ASTC decoding is not part
+  of its stalls. Its textures are BCn, which D3D12 samples natively. The GPU ASTC decoder still
+  matters for other games, and the device reports `NXBOX_D3D12_RELAXED_CAST=0`: sRGB textures get
+  no UAV, which is why that decoder fails.
+- The hitches that remain (3.8 s, 2.6 s, 1.7 s, 1.2 s) are nearly unattributed: at most 0.24 s of
+  texture upload, no shader, no video.
+- The same session froze on the casino movie and took the Device Portal down. Both fit priority
+  inversion: the guest CPU threads and the GPU thread ran at TIME_CRITICAL and spun on fences that
+  Mesa's normal-priority threads had to signal. Every emulator thread now runs at normal priority
+  on Xbox (`common/thread.cpp`). The next build also attributes time to JIT compiles, code-cache
+  evacuations, file reads, AES and GPU-thread busy time.
