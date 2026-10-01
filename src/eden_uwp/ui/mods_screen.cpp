@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
 
 #include "common/scope_exit.h"
