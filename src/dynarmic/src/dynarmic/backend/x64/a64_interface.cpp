@@ -18,6 +18,10 @@
 
 #include "dynarmic/backend/x64/a64_emit_x64.h"
 #include "dynarmic/backend/x64/a64_jitstate.h"
+#if __has_include("../../../../../common/nxbox_stall.h")
+#    include "../../../../../common/nxbox_stall.h"
+#    define NXBOX_STALL_PROFILE 1
+#endif
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/devirtualize.h"
 #include "dynarmic/backend/x64/jitstate_info.h"
@@ -245,9 +249,15 @@ private:
         if (auto block = emitter.GetBasicBlock(descriptor))
             return block->entrypoint;
 
+#ifdef NXBOX_STALL_PROFILE
+        const NxboxStall::Scope stall_scope{NxboxStall::Kind::Jit};
+#endif
         constexpr size_t MINIMUM_REMAINING_CODESIZE = 1 * 1024 * 1024;
         if (block_of_code.SpaceRemaining() < MINIMUM_REMAINING_CODESIZE) {
             // Immediately evacuate cache
+#ifdef NXBOX_STALL_PROFILE
+            NxboxStall::Record(NxboxStall::Kind::JitFlush, 0);
+#endif
             invalidate_entire_cache = true;
             PerformRequestedCacheInvalidation(HaltReason::CacheInvalidation);
         }

@@ -8,6 +8,7 @@
 #include <cstring>
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include "common/nxbox_stall.h"
 #include "common/assert.h"
 #include "common/logging.h"
 #include "core/crypto/aes_util.h"
@@ -114,6 +115,7 @@ AESCipher<Key, KeySize>::~AESCipher() {
 
 template <typename Key, std::size_t KeySize>
 void AESCipher<Key, KeySize>::Transcode(const u8* src, std::size_t size, u8* dest, Op op) const {
+    const NxboxStall::Scope stall_scope{NxboxStall::Kind::Aes};
     auto* const context = op == Op::Encrypt ? ctx->encryption_context : ctx->decryption_context;
 
     if (size == 0)

@@ -10,7 +10,19 @@
 // single call, and the frontend reads and resets them once per pacing window.
 namespace NxboxStall {
 
-enum class Kind { Shader, Upload, Convert, GarbageCollect, Video, Count };
+enum class Kind {
+    Shader,
+    Upload,
+    Convert,
+    GarbageCollect,
+    Video,
+    Jit,
+    JitFlush,
+    Io,
+    Aes,
+    GpuBusy,
+    Count
+};
 
 struct Counter {
     std::atomic<std::uint64_t> total_us{0};

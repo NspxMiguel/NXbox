@@ -8,6 +8,7 @@
 #include <cstddef>
 #include <iterator>
 #include <utility>
+#include "common/nxbox_stall.h"
 #include "common/assert.h"
 #include "common/fs/file.h"
 #include "common/fs/fs.h"
@@ -323,6 +324,7 @@ bool RealVfsFile::IsReadable() const {
 }
 
 std::size_t RealVfsFile::Read(u8* data, std::size_t length, std::size_t offset) const {
+    const NxboxStall::Scope stall_scope{NxboxStall::Kind::Io};
     auto lk = base.RefreshReference(path, perms, *reference);
     if (!reference->file || !reference->file->Seek(static_cast<s64>(offset))) {
         return 0;
