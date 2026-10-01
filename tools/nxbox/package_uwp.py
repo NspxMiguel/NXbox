@@ -3,7 +3,6 @@
 
 import argparse
 import base64
-import json
 import os
 from pathlib import Path
 import re
@@ -12,47 +11,9 @@ import struct
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
-import zlib
 
 ROOT = Path(__file__).resolve().parents[2]
 FOUNDATION = "http://schemas.microsoft.com/appx/manifest/foundation/windows10"
-
-
-def write_icon(path: Path, size: int):
-    """Rasterize the code-defined NX monogram for required package tile sizes."""
-    palette = json.loads((ROOT / "dist/nxbox/tokens.json").read_text())
-    glyphs = [
-        (0.20, ["10001", "11001", "10101", "10011", "10001"]),
-        (0.54, ["10001", "01010", "00100", "01010", "10001"]),
-    ]
-    rows = bytearray()
-    for y in range(size):
-        rows.append(0)
-        for x in range(size):
-            color = palette["background"]
-            for index, (left, glyph) in enumerate(glyphs):
-                gx = int((x / size - left) / 0.052)
-                gy = int((y / size - 0.34) / 0.064)
-                if left <= x / size < left + 0.26 and 0.34 <= y / size < 0.66:
-                    if 0 <= gx < 5 and 0 <= gy < 5 and glyph[gy][gx] == "1":
-                        color = palette["foreground" if index == 0 else "accent"]
-            rows.extend(color)
-
-    def chunk(kind, payload):
-        return (
-            struct.pack(">I", len(payload))
-            + kind
-            + payload
-            + struct.pack(">I", zlib.crc32(kind + payload))
-        )
-
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", struct.pack(">IIBBBBB", size, size, 8, 2, 0, 0, 0))
-        + chunk(b"IDAT", zlib.compress(rows))
-        + chunk(b"IEND", b"")
-    )
 
 
 def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
@@ -91,12 +52,10 @@ def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
             if not (destination / name).is_file():
                 raise FileNotFoundError(f"Missing game runtime: {name}")
         shutil.copy2(game, destination / "game.nro")
-    for name, size in [
-        ("StoreLogo", 50),
-        ("Square44x44Logo", 44),
-        ("Square150x150Logo", 150),
-    ]:
-        write_icon(destination / "Assets" / f"{name}.png", size)
+    assets = destination / "Assets"
+    assets.mkdir()
+    for name in ("StoreLogo", "Square44x44Logo", "Square150x150Logo"):
+        shutil.copy2(ROOT / "dist/nxbox/Assets" / f"{name}.png", assets / f"{name}.png")
     manifest = (ROOT / "dist/nxbox/AppxManifest.xml").read_text()
     manifest = manifest.replace('Version="0.1.0.0"', f'Version="{version}"')
     if kind == "graphics":

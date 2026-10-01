@@ -42,10 +42,12 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(identity.attrib["Version"], "0.1.3.0")
         self.assertEqual(identity.attrib["Name"], "NSPX.NXbox")
         self.assertEqual((self.destination / "boot.nro").read_bytes()[16:20], b"NRO0")
-        for name, size in [("StoreLogo", 50), ("Square44x44Logo", 44), ("Square150x150Logo", 150)]:
+        # Tiles ship at 4x their nominal size so the Xbox dashboard shows them sharp on a TV.
+        for name, size in [("StoreLogo", 200), ("Square44x44Logo", 176), ("Square150x150Logo", 600)]:
             data = (self.destination / "Assets" / f"{name}.png").read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), (size, size))
+            self.assertEqual(data, (ROOT / "dist/nxbox/Assets" / f"{name}.png").read_bytes())
 
     def test_graphics_probe_has_separate_identity_and_license(self):
         (self.root / "Mesa-LICENSE.rst").write_text("Mesa license fixture")
