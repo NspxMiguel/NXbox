@@ -112,3 +112,61 @@ Not yet built: the actual screens from the plan above (only a placeholder title 
 renders right now), input/focus navigation on the setup screen, `ImportFromUsb()`'s copy path has
 not been exercised against a drive that actually has files on it, and neither piece is wired into
 the real boot flow yet (both are behind the `usb_scan_test.txt` marker file for testing only).
+
+## Implementation plan (2026-10-01)
+
+Approved look: a Library screen and a Mods screen, previewed at 1920×1080 (true black, eShop art,
+nav pills top-left, status top-right, glass hint bar at the bottom). The NXbox name is not shown on
+screen. The one accent is the brand ribbon, a green→red gradient (`#2FD07A` → `#E8343E`). It is
+used only as the 3 px focus ring around whatever has focus. The focused tile also lifts: scale 1.08,
+−16 px, −1.2°, 220 ms with `cubic-bezier(0.2,0.8,0.2,1)`. Primary actions are white pills with
+black text, secondary ones are glass pills. Numbers use a monospaced face. Text is Segoe UI.
+
+Rendering stays Direct2D/DirectWrite/WIC on the CoreWindow, before Mesa takes the window (proven
+on hardware by `setup_ui.cpp`: `SETUP_UI_BEGIN`/`END`). The UI owns a D3D11 flip swap chain and
+releases it fully before the game boots.
+
+### Increment 1: library and launch
+
+- `src/eden_uwp/ui/` holds a small framework:
+  - `renderer`: device, swap chain, D2D context, DWrite and WIC factories; text, images, rounded
+    rects, gradients.
+  - `input`: Windows.Gaming.Input polling with edge detection and repeat for D-pad and stick; A, B,
+    X, Y, LB, RB and View.
+  - `anim`: time-based easing.
+  - `strings`: pt-BR and en. The system language decides the default; `NXBOX_LANG=pt|en` in
+    `nxbox_env.txt` forces one.
+- Library data:
+  - Scan `LocalState\games` for `.nsp` and `.xci`.
+  - Read each game's title ID, name and the Switch's own square icon from its control NCA:
+    `control.nacp` plus `icon_AmericanEnglish.dat`, via `FileSys::NSP` / `FileSys::XCI`,
+    `ExtractRomFS` and `NACP`.
+  - Cache the result in `LocalState\library\<titleid>.json` and `.jpg`, so later launches never
+    reparse the files.
+- Hero:
+  - Offline: a three-stop gradient extracted from the icon (0% / 48% / 72%) with a scrim, and the
+    icon itself.
+  - Increment 3 adds the eShop banner.
+- Selecting a game and pressing A boots it: the path is handed to the existing boot path in
+  `RunGameView`. With no games, the screen explains how to add one (USB `switch/games`, or a
+  source in Settings).
+- Every step writes a `UI ...` line through `Diagnostic()`.
+
+### Increment 2: mod store (GameBanana)
+
+- Find the game: `apiv11/Util/Search/Results?_sModelName=Game&_sSearchString=<name>`, preferring
+  the "(Switch)" entry.
+- List its mods: `apiv11/Mod/Index?_aFilters[Generic_Game]=<id>&_sSort=Generic_MostDownloaded`.
+- Download a mod's files: `apiv11/Mod/<id>?_csvProperties=_aFiles`.
+- Install into `LocalState\eden\load\<TITLEID>\<mod name>\`, normalizing the archive to its
+  `romfs` / `exefs` / `cheats` folders. zip first, then 7z.
+- Enable and disable through Eden's disabled add-ons list.
+
+### Increment 3: sources and art
+
+- Settings → Sources (like browser extensions), one list:
+  - built-in GameBanana for mods;
+  - built-in titledb for eShop art by title ID (icon, banner);
+  - user-added sources in the Tinfoil shop format (`{"files":[{"url","size"}],"directories":[...]}`),
+    which download games, updates and DLC into `LocalState\games`.
+- No source of games ships configured; the user adds their own.
