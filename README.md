@@ -25,17 +25,18 @@ ARM64 code runs through a JIT, and its graphics go through OpenGL on Direct3D 12
     <td><img src="docs/assets/screenshots/p5r-cutscene.jpg" alt="Persona 5 Royal animated cutscene on Xbox Series X"></td>
     <td>
       <b>Persona 5 Royal, on an Xbox Series X.</b><br><br>
-      Title screen, animated cutscenes and the first playable area (the casino) at a steady
-      <b>30 FPS</b>, the game's own cap, with audio.<br><br>
+      It boots, plays its cutscenes and reaches the first playable area (the casino), with
+      audio. It still stutters on loads and has bugs: <b>no game is fully playable yet</b>.<br><br>
       Captured from the console with NXbox, using a copy of the game the owner bought. NXbox
       ships no games, firmware or keys.
     </td>
   </tr>
 </table>
 
-> **Experimental.** One commercial game has been played end to end through its opening so far, on a
-> console in Developer Mode. There is no compatibility list, no setup screen yet, and no public
-> release: builds come from CI.
+> **Experimental. No game is 100% playable without bugs yet.** Persona 5 Royal opens and reaches
+> gameplay on a console in Developer Mode, but booting is not the same as working well: it still
+> stutters on loads and has open bugs. There is no compatibility list, no setup screen yet, and no
+> public release: builds come from CI.
 
 ## Where it stands
 
@@ -45,14 +46,14 @@ Everything below was measured on a retail Xbox Series X in Developer Mode.
 | --- | --- |
 | CPU | Switch ARM64 code runs through the Dynarmic JIT inside the UWP sandbox, with a 128 MiB code cache |
 | Graphics | OpenGL 4.6 on Direct3D 12 through a patched Mesa `d3d12` driver, built in CI |
-| Frame pacing | Gameplay holds 30 FPS (worst frame gap 36–64 ms in the casino). Loading screens still hitch, up to a few seconds |
+| Frame pacing | 30 FPS in the stretches measured (worst frame gap 36–64 ms in the casino), but loads still freeze the picture for up to a few seconds |
 | Shaders | Per-title pipeline cache, precompiled at boot so scene changes do not compile shaders. A cache can be shared between consoles over the LAN |
 | Memory | Guest memory is committed on demand. Persona 5 Royal peaks around 4.0 GB of the 5 GiB app budget |
 | Audio | XAudio2 output |
 | Movies | Decoded on the CPU with FFmpeg |
 | Textures | ASTC decoded on the CPU. The GPU decoder is being fixed for D3D12 |
 | Input | Xbox controller, mapped to a Pro Controller |
-| Compatibility | Persona 5 Royal through its opening. Nothing else has been tested yet |
+| Compatibility | No game is fully playable yet. Persona 5 Royal boots and reaches gameplay with stutters and bugs; nothing else has been tested yet |
 
 The hard parts so far, each found on the console and written up in the [port notes](docs/nxbox-port.md):
 
