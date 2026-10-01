@@ -102,8 +102,16 @@ bool DownloadFile(const std::string& url, const std::filesystem::path& destinati
             if (have > total) {
                 std::filesystem::remove(destination, ec);
             }
-            Diagnostic(fmt::format("DOWNLOAD_START attempt={} have={} MiB total={} MiB", attempt,
-                                   have >> 20, total >> 20));
+            const auto space = std::filesystem::space(destination.parent_path(), ec);
+            if (!ec && space.available < total - have) {
+                // Retrying cannot help until something is deleted on the console.
+                Diagnostic(fmt::format("DOWNLOAD_NO_SPACE need={} MiB free={} MiB",
+                                       (total - have) >> 20, space.available >> 20));
+                return false;
+            }
+            Diagnostic(fmt::format("DOWNLOAD_START attempt={} have={} MiB total={} MiB free={} MiB",
+                                   attempt, have >> 20, total >> 20,
+                                   ec ? 0 : space.available >> 20));
             Transfer(client, uri, destination, total);
             continue;
         } catch (const winrt::hresult_error& error) {
