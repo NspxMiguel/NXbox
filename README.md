@@ -8,55 +8,102 @@ SPDX-License-Identifier: GPL-3.0-or-later
 
 # NXbox
 
-An experimental Nintendo Switch emulator port for **Xbox Series X**. Built on Eden, with a
-controller-first, minimal-setup experience as its goal.
+**A Nintendo Switch emulator that runs natively on an Xbox Series X.** NXbox is a port of the
+[Eden](https://git.eden-emu.dev/eden-emu/eden) emulator to the Xbox's UWP sandbox: the Switch's
+ARM64 code runs through a JIT, and its graphics go through OpenGL on Direct3D 12.
 
-[Development status](docs/nxbox-port.md) ·
-[Build workflow](https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml) ·
-[Source provenance](#credits-and-lineage) · [License](LICENSE.txt)
+[Status](#where-it-stands) · [How it works](#how-it-works) · [Port notes](docs/nxbox-port.md) ·
+[Builds](https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml) ·
+[Credits](#credits-and-lineage) · [License](LICENSE.txt)
 
-> **Early development. No playable Xbox release is available.** The original homebrew boots, runs at
-> 45 to 60 FPS on a Series X, responds to controller input and exits cleanly. A user-owned
-> commercial game (Persona 5 Royal) now boots and presents frames at a steady 30 FPS (its own
-> frame cap, 100% emulation speed) for the first minutes measured; it has not been played
-> through, so no compatibility is claimed.
+<table>
+  <tr>
+    <td><img src="docs/assets/screenshots/p5r-title.jpg" alt="Persona 5 Royal title screen on Xbox Series X"></td>
+    <td><img src="docs/assets/screenshots/p5r-casino.jpg" alt="Persona 5 Royal casino gameplay on Xbox Series X"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/screenshots/p5r-cutscene.jpg" alt="Persona 5 Royal animated cutscene on Xbox Series X"></td>
+    <td>
+      <b>Persona 5 Royal, on an Xbox Series X.</b><br><br>
+      Title screen, animated cutscenes and the first playable area (the casino) at a steady
+      <b>30 FPS</b>, the game's own cap, with audio.<br><br>
+      Captured from the console with NXbox, using a copy of the game the owner bought. NXbox
+      ships no games, firmware or keys.
+    </td>
+  </tr>
+</table>
+
+> **Experimental.** One commercial game has been played end to end through its opening so far, on a
+> console in Developer Mode. There is no compatibility list, no setup screen yet, and no public
+> release: builds come from CI.
 
 ## Where it stands
 
-Results below were measured on an Xbox Series X in Dev Mode.
+Everything below was measured on a retail Xbox Series X in Developer Mode.
 
-| Area                     | Current state                                                                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| CPU (Dynarmic JIT)       | Original ARM64 homebrew executed and shut down cleanly on Xbox                                                                       |
-| Guest memory             | 4 GiB page table committed on demand; sparse probe passed on Xbox                                                                    |
-| OpenGL on D3D12 (Mesa)   | OpenGL 4.6 clear, presentation and compute readback passed on Xbox                                                                   |
-| Worker-thread GL context | Patched Mesa passed a shared-context compute test on Xbox                                                                            |
-| Homebrew boot            | Initializes all services, connects the Xbox controller, reaches its ready state                                                      |
-| Game rendering           | Homebrew presents 45 to 60 FPS on Xbox (2 minute run); a commercial game presents 30 FPS at 100% speed in a short boot run ([notes](docs/nxbox-port.md)) |
-| Game input               | Remote A and Plus reach the guest and exit cleanly (homebrew); not yet exercised with a physical pad                                 |
-| Audio                    | Not implemented on Xbox (null backend)                                                                                               |
-| Game compatibility       | Unverified; no full-library compatibility claim                                                                                      |
+| Area | State |
+| --- | --- |
+| CPU | Switch ARM64 code runs through the Dynarmic JIT inside the UWP sandbox, with a 128 MiB code cache |
+| Graphics | OpenGL 4.6 on Direct3D 12 through a patched Mesa `d3d12` driver, built in CI |
+| Frame pacing | Gameplay holds 30 FPS (worst frame gap 36–64 ms in the casino). Loading screens still hitch, up to a few seconds |
+| Shaders | Per-title pipeline cache, precompiled at boot so scene changes do not compile shaders. A cache can be shared between consoles over the LAN |
+| Memory | Guest memory is committed on demand. Persona 5 Royal peaks around 4.0 GB of the 5 GiB app budget |
+| Audio | XAudio2 output |
+| Movies | Decoded on the CPU with FFmpeg |
+| Textures | ASTC decoded on the CPU. The GPU decoder is being fixed for D3D12 |
+| Input | Xbox controller, mapped to a Pro Controller |
+| Compatibility | Persona 5 Royal through its opening. Nothing else has been tested yet |
 
-The standalone probe presented about 60 clear frames per second. That is the driver's presentation
-rate, **not** game performance. No game FPS has been measured.
+The hard parts so far, each found on the console and written up in the [port notes](docs/nxbox-port.md):
 
-## The experience we are building
+- **Black screen for weeks**: Mesa's D3D12 driver began a pipeline-statistics query twice, so every
+  command list failed to close and no GPU work ever ran. A known-color readback self-test exposed it.
+- **Out of memory at 5 GiB**: the kernel zeroed guest memory with `memset`, committing the whole heap.
+  On Xbox it now decommits pages instead.
+- **Stutter at every scene change**: shaders compiled on first use. The pipeline cache is now
+  precompiled on the renderer's own context, because a second GL context cannot be created on Mesa
+  under UWP.
+- **System starvation**: FFmpeg's default thread count starved the console's own services until the
+  Device Portal stopped answering. It is now capped.
 
-- A game library designed for the Xbox controller.
-- Guided, one-time import of user-provided content and required configuration.
-- Per-game mod management and save preservation across updates.
-- Upscaling options: inherited FSR 1 code, with newer techniques under investigation.
-- Useful diagnostics and conservative defaults that reduce manual tweaking.
+## How it works
 
-These are development goals. FSR 2/3, frame generation, and commercial-game support are **not
-implemented or validated on Xbox**. Compatibility will be reported per title.
+```mermaid
+flowchart LR
+    game["Switch game (.nsp)"] --> core["Eden core<br/>HLE services · Dynarmic JIT"]
+    core --> gl["OpenGL 4.6 renderer"]
+    gl --> mesa["Mesa d3d12 (patched)"]
+    mesa --> d3d["Direct3D 12 on Xbox"]
+    core --> audio["XAudio2"]
+    pad["Xbox controller"] --> core
+```
+
+- `src/eden_uwp/`: the Xbox frontend. It boots the game, owns the window and the controller, and
+  writes `eden_uwp_diag.txt` with frame pacing, memory and stall attribution.
+- `tools/nxbox/patch_mesa_uwp.py`: the Mesa patches, applied to a pinned
+  [aerisarn/mesa-uwp](https://github.com/aerisarn/mesa-uwp) in CI.
+- `tools/shader-share/`: a small server that keeps the largest valid shader cache per title.
+
+## Trying it
+
+You need an Xbox Series X|S in **Developer Mode** and your own dumps:
+
+1. Install a package from the
+   [package workflow](https://github.com/NspxMiguel/NXbox/actions/workflows/package-nxbox.yml)
+   through the Device Portal.
+2. Put `prod.keys` and `title.keys` in the app's `LocalState\eden\keys`.
+3. Put your game in `LocalState\games` (`.nsp`; convert `.nsz` with `nsz -D`), and its relative path
+   in `LocalState\game.txt`, for example `games\mygame.nsp`.
+4. Launch NXbox from the dashboard.
+
+Details and the diagnostic switches are in the [port notes](docs/nxbox-port.md#booting-a-game-from-localstate-2026-09-25).
+NXbox does not bundle games, firmware or decryption keys, and never will.
 
 ## Development
 
-Follow the [port notes and validation gates](docs/nxbox-port.md) and
-[UWP build setup](docs/uwp_build.md). The root build requires CMake 3.31 or newer.
-
-The standalone memory-policy checks can run without the emulator dependency graph:
+Read the [port notes](docs/nxbox-port.md) and the [UWP build setup](docs/uwp_build.md). The root
+build requires CMake 3.31 or newer. The standalone memory-policy checks run without the emulator's
+dependency graph:
 
 ```sh
 cmake -S tests/port -B build-port-tests
@@ -64,25 +111,23 @@ cmake --build build-port-tests --config Release --parallel 2
 ctest --test-dir build-port-tests -C Release --output-on-failure
 ```
 
-NXbox does not bundle games, firmware, or decryption keys. Development artifacts are experimental
-and are not playable releases.
-
 ## Credits and lineage
 
 **NXbox is a fork, not an emulator written from scratch.**
 
-- [Eden](https://git.eden-emu.dev/eden-emu/eden) provides the emulator foundation.
-- [juanresendiz813/eden-xbox](https://github.com/juanresendiz813/eden-xbox) provides the starting
+- [Eden](https://git.eden-emu.dev/eden-emu/eden) provides the emulator.
+- [juanresendiz813/eden-xbox](https://github.com/juanresendiz813/eden-xbox) provided the starting
   Xbox/UWP work, including the imported boot frontend.
-- The **Yuzu** and **Sudachi** projects and their contributors built the earlier foundations from
-  which Eden derives.
-- Third-party libraries retain their own licenses and copyright notices.
+- [aerisarn/mesa-uwp](https://github.com/aerisarn/mesa-uwp) provides Mesa for UWP.
+- The **yuzu** and **Sudachi** projects and their contributors built the foundations Eden derives
+  from.
+- Third-party libraries keep their own licenses and copyright notices.
 
 Exact source revisions are recorded in the [provenance notes](docs/nxbox-port.md#source-provenance).
-NXbox is an independent project and does not imply endorsement by its upstream projects, Nintendo,
-or Microsoft. The cover artwork was created for NXbox.
+NXbox is an independent project. It is not affiliated with or endorsed by its upstream projects,
+Nintendo, Microsoft, Atlus or SEGA. The artwork was created for NXbox.
 
 ## License
 
 GNU GPL version 3 or later; see [LICENSE.txt](LICENSE.txt). Existing source notices and third-party
-licenses are retained.
+licenses are kept.
