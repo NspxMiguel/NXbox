@@ -177,3 +177,19 @@ Focus model (owner, 2026-10-01): three vertical layers, as on the Xbox dashboard
 3. Up again moves focus to the top nav (Biblioteca, Configurações).
 
 Down goes back one layer. X (Mods) and Y (Detalhes) also work directly from the rail.
+
+### Increment 4: SwitchSaveSync (requested 2026-10-01)
+
+The first-run setup asks "Sincronizar saves com o SwitchSaveSync?". The same toggle lives in
+Settings. The goal is the same cloud layout the Switch homebrew uses, so a real Switch and NXbox
+share one save:
+
+- Google Drive through the OAuth device flow: the TV shows the code, the phone signs in. The
+  scope is `drive.file`, which only shows files created by the same OAuth client, so NXbox must
+  use SwitchSaveSync's client ID. WebDAV comes later.
+- Layout: `Nintendo Switch Saves/<game folder>/<account folder>/`, loose files, same names as
+  SwitchSaveSync (`core/drive.c`, `core/syncjob.h` in the SwitchSaveSync repo).
+- Eden saves live in `nand/user/save/0000000000000000/<user>/<TITLEID>/`.
+- Download before the game boots (with a progress bar) and upload after it closes.
+- Conflicts use SwitchSaveSync's fingerprint rule: if both sides changed, ask; never overwrite
+  silently.
