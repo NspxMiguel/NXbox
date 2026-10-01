@@ -44,6 +44,9 @@ add_executable(eden-uwp WIN32
     ui/savesync_ui.h
     ui/strings.cpp
     ui/strings.h
+    ui/updater.cpp
+    ui/updater.h
+    ui/update_version.h
     ui/theme.h
     ui/widgets.cpp
     ui/widgets.h

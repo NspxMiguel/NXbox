@@ -117,6 +117,13 @@ enum class Text {
     SyncResultNotConfigured,
     SyncSkip,
     SyncExpiresIn,
+    UpdateAvailable,
+    UpdateDownloading,
+    UpdateInstalling,
+    UpdateRestarting,
+    UpdateFailed,
+    UpdateMissingPortal,
+    UpdateAction,
     Count,
 };
 

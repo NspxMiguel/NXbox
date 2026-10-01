@@ -1,5 +1,15 @@
 name: Package NXbox diagnostic
 on:
+  workflow_call:
+    inputs:
+      package_version:
+        required: true
+        type: string
+    secrets:
+      NXBOX_PFX_BASE64:
+        required: true
+      NXBOX_PFX_PASSWORD:
+        required: true
   workflow_run:
     workflows: [Build NXbox for Xbox Series X]
     types: [completed]
@@ -25,14 +35,16 @@ permissions:
 jobs:
   package:
     if:
-      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+      inputs.package_version != '' || github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: windows-2025
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.package_version != '' && github.sha || 'main' }}
       - name: Validate source build
+        if: inputs.package_version == ''
         id: source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -54,7 +66,7 @@ jobs:
         with:
           name: nxbox-uwp-build
           path: build-artifact
-          run-id: ${{ steps.source.outputs.run_id }}
+          run-id: ${{ steps.source.outputs.run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Test package staging
         run: python -m unittest discover -s tests/port -p test_package.py -v
@@ -62,7 +74,8 @@ jobs:
         env:
           NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
           NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
-          SOURCE_REVISION: ${{ steps.source.outputs.revision }}
+          SOURCE_REVISION: ${{ steps.source.outputs.revision || github.sha }}
+          RELEASE_VERSION: ${{ inputs.package_version }}
           PACKAGE_KIND: ${{ inputs.kind || 'game' }}
           MESA_RUN: ${{ inputs.mesa_run || '35928958265' }}
           GH_TOKEN: ${{ github.token }}
@@ -76,16 +89,18 @@ jobs:
             python tools/nxbox/prepare_dxil.py --output $executables[0].DirectoryName
             if ($LASTEXITCODE -ne 0) { throw 'DXIL runtime staging failed' }
           }
-          python tools/nxbox/package_uwp.py --kind "$env:PACKAGE_KIND" --exe $executables[0].FullName --version "0.3.$env:GITHUB_RUN_NUMBER.0" --output out
+          $version = if ($env:RELEASE_VERSION) { $env:RELEASE_VERSION } else { "0.3.$env:GITHUB_RUN_NUMBER.0" }
+          python tools/nxbox/package_uwp.py --kind "$env:PACKAGE_KIND" --exe $executables[0].FullName --version "$version" --output out
           if ($LASTEXITCODE -ne 0) { throw 'Package creation failed' }
           @{
             emulatorRevision = $env:SOURCE_REVISION
             packagingRevision = (git rev-parse HEAD)
-            diagnosticOnly = $true
+            diagnosticOnly = -not [bool]$env:RELEASE_VERSION
+            packageVersion = $version
           } | ConvertTo-Json | Set-Content out/build-info.json
       - uses: actions/upload-artifact@v4
         with:
-          name: nxbox-diagnostic
+          name: ${{ inputs.package_version != '' && 'nxbox-release' || 'nxbox-diagnostic' }}
           retention-days: 14
           if-no-files-found: error
           path: |

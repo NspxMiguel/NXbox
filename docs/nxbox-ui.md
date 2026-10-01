@@ -322,3 +322,14 @@ The backend is `save_sync.h/.cpp`; `ui/savesync_ui.cpp` is the part the player s
 - A game launched through `game.txt` with `skip_library.txt` has no title ID known to the UI and is
   not synced.
 - Log lines: `UI setup ...`, `UI savesync ...`.
+
+### Over-the-air updates (2026-10-01)
+
+The library checks the latest GitHub release on an MTA worker. A newer package
+adds an update pill to the right of the top navigation; move right from Settings
+to focus it. Only A on that pill begins the download and Device Portal install.
+A modal shows download percentage, installation/restart status, or a retryable
+error. The worker cannot launch an install from the background check, and the
+modal blocks game launches while a deployment is pending. PT and EN strings live
+in the existing table. See [NXbox updates](nxbox-updates.md) for the release/tag
+contract, portal.json schema, CSRF protocol and real-console validation limits.

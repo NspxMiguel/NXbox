@@ -147,6 +147,20 @@ constexpr Entry kTable[] = {
     {L"A sincronização não está configurada.", L"Sync is not configured."}, // SyncResultNotConfigured
     {L"Jogar sem sincronizar", L"Play without syncing"}, // SyncSkip
     {L"O código vale por", L"The code is valid for"}, // SyncExpiresIn
+    {L"Atualização disponível", L"Update available"},    // UpdateAvailable
+        {L"Baixando atualização", L"Downloading update"},    // UpdateDownloading
+        {L"Instalando. O app será reiniciado.",
+         L"Installing. The app will restart."}, // UpdateInstalling
+        {L"Atualização enviada ao console. O app será reiniciado.",
+         L"Update sent to the console. The app will restart."}, // UpdateRestarting
+        {L"Não foi possível atualizar. Verifique o Device Portal e pressione A para tentar de novo "
+         L"ou B para voltar.",
+         L"Could not update. Check Device Portal and press A to retry or B to go back."}, // UpdateFailed
+        {L"Falta portal.json na pasta LocalState, com host, port, user e pass do Device Portal. "
+         L"Adicione o arquivo e pressione A para tentar de novo.",
+         L"portal.json is missing from LocalState, with the Device Portal host, port, user and "
+         L"pass. Add the file and press A to retry."}, // UpdateMissingPortal
+        {L"Atualizar", L"Update"},                     // UpdateAction
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

@@ -34,6 +34,7 @@
 #include "eden_uwp/ui/savesync_ui.h"
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/theme.h"
+#include "eden_uwp/ui/updater.h"
 #include "eden_uwp/ui/widgets.h"
 
 namespace EdenXbox::Ui {
@@ -480,6 +481,17 @@ private:
     }
 
     void HandleInput(Clock::time_point now) {
+        if (update_open_) {
+            const auto state = updater_.State();
+            if (state == UpdateState::Failed || state == UpdateState::MissingPortal) {
+                if (input_.Pressed(Button::B))
+                    update_open_ = false;
+                else if (input_.Pressed(Button::A))
+                    updater_.StartInstall();
+            }
+            // Never start a game or another download while replacing the running package.
+            return;
+        }
         if (details_open_) {
             if (input_.Pressed(Button::A) || input_.Pressed(Button::B)) {
                 details_open_ = false;
@@ -505,14 +517,17 @@ private:
             MoveVertical(1);
         }
         // X and Y are shortcuts for the focused game, from any layer.
-        if (input_.Pressed(Button::X) && HasGame()) {
+        if (input_.Pressed(Button::X) && HasGame() && !update_focused_) {
             OpenMods();
         }
-        if (input_.Pressed(Button::Y) && HasGame()) {
+        if (input_.Pressed(Button::Y) && HasGame() && !update_focused_) {
             details_open_ = true;
         }
         if (input_.Pressed(Button::A)) {
             Activate(now);
+            if (update_open_) {
+                return;
+            }
         }
         if (input_.Pressed(Button::B)) {
             Diagnostic("UI library quit");
@@ -521,6 +536,7 @@ private:
     }
 
     void SetTab(Tab tab) {
+        update_focused_ = false;
         tab_ = tab;
         if (tab_ == Tab::Settings) {
             layer_ = Layer::Nav;
@@ -541,6 +557,15 @@ private:
             action_ = std::clamp(action_ + direction, 0, kActionCount - 1);
             break;
         case Layer::Nav:
+            if (update_focused_) {
+                if (direction < 0)
+                    update_focused_ = false;
+                break;
+            }
+            if (direction > 0 && tab_ == Tab::Settings && HasUpdate()) {
+                update_focused_ = true;
+                break;
+            }
             // Focus on a tab selects it.
             SetTab(static_cast<Tab>(std::clamp(static_cast<int>(tab_) + direction, 0,
                                                kTabCount - 1)));
@@ -549,6 +574,7 @@ private:
     }
 
     void MoveVertical(int direction) {
+        update_focused_ = false;
         if (tab_ == Tab::Settings && layer_ == Layer::Rail) {
             // The settings list: up and down walk the rows, and up from the first leaves it.
             if (direction < 0) {
@@ -580,6 +606,11 @@ private:
     }
 
     void Activate(Clock::time_point now) {
+        if (layer_ == Layer::Nav && update_focused_ && HasUpdate()) {
+            update_open_ = true;
+            updater_.StartInstall();
+            return;
+        }
         switch (layer_) {
         case Layer::Rail:
             if (tab_ == Tab::Settings) {
@@ -743,12 +774,22 @@ private:
         } else {
             DrawSettings();
         }
-        DrawTabs(renderer_, static_cast<int>(tab_), layer_ == Layer::Nav);
+        DrawTabs(renderer_, static_cast<int>(tab_), layer_ == Layer::Nav && !update_focused_);
         DrawClock(renderer_);
-        DrawToast(now);
+        if (HasUpdate()) {
+            DrawUpdatePill();
+            // Keep feedback from Settings visible without covering the update pill.
+            renderer_.SetLocalTransform(D2D1::Matrix3x2F::Translation(0.0f, 100.0f));
+            DrawToast(now);
+            renderer_.ClearLocalTransform();
+        } else {
+            DrawToast(now);
+        }
         if (details_open_) {
             DrawDetails();
         }
+        if (update_open_)
+            DrawUpdateSheet();
         DrawHints(renderer_, CurrentHints()); // above the sheet's veil: the sheet's own hint says how to close it
         if (launching_) {
             const float progress =
@@ -1098,7 +1139,59 @@ private:
                          std::clamp(std::min(elapsed / 0.15f, remaining / 0.22f), 0.0f, 1.0f));
     }
 
+    bool HasUpdate() const {
+        const auto state = updater_.State();
+        return state != UpdateState::Checking && state != UpdateState::None;
+    }
+
+    void DrawUpdatePill() {
+        const std::wstring label = Tr(Text::UpdateAvailable);
+        const float width = PillWidth(renderer_, label, false);
+        const float right = kCanvasWidth - kMargin - 190.0f;
+        DrawChoicePill(renderer_,
+                       RectF(right - width, kTopCenter - kPillHeight / 2.0f, right,
+                             kTopCenter + kPillHeight / 2.0f),
+                       label, false, layer_ == Layer::Nav && update_focused_);
+    }
+
+    void DrawUpdateSheet() {
+        const auto state = updater_.State();
+        Text message = Text::UpdateDownloading;
+        if (state == UpdateState::Installing)
+            message = Text::UpdateInstalling;
+        else if (state == UpdateState::Restarting)
+            message = Text::UpdateRestarting;
+        else if (state == UpdateState::Failed)
+            message = Text::UpdateFailed;
+        else if (state == UpdateState::MissingPortal)
+            message = Text::UpdateMissingPortal;
+        DrawSheet(renderer_,
+                  RectF(kSheetLeft, kSheetTop, kSheetLeft + kSheetWidth, kSheetTop + kSheetHeight));
+        renderer_.DrawString(Tr(Text::UpdateAvailable), Font::Heading,
+                             RectF(476.0f, 290.0f, 1444.0f, 380.0f), Theme::kText);
+        renderer_.DrawString(Tr(message), Font::Body, RectF(476.0f, 400.0f, 1444.0f, 610.0f),
+                             Theme::kTextSecondary);
+        if (state == UpdateState::Downloading) {
+            DrawProgressBar(renderer_, RectF(476.0f, 650.0f, 1250.0f, 664.0f), updater_.Progress());
+            renderer_.DrawString(
+                std::to_wstring(static_cast<int>(updater_.Progress() * 100)) + L"%", Font::MetaMono,
+                RectF(1280.0f, 630.0f, 1444.0f, 686.0f), Theme::kText);
+        }
+    }
+
     std::vector<Hint> CurrentHints() const {
+        if (update_open_) {
+            const auto state = updater_.State();
+            if (state == UpdateState::Failed || state == UpdateState::MissingPortal) {
+                return {{Theme::kButtonA, L"A", Tr(Text::UpdateAction)},
+                        {Theme::kButtonB, L"B", Tr(Text::HintBack)}};
+            }
+            return {};
+        }
+        if (layer_ == Layer::Nav && update_focused_) {
+            return {{Theme::kButtonA, L"A", Tr(Text::UpdateAction)},
+                    {Theme::kButtonB, L"B", Tr(Text::HintQuit)}};
+        }
         if (details_open_) {
             return {{Theme::kButtonB, L"B", Tr(Text::HintBack)}};
         }
@@ -1231,6 +1324,9 @@ private:
     CoreWindow window_;
     Input input_;
     std::filesystem::path local_state_;
+    Updater updater_;
+    bool update_focused_ = false;
+    bool update_open_ = false;
     BannerSource banners_; // the eShop banners of the hero, fetched off the render thread
     std::vector<int> banner_order_; // games whose banner is on the GPU, the oldest first
 

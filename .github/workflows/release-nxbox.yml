@@ -1,0 +1,51 @@
+name: Release NXbox
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: read
+  actions: read
+# Serialize version validation and publication; a release never replaces a newer one.
+concurrency:
+  group: nxbox-release
+  cancel-in-progress: false
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.version.outputs.package_version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test release version policy
+        run: python -m unittest discover -s tests/port -p test_release_version.py -v
+      - name: Validate increasing package version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > releases.json
+          python tools/nxbox/release_version.py "$GITHUB_REF_NAME" releases.json >> "$GITHUB_OUTPUT"
+  build:
+    needs: version
+    uses: ./.github/workflows/build-nxbox.yml
+  package:
+    needs: [version, build]
+    uses: ./.github/workflows/package-nxbox.yml
+    with:
+      package_version: ${{ needs.version.outputs.package_version }}
+    secrets: inherit
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: nxbox-release
+          path: out
+      - name: Publish signed package and build information
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/*.appx out/build-info.json --repo "$GITHUB_REPOSITORY" --verify-tag --latest --generate-notes
