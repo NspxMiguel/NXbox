@@ -193,3 +193,46 @@ share one save:
 - Download before the game boots (with a progress bar) and upload after it closes.
 - Conflicts use SwitchSaveSync's fingerprint rule: if both sides changed, ask; never overwrite
   silently.
+
+### Increment 1 status (2026-10-01)
+
+Written but not yet compiled on Windows or run: CI and the console are the first to see this code.
+It was syntax-checked against stand-in headers and its logic (focus layers, drawing, the `.nsz`
+flow) was run on a host with fakes.
+
+- Code: `src/eden_uwp/ui/` (`renderer`, `input`, `anim`, `theme`, `strings`, `library`,
+  `library_screen`). The entry point is `Ui::RunLibrary(window)`; `RunGameView` calls it before
+  Mesa takes the window. It returns the chosen game's path, which `RunGameView` writes to
+  `LocalState\game.txt`, or an empty string, which keeps the old boot (`game.txt`, then the
+  bundled homebrew). Every step logs a `UI ...` line.
+- Look: the approved 1920x1080 preview, with the icon-derived gradient standing in for the eShop
+  banner. The nav is one dark glass capsule with the selected tab as a white pill; the hero
+  (gradient and scrim) fills the top 760 px; the rail sits on black below it.
+- Navigation, as the owner changed it after the plan above:
+  - The nav has two tabs only, Library and Settings (LB/RB switch). Mods always belong to a game,
+    so they are reached from the game's hero.
+  - Focus moves through three layers: the game rail (default; A launches), the hero pills of the
+    focused game (Play, Mods, Details), then the nav. Up goes one layer up, Down one down. The
+    ribbon ring is drawn only on the focused element of the active layer. X (Mods) and Y
+    (Details) work from the rail too.
+  - The focused tile always stands at the left margin and the rail scrolls under it, so the name
+    under the tile never meets the hint bar.
+  - Mods only shows a notice until Increment 2. Details is a sheet with the package's title ID,
+    format, size and file. A on the "add games" tile scans the folder again.
+- `.nsz` packages: the scan converts each `.nsz` in `LocalState\games` to a `.nsp` next to it
+  (`FileSys::ConvertNszToNsp`, `core/file_sys/nsz.h`) before reading any metadata, and the screen
+  shows the game's name, the percentage and a progress bar meanwhile. The converter writes
+  `<name>.nsp.partial`, renamed when complete, and the `.nsz` is deleted only after that. A failed
+  or cancelled (B) conversion removes the partial file and keeps the `.nsz`; an `.nsz` that already
+  has a `.nsp` is left alone. Log lines: `UI nsz convert <file> ok|fail <error>|skip ...`.
+- Beyond the plan:
+  - `LocalState\skip_library.txt` skips the screen, so unattended runs that boot from `game.txt`
+    do not wait for A.
+  - A game chosen in the library ignores `game.url`, which belongs to whatever `game.txt` named
+    before: downloading it over the chosen file would replace the player's game.
+  - The empty state says what works today (copy files with Device Portal, press A to scan); the USB
+    import and the sources of Increment 3 are not wired to the screen yet. When the folder has
+    games but none could be opened for want of keys, it says that instead of "no games yet".
+- To check on the console first: that Mesa gets the window after the library's swap chain is
+  released (`UI renderer released`, then the normal `GAME_*` lines); that the icons decode and the
+  hero gradients look right; that Segoe UI, the monospaced face and the CJK fallback exist.

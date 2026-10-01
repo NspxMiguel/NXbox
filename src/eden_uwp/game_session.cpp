@@ -38,6 +38,7 @@
 #include "eden_uwp/gamepad.h"
 #include "eden_uwp/mesa_window.h"
 #include "eden_uwp/setup_ui.h"
+#include "eden_uwp/ui/library_screen.h"
 #include "eden_uwp/usb_library.h"
 #include "video_core/gpu.h"
 #include "video_core/rasterizer_interface.h"
@@ -64,8 +65,10 @@ struct Lifecycle {
 
 // LocalState\game.txt names the file to boot, relative to LocalState (for example
 // "games\\p5r.nsp"). If LocalState\game.url also exists, that URL is downloaded to that file first
-// (resuming a partial download). Without game.txt the bundled homebrew boots.
-std::string ResolveGamePath(const std::string& bundled) {
+// (resuming a partial download), unless the game was just chosen from the library: game.url then
+// belongs to whatever game.txt named before, and downloading it over the chosen file would replace
+// the player's game. Without game.txt the bundled homebrew boots.
+std::string ResolveGamePath(const std::string& bundled, bool chosen_in_library) {
     namespace fs = std::filesystem;
     const fs::path local(
         winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
@@ -86,8 +89,12 @@ std::string ResolveGamePath(const std::string& bundled) {
         return bundled;
     }
     const fs::path target = local / selected;
-    const std::string url =
-        fs::exists(local / "game.url") ? read_line(local / "game.url") : std::string{};
+    if (chosen_in_library && fs::exists(local / "game.url")) {
+        Diagnostic("GAME_URL ignored, the game was chosen in the library");
+    }
+    const std::string url = !chosen_in_library && fs::exists(local / "game.url")
+                                ? read_line(local / "game.url")
+                                : std::string{};
     if (!url.empty() && !DownloadFile(url, target)) {
         // The download source can go away (the LAN host was reinstalled); a copy that is
         // already on the console is still usable.
@@ -105,8 +112,23 @@ std::string ResolveGamePath(const std::string& bundled) {
     return target.string();
 }
 
+// Writes the game the player chose in the library into LocalState\game.txt, in the format
+// ResolveGamePath reads: a path relative to LocalState. A path outside LocalState is written as it
+// is, which ResolveGamePath resolves just as well.
+void RememberChosenGame(const std::filesystem::path& local, const std::string& chosen) {
+    namespace fs = std::filesystem;
+    const fs::path game(std::wstring_view(winrt::to_hstring(chosen)));
+    fs::path selected = game.lexically_relative(local);
+    if (selected.empty() || selected.begin()->native() == L"..") {
+        selected = game;
+    }
+    std::ofstream(local / "game.txt", std::ios::trunc) << selected.string() << '\n';
+    Diagnostic("GAME_CHOSEN " + selected.string());
+}
+
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
-             const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle) {
+             const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle,
+             bool chosen_in_library) {
     Diagnostic("GAME_BEGIN");
     const auto memory_stage = [](const char* stage) {
         Diagnostic(fmt::format("MEM {} commit={} MiB limit={} MiB", stage,
@@ -114,7 +136,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                winrt::Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
     };
     memory_stage("begin");
-    const std::string path = ResolveGamePath(bundled_path);
+    const std::string path = ResolveGamePath(bundled_path, chosen_in_library);
     {
         // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a
         // run.
@@ -409,6 +431,21 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         ShowSetupScreen(window, "USB drive_found=" + std::string(scan.drive_found ? "yes" : "no") +
                                     " games=" + std::to_string(scan.games.size()));
     }
+    // The library: the player picks a game on this same window, drawn with Direct2D/DirectWrite
+    // before Mesa/OpenGL takes the window over. The screen releases every graphics object before it
+    // returns. A chosen game is written to game.txt and booted by the normal path below; leaving
+    // with B boots whatever game.txt names, or the bundled homebrew, exactly as before.
+    // LocalState\skip_library.txt skips the screen, for unattended runs where nobody can press A.
+    bool chosen_in_library = false;
+    const std::filesystem::path local_state(
+        winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+    if (!std::filesystem::exists(local_state / "skip_library.txt")) {
+        const std::string chosen = Ui::RunLibrary(window);
+        if (!chosen.empty()) {
+            RememberChosenGame(local_state, chosen);
+            chosen_in_library = true;
+        }
+    }
     std::atomic<bool> closed{false};
     std::atomic<bool> done{false};
     const auto close_token = window.Closed([&](const auto&, const auto&) { closed.store(true); });
@@ -453,7 +490,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             done.store(true, std::memory_order_release);
         };
         try {
-            RunGame(*graphics, path, closed, gamepad, lifecycle);
+            RunGame(*graphics, path, closed, gamepad, lifecycle, chosen_in_library);
         } catch (const winrt::hresult_error& error) {
             Diagnostic("GAME_FAIL " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {
