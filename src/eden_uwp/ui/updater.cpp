@@ -94,7 +94,8 @@ void RequireSuccess(const HttpResponseMessage& response) {
 winrt::hstring CaptureCsrf(const HttpResponseMessage& response,
                            const HttpBaseProtocolFilter& filter, const Uri& base) {
     winrt::hstring cookie;
-    if (response.Headers().TryGetValue(L"Set-Cookie", cookie)) {
+    if (response.Headers().HasKey(L"Set-Cookie")) {
+        cookie = response.Headers().Lookup(L"Set-Cookie");
         std::wstring lower(cookie);
         std::transform(lower.begin(), lower.end(), lower.begin(),
                        [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
@@ -214,7 +215,7 @@ void Updater::Check() {
             }
             const std::wstring expected = L"NXbox_game_" + version_text + L"_x64.appx";
             for (const auto& value : release.GetNamedArray(L"assets")) {
-                const auto asset = value.GetObject();
+                const auto asset = value.as<winrt::Windows::Data::Json::JsonObject>();
                 const std::wstring url(asset.GetNamedString(L"browser_download_url", L""));
                 const double size = asset.GetNamedNumber(L"size", 0);
                 if (std::wstring(asset.GetNamedString(L"name", L"")) == expected &&
