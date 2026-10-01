@@ -372,7 +372,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             // Host work in the window, as total/longest milliseconds and call count, so each
             // hitch can be traced to shader builds, texture uploads, decoding or cache eviction.
             std::string stall_line = "GAME_STALL";
-            constexpr std::array<std::pair<NxboxStall::Kind, const char*>, 10> stall_kinds{{
+            constexpr std::array<std::pair<NxboxStall::Kind, const char*>, 16> stall_kinds{{
                 {NxboxStall::Kind::Shader, "shader"},
                 {NxboxStall::Kind::Upload, "upload"},
                 {NxboxStall::Kind::Convert, "convert"},
@@ -383,6 +383,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 {NxboxStall::Kind::Io, "io"},
                 {NxboxStall::Kind::Aes, "aes"},
                 {NxboxStall::Kind::GpuBusy, "gpu"},
+                {NxboxStall::Kind::GlSync, "glsync"},
+                {NxboxStall::Kind::GlFinish, "glfinish"},
+                {NxboxStall::Kind::Readback, "readback"},
+                {NxboxStall::Kind::Query, "query"},
+                {NxboxStall::Kind::Decommit, "decommit"},
+                {NxboxStall::Kind::Present, "present"},
             }};
             for (const auto& [kind, name] : stall_kinds) {
                 const auto taken = NxboxStall::Take(kind);

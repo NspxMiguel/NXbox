@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/assert.h"
+#ifdef NXBOX_UWP
+#include "common/nxbox_stall.h"
+#endif
 
 #include <glad/glad.h>
 
@@ -35,7 +38,12 @@ void GLInnerFence::Wait() {
         return;
     }
     ASSERT(sync_object.handle != 0);
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::GlSync};
+    glClientWaitSync(sync_object.handle, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+#else
     glClientWaitSync(sync_object.handle, 0, GL_TIMEOUT_IGNORED);
+#endif
 }
 
 FenceManagerOpenGL::FenceManagerOpenGL(VideoCore::RasterizerInterface& rasterizer_,

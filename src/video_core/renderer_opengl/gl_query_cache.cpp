@@ -9,6 +9,9 @@
 #include <glad/glad.h>
 
 #include "core/core.h"
+#ifdef NXBOX_UWP
+#include "common/nxbox_stall.h"
+#endif
 #include "video_core/engines/maxwell_3d.h"
 #include "video_core/memory_manager.h"
 #include "video_core/renderer_opengl/gl_query_cache.h"
@@ -77,6 +80,13 @@ HostCounter::~HostCounter() {
 }
 
 void HostCounter::EndQuery() {
+#ifdef NXBOX_UWP
+    const bool needs_flush = !cache.AnyCommandQueued();
+    glEndQuery(GetTarget(type));
+    if (needs_flush) {
+        glFlush();
+    }
+#else
     if (!cache.AnyCommandQueued()) {
         // There are chances a query waited on without commands (glDraw, glClear, glDispatch). Not
         // having any of these causes a lock. glFlush is considered a command, so we can safely wait
@@ -84,9 +94,13 @@ void HostCounter::EndQuery() {
         glFlush();
     }
     glEndQuery(GetTarget(type));
+#endif
 }
 
 u64 HostCounter::BlockingQuery([[maybe_unused]] bool async) const {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Query};
+#endif
     GLint64 value;
     glGetQueryObjecti64v(query.handle, GL_QUERY_RESULT, &value);
     return static_cast<u64>(value);

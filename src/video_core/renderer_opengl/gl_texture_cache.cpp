@@ -16,6 +16,9 @@
 
 #include "common/bit_util.h"
 #include "common/nxbox_gl_readback.h"
+#ifdef NXBOX_UWP
+#include "common/nxbox_stall.h"
+#endif
 #include "common/literals.h"
 #include "common/settings.h"
 #include "video_core/renderer_opengl/gl_device.h"
@@ -561,6 +564,9 @@ TextureCacheRuntime::TextureCacheRuntime(const Device& device_, ProgramManager& 
 TextureCacheRuntime::~TextureCacheRuntime() = default;
 
 void TextureCacheRuntime::Finish() {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::GlFinish};
+#endif
     glFinish();
 }
 
@@ -971,6 +977,9 @@ void Image::CopyBufferToImage(const VideoCommon::BufferImageCopy& copy, size_t b
 }
 
 void Image::CopyImageToBuffer(const VideoCommon::BufferImageCopy& copy, size_t buffer_offset) {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Readback};
+#endif
     const GLint x_offset = copy.image_offset.x;
     const GLsizei width = copy.image_extent.width;
 
@@ -1454,6 +1463,9 @@ FormatConversionPass::FormatConversionPass(UtilShaders& util_shaders_)
 
 void FormatConversionPass::ConvertImage(Image& dst_image, Image& src_image,
                                         std::span<const VideoCommon::ImageCopy> copies) {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Readback};
+#endif
     const GLenum dst_target = ImageTarget(dst_image.info);
     const GLenum src_target = ImageTarget(src_image.info);
     const u32 img_bpp = BytesPerBlock(src_image.info.format);

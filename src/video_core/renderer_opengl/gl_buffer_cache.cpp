@@ -12,6 +12,9 @@
 #include "video_core/renderer_opengl/gl_buffer_cache.h"
 #include "video_core/renderer_opengl/gl_device.h"
 #include "video_core/renderer_opengl/maxwell_to_gl.h"
+#ifdef NXBOX_UWP
+#include "common/nxbox_stall.h"
+#endif
 
 namespace OpenGL {
 namespace {
@@ -71,6 +74,9 @@ void Buffer::ImmediateUpload(size_t offset, std::span<const u8> data) noexcept {
 }
 
 void Buffer::ImmediateDownload(size_t offset, std::span<u8> data) noexcept {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::Readback};
+#endif
     glGetNamedBufferSubData(buffer.handle, static_cast<GLintptr>(offset),
                             static_cast<GLsizeiptr>(data.size_bytes()), data.data());
 }
@@ -207,6 +213,9 @@ void BufferCacheRuntime::PostCopyBarrier() {
 }
 
 void BufferCacheRuntime::Finish() {
+#ifdef NXBOX_UWP
+    NxboxStall::Scope stall_scope{NxboxStall::Kind::GlFinish};
+#endif
     glFinish();
 }
 

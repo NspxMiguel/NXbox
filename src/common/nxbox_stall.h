@@ -21,6 +21,12 @@ enum class Kind {
     Io,
     Aes,
     GpuBusy,
+    GlSync,
+    GlFinish,
+    Readback,
+    Query,
+    Decommit,
+    Present,
     Count
 };
 

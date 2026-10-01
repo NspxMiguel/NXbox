@@ -11,6 +11,9 @@
 #include <boost/icl/separate_interval_set.hpp>
 #include <windows.h>
 #include "common/dynamic_library.h"
+#ifdef YUZU_UWP_APPCONTAINER
+#include "common/nxbox_stall.h"
+#endif
 
 #else // ^^^ Windows ^^^ vvv POSIX vvv
 
@@ -885,9 +888,13 @@ void HostMemory::ClearBackingRegion(size_t physical_offset, size_t length, u32 f
     // 5 GiB app budget for memory the guest allocates but never uses (games clear their whole heap
     // through here at startup).
     constexpr size_t PageMask = 0xFFF;
-    if (fill_value == 0 && ((physical_offset | length) & PageMask) == 0 && length != 0 &&
-        VirtualFree(backing_base + physical_offset, length, MEM_DECOMMIT)) {
-        return;
+    if (fill_value == 0 && ((physical_offset | length) & PageMask) == 0 && length != 0) {
+#ifdef YUZU_UWP_APPCONTAINER
+        NxboxStall::Scope stall_scope{NxboxStall::Kind::Decommit};
+#endif
+        if (VirtualFree(backing_base + physical_offset, length, MEM_DECOMMIT)) {
+            return;
+        }
     }
 #endif
     std::memset(backing_base + physical_offset, fill_value, length);

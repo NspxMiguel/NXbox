@@ -13,6 +13,9 @@
 #include "common/alignment.h"
 #include "common/assert.h"
 #include "common/bit_util.h"
+#ifdef NXBOX_UWP
+#include "common/nxbox_stall.h"
+#endif
 #include "video_core/renderer_opengl/gl_staging_buffer_pool.h"
 
 
@@ -122,7 +125,12 @@ std::pair<std::span<u8>, size_t> StreamBuffer::Request(size_t size) noexcept {
     for (size_t region = Region(free_iterator) + 1,
                 region_end = (std::min)(Region(iterator + size) + 1, NUM_SYNCS);
          region < region_end; ++region) {
+#ifdef NXBOX_UWP
+        NxboxStall::Scope stall_scope{NxboxStall::Kind::GlSync};
+        glClientWaitSync(fences[region].handle, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+#else
         glClientWaitSync(fences[region].handle, 0, GL_TIMEOUT_IGNORED);
+#endif
         fences[region].Release();
     }
     if (iterator + size >= free_iterator) {
@@ -137,7 +145,12 @@ std::pair<std::span<u8>, size_t> StreamBuffer::Request(size_t size) noexcept {
         free_iterator = size;
 
         for (size_t region = 0, region_end = Region(size); region <= region_end; ++region) {
+#ifdef NXBOX_UWP
+            NxboxStall::Scope stall_scope{NxboxStall::Kind::GlSync};
+            glClientWaitSync(fences[region].handle, GL_SYNC_FLUSH_COMMANDS_BIT, GL_TIMEOUT_IGNORED);
+#else
             glClientWaitSync(fences[region].handle, 0, GL_TIMEOUT_IGNORED);
+#endif
             fences[region].Release();
         }
     }

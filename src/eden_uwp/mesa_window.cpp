@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "common/nxbox_stall.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/mesa_window.h"
 
@@ -232,6 +233,7 @@ public:
         glClear(GL_COLOR_BUFFER_BIT);
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
         const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
+        NxboxStall::Scope stall_scope{NxboxStall::Kind::Present};
         if (!swap(runtime->dc)) {
             throw std::runtime_error("Mesa presentation failed");
         }
