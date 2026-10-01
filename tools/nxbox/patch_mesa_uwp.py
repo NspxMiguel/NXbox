@@ -64,6 +64,7 @@ def patch(root: Path) -> None:
     else:
         patch_dxil(root)
     patch_shader_model(root)
+    patch_format_cast_report(root)
     patch_draw(root)
     patch_batch(root)
     if "fence" in SKIP:
@@ -326,6 +327,21 @@ def patch_shader_model(root: Path) -> None:
     )
     if source.count(old) != 1:
         raise RuntimeError("Pinned Mesa d3d12_screen.cpp does not match the shader model patch")
+    path.write_text(source.replace(old, new))
+
+
+def patch_format_cast_report(root: Path) -> None:
+    # Whether the device relaxes format casting decides if sRGB textures can be written through a
+    # typed UAV (the GPU ASTC decoder does that); without it they get no UAV flag at all.
+    path = root / "src/gallium/drivers/d3d12/d3d12_screen.cpp"
+    source = path.read_text()
+    old = "   screen->dev->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS12, &screen->opts12, sizeof(screen->opts12));\n"
+    new = old + (
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_RELAXED_CAST\",\n"
+        "                           screen->opts12.RelaxedFormatCastingSupported ? \"1\" : \"0\");\n"
+    )
+    if source.count(old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_screen.cpp does not match the format cast report patch")
     path.write_text(source.replace(old, new))
 
 

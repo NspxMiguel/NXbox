@@ -167,6 +167,12 @@ struct MesaRuntime {
             Diagnostic(std::string(name) + "=" +
                        (value ? reinterpret_cast<const char*>(value) : "null"));
         }
+        // Device capabilities the patched driver publishes once its screen exists.
+        for (const char* name : {"NXBOX_D3D12_SM", "NXBOX_D3D12_RELAXED_CAST"}) {
+            char value[32] = "unset";
+            GetEnvironmentVariableA(name, value, sizeof(value));
+            Diagnostic(std::string(name) + "=" + value);
+        }
     }
 };
 
