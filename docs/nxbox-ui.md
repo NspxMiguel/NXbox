@@ -115,8 +115,8 @@ the real boot flow yet (both are behind the `usb_scan_test.txt` marker file for 
 
 ## Implementation plan (2026-10-01)
 
-Approved look: a Library screen and a Mods screen, previewed at 1920×1080 (true black, eShop art,
-nav pills top-left, status top-right, glass hint bar at the bottom). The NXbox name is not shown on
+Approved look: a Library screen and a per-game Mods screen, previewed at 1920×1080 (true black, eShop art,
+nav pills top-left (Library, Settings; mods are reached from a game, never from the nav), status top-right, glass hint bar at the bottom). The NXbox name is not shown on
 screen. The one accent is the brand ribbon, a green→red gradient (`#2FD07A` → `#E8343E`). It is
 used only as the 3 px focus ring around whatever has focus. The focused tile also lifts: scale 1.08,
 −16 px, −1.2°, 220 ms with `cubic-bezier(0.2,0.8,0.2,1)`. Primary actions are white pills with
