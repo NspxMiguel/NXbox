@@ -499,7 +499,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             // last HRESULT); a failed PSO drops its draws, so log them whenever they change.
             {
                 static std::string last_pso;
-                char pso[96] = "";
+                char pso[400] = "";
                 if (GetEnvironmentVariableA("NXBOX_D3D12_PSO", pso, sizeof(pso)) != 0 &&
                     last_pso != pso) {
                     last_pso = pso;

@@ -225,6 +225,10 @@ def patch_pso(root: Path) -> None:
         "            d.DepthStencilState.DepthEnable, d.DepthStencilState.StencilEnable,\n"
         "            d.RasterizerState.ForcedSampleCount, d.BlendState.IndependentBlendEnable);\n"
         "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO_FAIL\", text);\n"
+        "   /* Also through the counter variable, which the frontend is known to read. */\n"
+        "   char both[400];\n"
+        "   snprintf(both, sizeof(both), \"rejected %s\", text);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", both);\n"
         "}\n\n"
     )
     stream_old = (
