@@ -352,6 +352,23 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     system.RegisterExitCallback([&] { guest_exited.store(true, std::memory_order_release); });
     system.SetContentProvider(std::make_unique<FileSys::ContentProviderUnion>());
     system.SetFilesystem(std::make_shared<FileSys::RealVfsFilesystem>());
+    // Updates and DLC are read in place from the game folders (Eden's external content
+    // directories) instead of being installed into the NAND: the console's internal storage has
+    // no room for second copies, and without this Breath of the Wild ran as 1.0 with its 1.6
+    // update and DLC sitting next to it.
+    {
+        auto& dirs = Settings::values.external_content_dirs;
+        dirs.clear();
+        const auto local_state = std::filesystem::path(winrt::to_string(
+            winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+        dirs.push_back(Common::FS::PathToUTF8String(local_state / "games"));
+        for (const auto& folder : ExternalGameFolders()) {
+            dirs.push_back(Common::FS::PathToUTF8String(folder));
+        }
+        for (const auto& dir : dirs) {
+            Diagnostic("CONTENT_DIR " + dir);
+        }
+    }
     system.GetFileSystemController().CreateFactories(*system.GetFilesystem());
     system.GetUserChannel().clear();
     Diagnostic("GAME_LOADING");
