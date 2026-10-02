@@ -106,14 +106,22 @@ bool StreamNszToNsp(const std::string& url, std::filesystem::path& target,
     // An .nsp runs about 1.4 times its .nsz for the games measured; 1.5 leaves a margin. A
     // conversion that still runs out of space fails cleanly and removes its partial file.
     const std::uint64_t needed = static_cast<std::uint64_t>(source->GetSize()) * 3 / 2;
+    // A partial .nsz from an earlier plain download is given up for the .nsp, so its space
+    // counts as free (it held 3.9 GB of the 16.6 GB the removable drive had for BotW).
     std::optional<fs::path> folder;
     for (std::size_t i = 0; i < places.size() && !folder; ++i) {
         std::error_code ec;
         const auto space = fs::space(places[i], ec);
-        const auto free = ec ? StorageFreeSpace(places[i])
-                             : std::optional<std::uint64_t>{space.available};
-        if (free && *free >= needed) {
+        auto free = ec ? StorageFreeSpace(places[i]) : std::optional<std::uint64_t>{space.available};
+        const fs::path stale = places[i] / target.filename();
+        const std::uint64_t stale_size =
+            Common::FS::IsFile(stale) ? Common::FS::GetSize(stale) : 0;
+        if (free && *free + stale_size >= needed) {
             folder = places[i];
+            if (stale_size != 0 && Common::FS::RemoveFile(stale)) {
+                Diagnostic(fmt::format("NSZ_STREAM removed the partial .nsz ({} MiB)",
+                                       stale_size >> 20));
+            }
         }
     }
     if (!folder) {
