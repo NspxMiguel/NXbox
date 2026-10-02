@@ -146,14 +146,25 @@ def patch_root_signature_report(root: Path) -> None:
         "      }\n"
     )
     create_old = (
+        "   if (FAILED(screen->dev->CreateRootSignature(0,\n"
+        "                                               sig->GetBufferPointer(),\n"
+        "                                               sig->GetBufferSize(),\n"
         "                                               IID_PPV_ARGS(&ret)))) {\n"
         "      debug_printf(\"CreateRootSignature failed\\n\");\n"
         "      return NULL;\n"
         "   }\n"
     )
     create_new = (
-        "                                               IID_PPV_ARGS(&ret)))) {\n"
-        "      nxbox_report_root_signature(\"create\", E_FAIL, NULL, num_params);\n"
+        "   HRESULT nxbox_create_hr = screen->dev->CreateRootSignature(0, sig->GetBufferPointer(),\n"
+        "                                                              sig->GetBufferSize(),\n"
+        "                                                              IID_PPV_ARGS(&ret));\n"
+        "   if (FAILED(nxbox_create_hr)) {\n"
+        "      /* The device removed reason tells a lost device from a bad signature. */\n"
+        "      nxbox_report_root_signature(\"create\", nxbox_create_hr, NULL, num_params);\n"
+        "      char nxbox_removed[64];\n"
+        "      snprintf(nxbox_removed, sizeof(nxbox_removed), \"0x%08lx\",\n"
+        "               (unsigned long)screen->dev->GetDeviceRemovedReason());\n"
+        "      SetEnvironmentVariableA(\"NXBOX_D3D12_REMOVED\", nxbox_removed);\n"
         "      return NULL;\n"
         "   }\n"
     )

@@ -495,29 +495,22 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                    stats.emulation_speed * 100.0,
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage(),
                                    worst_gap_ms, hitches));
-            // The patched Mesa publishes pipeline state creation counters (created, failed,
-            // last HRESULT); a failed PSO drops its draws, so log them whenever they change.
+            // The patched Mesa publishes its reports in environment variables (pipeline states,
+            // root signatures, batch failures, device removal); log each one when it changes.
             {
-                static std::string last_pso;
-                char pso[400] = "";
-                if (GetEnvironmentVariableA("NXBOX_D3D12_PSO", pso, sizeof(pso)) != 0 &&
-                    last_pso != pso) {
-                    last_pso = pso;
-                    Diagnostic(std::string("D3D12_PSO ") + pso);
-                }
-                static std::string last_rootsig;
-                char rootsig[400] = "";
-                if (GetEnvironmentVariableA("NXBOX_D3D12_ROOTSIG", rootsig, sizeof(rootsig)) != 0 &&
-                    last_rootsig != rootsig) {
-                    last_rootsig = rootsig;
-                    Diagnostic(std::string("D3D12_ROOTSIG ") + rootsig);
-                }
-                static std::string last_fail;
-                char fail[320] = "";
-                if (GetEnvironmentVariableA("NXBOX_D3D12_PSO_FAIL", fail, sizeof(fail)) != 0 &&
-                    last_fail != fail) {
-                    last_fail = fail;
-                    Diagnostic(std::string("D3D12_PSO_FAIL ") + fail);
+                static std::array<std::string, 7> last;
+                static constexpr std::array<const char*, 7> names{
+                    "NXBOX_D3D12_PSO",           "NXBOX_D3D12_PSO_FAIL",
+                    "NXBOX_D3D12_ROOTSIG",       "NXBOX_D3D12_REMOVED",
+                    "NXBOX_D3D12_BATCH",         "NXBOX_D3D12_RESET",
+                    "NXBOX_D3D12_FIRST_FAILURE"};
+                for (std::size_t i = 0; i < names.size(); ++i) {
+                    char value[512] = "";
+                    if (GetEnvironmentVariableA(names[i], value, sizeof(value)) != 0 &&
+                        last[i] != value) {
+                        last[i] = value;
+                        Diagnostic(std::string(names[i] + 6) + " " + value); // drop "NXBOX_"
+                    }
                 }
             }
             // Host work in the window, as total/longest milliseconds and call count, so each
