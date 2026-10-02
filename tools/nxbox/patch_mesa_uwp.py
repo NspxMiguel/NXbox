@@ -126,7 +126,7 @@ def patch_root_signature_report(root: Path) -> None:
         "      memcpy(text + n, error->GetBufferPointer(), size < room ? size : room);\n"
         "      text[n + (size < room ? size : room)] = 0;\n"
         "   }\n"
-        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", text);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_ROOTSIG\", text);\n"
         "}\n\n"
     )
     anchor = "static ID3D12RootSignature *\ncreate_root_signature(struct d3d12_context *ctx, struct d3d12_root_signature_key *key)\n"

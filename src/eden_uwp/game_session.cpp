@@ -505,6 +505,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     last_pso = pso;
                     Diagnostic(std::string("D3D12_PSO ") + pso);
                 }
+                static std::string last_rootsig;
+                char rootsig[400] = "";
+                if (GetEnvironmentVariableA("NXBOX_D3D12_ROOTSIG", rootsig, sizeof(rootsig)) != 0 &&
+                    last_rootsig != rootsig) {
+                    last_rootsig = rootsig;
+                    Diagnostic(std::string("D3D12_ROOTSIG ") + rootsig);
+                }
                 static std::string last_fail;
                 char fail[320] = "";
                 if (GetEnvironmentVariableA("NXBOX_D3D12_PSO_FAIL", fail, sizeof(fail)) != 0 &&
