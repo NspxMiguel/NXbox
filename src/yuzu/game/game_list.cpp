@@ -20,24 +20,24 @@
 #include <QScrollerProperties>
 #include <QToolButton>
 #include <QVariantAnimation>
+#include <qlayoutitem.h>
 
 #include "common/common_types.h"
-#include "common/logging.h"
 #include "core/core.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/game_list_p.h"
+#include "qt_common/game_list/model.h"
 #include "qt_common/qt_common.h"
 #include "qt_common/util/game.h"
-#include "yuzu/compatibility_list.h"
-#include "yuzu/game/game_list.h"
-#include "qt_common/game_list/game_list_p.h"
+#include "yuzu/game/carousel.h"
 #include "yuzu/game/game_grid.h"
+#include "yuzu/game/game_list.h"
 #include "yuzu/game/game_tree.h"
-#include "qt_common/game_list/model.h"
+#include "yuzu/game/search_field.h"
 #include "yuzu/main_window.h"
 #include "yuzu/util/controller_navigation.h"
-#include "yuzu/game/search_field.h"
 
 GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvider* provider_,
                    PlayTime::PlayTimeManager& play_time_manager_, Core::System& system_,
@@ -62,13 +62,14 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     SetupScrollAnimation();
 
-    connect(main_window, &MainWindow::UpdateThemedIcons, this, &GameList::OnUpdateThemedIcons);
-
     connect(tree_view, &QTreeView::activated, this, &GameList::ValidateEntry);
     connect(tree_view, &QTreeView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
     connect(grid_view, &QListView::activated, this, &GameList::ValidateEntry);
     connect(grid_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
+
+    connect(carousel_view, &QListView::activated, this, &GameList::ValidateEntry);
+    connect(carousel_view, &QListView::customContextMenuRequested, this, &GameList::PopupContextMenu);
 
     connect(controller_navigation, &ControllerNavigation::TriggerKeyboardEvent, this,
             [this](Qt::Key key) {
@@ -87,7 +88,9 @@ GameList::GameList(FileSys::VirtualFilesystem vfs_, FileSys::ManualContentProvid
 
     connect(item_model, &GameListModel::ShowList, this, &GameList::ShowList);
     connect(item_model, &GameListModel::SaveConfig, this, &GameList::SaveConfig);
+    connect(item_model, &GameListModel::PopulatingStarted, this, &GameList::OnPopulate);
 
+    // TODO: impl on grid/carousel
     connect(tree_view, &GameTree::FilterResultReady, search_field,
             [this](int visible, int total) { search_field->setFilterResult(visible, total); });
 
@@ -103,12 +106,11 @@ GameList::~GameList() {
 void GameList::SetupViews() {
     tree_view = new GameTree(this);
     grid_view = new GameGrid(this);
+    carousel_view = new GameCarousel(this);
 
     tree_view->SetModel(item_model);
     grid_view->SetModel(item_model);
-
-    layout->addWidget(tree_view);
-    layout->addWidget(grid_view);
+    carousel_view->SetModel(item_model);
 }
 
 QString GameList::GetLastFilterResultItem() const {
@@ -133,19 +135,23 @@ bool GameList::IsEmpty() const {
     return item_model->IsEmpty();
 }
 
-void GameList::LoadCompatibilityList() {
-    item_model->LoadCompatibilityList();
+void GameList::OnPopulate() {
+    m_currentView->setEnabled(false);
+
+    switch (game_list_mode) {
+    case Settings::GameListMode::TreeView:
+        tree_view->UpdateColumnVisibility(item_model);
+        break;
+    case Settings::GameListMode::GridView:
+        grid_view->UpdateIconSize();
+        break;
+    case Settings::GameListMode::CarouselView:
+        carousel_view->UpdateIconSize();
+        break;
+    }
 }
 
 void GameList::PopulateAsync(QVector<UISettings::GameDir>& game_dirs) {
-    m_currentView->setEnabled(false);
-
-    tree_view->UpdateColumnVisibility(item_model);
-
-    if (!m_isTreeMode) {
-        grid_view->UpdateIconSize();
-    }
-
     item_model->PopulateAsync(game_dirs);
 }
 
@@ -166,25 +172,45 @@ void GameList::UnloadController() {
 }
 
 void GameList::ResetViewMode() {
-    auto& setting = UISettings::values.game_list_mode;
+    const auto mode = UISettings::values.game_list_mode.GetValue();
+    game_list_mode = mode;
+
+    if (m_currentView)
+        layout->removeWidget(m_currentView);
+
     bool newTreeMode = false;
 
-    switch (setting.GetValue()) {
+    switch (mode) {
     case Settings::GameListMode::TreeView:
         m_currentView = tree_view;
         newTreeMode = true;
-        tree_view->setVisible(true);
-        grid_view->setVisible(false);
+
         break;
     case Settings::GameListMode::GridView:
         m_currentView = grid_view;
         newTreeMode = false;
-        grid_view->setVisible(true);
-        tree_view->setVisible(false);
+
+        break;
+    case Settings::GameListMode::CarouselView:
+        m_currentView = carousel_view;
+        newTreeMode = false;
+
         break;
     default:
-        break;
+        UNREACHABLE();
     }
+
+    tree_view->setVisible(false);
+    grid_view->setVisible(false);
+    carousel_view->setVisible(false);
+
+    tree_view->setEnabled(false);
+    grid_view->setEnabled(false);
+    carousel_view->setEnabled(false);
+
+    m_currentView->setVisible(true);
+    m_currentView->setEnabled(true);
+    layout->insertWidget(0, m_currentView);
 
     auto view = m_currentView->viewport();
     view->installEventFilter(this);
@@ -225,10 +251,6 @@ void GameList::OnFilterCloseClicked() {
     main_window->filterBarSetChecked(false);
 }
 
-void GameList::OnUpdateThemedIcons() {
-    item_model->OnUpdateThemedIcons();
-}
-
 void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     emit ShowList(!item_model->IsEmpty());
 
@@ -257,32 +279,43 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
         }
     }
 
-    // Clear out the old directories to watch for changes and add the new ones
+    // Watcher updates
     auto* watcher = item_model->GetWatcher();
-    auto watch_dirs = watcher->directories();
-    if (!watch_dirs.isEmpty()) {
-        watcher->removePaths(watch_dirs);
-    }
+    auto current_watch_list = watcher->directories();
 
-    constexpr int LIMIT_WATCH_DIRECTORIES = 5000;
+    constexpr qsizetype LIMIT_WATCH_DIRECTORIES = 5000;
     constexpr int SLICE_SIZE = 25;
-    int len = (std::min)(static_cast<int>(watch_list.size()), LIMIT_WATCH_DIRECTORIES);
 
-#ifdef __APPLE__
-    const bool old_signals_blocked = watcher->blockSignals(true);
-#endif
+    QStringList to_remove, to_add;
 
-    for (int i = 0; i < len; i += SLICE_SIZE) {
-        auto chunk = watch_list.mid(i, SLICE_SIZE);
-        if (!chunk.isEmpty()) {
-            watcher->addPaths(chunk);
+    const auto slice = [&](const QStringList& list, std::function<void(const QStringList&)> callback) {
+        const int len = (std::min)(list.size(), LIMIT_WATCH_DIRECTORIES);
+        for (int i = 0; i < len; i += SLICE_SIZE) {
+            auto chunk = list.mid(i, SLICE_SIZE);
+            if (!chunk.isEmpty()) {
+                callback(chunk);
+            }
+            QCoreApplication::processEvents();
         }
-        QCoreApplication::processEvents();
+    };
+
+    // remove any paths not in the new watch list
+    for (const auto& path : std::as_const(current_watch_list)) {
+        if (!watch_list.contains(path)) {
+            to_remove.emplaceBack(path);
+        }
     }
 
-#ifdef __APPLE__
-    watcher->blockSignals(old_signals_blocked);
-#endif
+    slice(to_remove, [watcher](const QStringList& chunk) { watcher->removePaths(chunk); });
+
+    // add any paths not in the old watch list
+    for (const auto& path : std::as_const(watch_list)) {
+        if (!current_watch_list.contains(path)) {
+            to_add.emplaceBack(path);
+        }
+    }
+
+    slice(to_add, [watcher](const QStringList& chunk) { watcher->addPaths(chunk); });
 
     m_currentView->setEnabled(true);
 
@@ -290,11 +323,13 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
     for (int i = 1; i < item_model->rowCount() - 1; ++i) {
         children_total += item_model->item(i, 0)->rowCount();
     }
+
     search_field->setFilterResult(children_total, children_total);
     if (children_total > 0) {
         search_field->setFocus();
     }
 
+    // TODO: carousel/grid impl.
     item_model->sort(tree_view->header()->sortIndicatorSection(),
                      tree_view->header()->sortIndicatorOrder());
 
@@ -302,21 +337,23 @@ void GameList::OnPopulatingCompleted(const QStringList& watch_list) {
 }
 
 void GameList::RefreshGameDirectory() {
-    item_model->ResetExternalWatcher();
-
-    if (!UISettings::values.game_dirs.empty()) {
-        LOG_INFO(Frontend, "Change detected in the games directory. Reloading game list.");
-        QtCommon::system->GetFileSystemController().CreateFactories(*QtCommon::vfs);
-        PopulateAsync(UISettings::values.game_dirs);
-    }
+    item_model->RefreshGameDirectory();
 }
 
 void GameList::RefreshExternalContent() {
-    if (!UISettings::values.game_dirs.empty()) {
-        LOG_INFO(Frontend, "External content directory changed. Clearing metadata cache.");
-        QtCommon::Game::ResetMetadata(false);
-        QtCommon::system->GetFileSystemController().CreateFactories(*QtCommon::vfs);
-        PopulateAsync(UISettings::values.game_dirs);
+    item_model->RefreshExternalContent();
+}
+
+void GameList::UpdateIconSizes() {
+    switch (game_list_mode) {
+    case Settings::GameListMode::GridView:
+        grid_view->UpdateIconSize();
+        break;
+    case Settings::GameListMode::CarouselView:
+        carousel_view->UpdateIconSize();
+        break;
+    case Settings::GameListMode::TreeView:
+        break;
     }
 }
 
@@ -441,7 +478,6 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     QAction* dump_romfs_sdmc = dump_romfs_menu->addAction(tr("Dump RomFS to SDMC"));
     QAction* verify_integrity = context_menu.addAction(tr("Verify Integrity"));
     QAction* copy_tid = context_menu.addAction(tr("Copy Title ID to Clipboard"));
-    QAction* navigate_to_gamedb_entry = context_menu.addAction(tr("Navigate to GameDB entry"));
 #if !defined(__APPLE__)
     QMenu* shortcut_menu = context_menu.addMenu(tr("Create Shortcut"));
     QAction* create_desktop_shortcut = shortcut_menu->addAction(tr("Add to Desktop"));
@@ -463,9 +499,6 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     remove_vk_shader_cache->setVisible(program_id != 0);
     remove_shader_cache->setVisible(program_id != 0);
     remove_all_content->setVisible(program_id != 0);
-    auto& compat_list = item_model->GetCompatibilityList();
-    auto it = FindMatchingCompatibilityEntry(compat_list, program_id);
-    navigate_to_gamedb_entry->setVisible(it != compat_list.end() && program_id != 0);
 
     connect(favorite, &QAction::triggered, this,
             [this, program_id]() { ToggleFavorite(program_id); });
@@ -474,9 +507,8 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
     });
     connect(start_game, &QAction::triggered, this,
             [this, path]() { emit BootGame(QString::fromStdString(path), StartGameType::Normal); });
-    connect(start_game_global, &QAction::triggered, this, [this, path]() {
-        emit BootGame(QString::fromStdString(path), StartGameType::Global);
-    });
+    connect(start_game_global, &QAction::triggered, this,
+            [this, path]() { emit BootGame(QString::fromStdString(path), StartGameType::Global); });
     connect(open_mod_location, &QAction::triggered, this, [this, program_id, path]() {
         emit OpenFolderRequested(program_id, GameListOpenTarget::ModData, path);
     });
@@ -526,9 +558,6 @@ void GameList::AddGamePopup(QMenu& context_menu, u64 program_id, const std::stri
             [this, path]() { emit VerifyIntegrityRequested(path); });
     connect(copy_tid, &QAction::triggered, this,
             [this, program_id]() { emit CopyTIDRequested(program_id); });
-    connect(navigate_to_gamedb_entry, &QAction::triggered, this, [this, program_id]() {
-        emit NavigateToGamedbEntryRequested(program_id, item_model->GetCompatibilityList());
-    });
 #if !defined(__APPLE__)
     connect(create_desktop_shortcut, &QAction::triggered, this, [this, program_id, path]() {
         emit CreateShortcut(program_id, path, QtCommon::Game::ShortcutTarget::Desktop);
@@ -615,7 +644,8 @@ void GameList::AddFavoritesPopup(QMenu& context_menu) {
 
     connect(clear, &QAction::triggered, this, [this] {
         UISettings::values.favorited_ids.clear();
-        item_model->invisibleRootItem()->child(0)->removeRows(0, item_model->invisibleRootItem()->child(0)->rowCount());
+        item_model->invisibleRootItem()->child(0)->removeRows(
+            0, item_model->invisibleRootItem()->child(0)->rowCount());
         tree_view->setRowHidden(0, item_model->invisibleRootItem()->index(), true);
     });
 }
@@ -710,13 +740,15 @@ bool GameList::eventFilter(QObject* obj, QEvent* event) {
         return true;
     }
 
+    if (obj == carousel_view->viewport() && event->type() == QEvent::Resize) {
+        carousel_view->UpdateIconSize();
+        return true;
+    }
+
     return QWidget::eventFilter(obj, event);
 }
 
 GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
-    connect(parent, &MainWindow::UpdateThemedIcons, this,
-            &GameListPlaceholder::onUpdateThemedIcons);
-
     layout = new QVBoxLayout;
     image = new QLabel;
     text = new QLabel;
@@ -736,10 +768,6 @@ GameListPlaceholder::GameListPlaceholder(MainWindow* parent) : QWidget{parent} {
 }
 
 GameListPlaceholder::~GameListPlaceholder() = default;
-
-void GameListPlaceholder::onUpdateThemedIcons() {
-    image->setPixmap(QIcon::fromTheme(QStringLiteral("plus_folder")).pixmap(200));
-}
 
 void GameListPlaceholder::mouseDoubleClickEvent(QMouseEvent* event) {
     emit GameListPlaceholder::AddDirectory();

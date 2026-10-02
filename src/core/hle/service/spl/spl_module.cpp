@@ -13,7 +13,6 @@
 #include "core/hle/api_version.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/server_manager.h"
-#include "core/hle/service/spl/csrng.h"
 #include "core/hle/service/spl/spl.h"
 #include "core/hle/service/spl/spl_module.h"
 
@@ -57,6 +56,36 @@ void Module::Interface::ModularExponentiate(HLERequestContext& ctx) {
 
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSecureMonitorNotImplemented);
+}
+
+void Module::Interface::GenerateAesKek(HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    [[maybe_unused]] const auto key_source = rp.PopRaw<KeySource>();
+    const auto generation = rp.Pop<u32>();
+    const auto option = rp.Pop<u32>();
+
+    LOG_WARNING(Service_SPL, "(STUBBED) called, generation={:#x}, option={:#x}", generation,
+                option);
+
+    AccessKey access_key{};
+
+    IPC::ResponseBuilder rb{ctx, 6};
+    rb.Push(ResultSuccess);
+    rb.PushRaw(access_key);
+}
+
+void Module::Interface::GenerateAesKey(HLERequestContext& ctx) {
+    IPC::RequestParser rp{ctx};
+    [[maybe_unused]] const auto access_key = rp.PopRaw<AccessKey>();
+    [[maybe_unused]] const auto key_source = rp.PopRaw<KeySource>();
+
+    LOG_WARNING(Service_SPL, "(STUBBED) called");
+
+    AesKey aes_key{};
+
+    IPC::ResponseBuilder rb{ctx, 6};
+    rb.Push(ResultSuccess);
+    rb.PushRaw(aes_key);
 }
 
 void Module::Interface::SetConfig(HLERequestContext& ctx) {
@@ -172,6 +201,18 @@ Result Module::Interface::GetConfigImpl(u64* out_config, ConfigItem config_item)
         return ResultSecureMonitorInvalidArgument;
     }
 }
+
+class CSRNG final : public Module::Interface {
+public:
+    explicit CSRNG(Core::System& system_, std::shared_ptr<Module> module_)
+        : Interface(system_, std::move(module_), "csrng") {
+        static const FunctionInfo functions[] = {
+            {0, &CSRNG::GenerateRandomBytes, "GenerateRandomBytes"},
+        };
+        RegisterHandlers(functions);
+    }
+    ~CSRNG() override = default;
+};
 
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);

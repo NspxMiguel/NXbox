@@ -40,8 +40,6 @@ add_library(
     container_hash.h
     demangle.cpp
     demangle.h
-    detached_tasks.cpp
-    detached_tasks.h
     device_power_state.cpp
     device_power_state.h
     div_ceil.h
@@ -50,7 +48,6 @@ add_library(
     elf.h
     error.cpp
     error.h
-    expected.h
     fiber.cpp
     fiber.h
     fixed_point.h
@@ -79,7 +76,6 @@ add_library(
     logging.h
     lz4_compression.cpp
     lz4_compression.h
-    make_unique_for_overwrite.h
     math_util.h
     memory_detect.cpp
     memory_detect.h
@@ -92,7 +88,6 @@ add_library(
     param_package.h
     parent_of_member.h
     point.h
-    quaternion.h
     range_map.h
     range_mutex.h
     range_sets.h
@@ -112,7 +107,8 @@ add_library(
     settings_setting.h
     slot_vector.h
     socket_types.h
-    spin_lock.h
+    sparse_large_vector.cpp
+    sparse_large_vector.h
     stb.cpp
     stb.h
     steady_clock.cpp
@@ -124,6 +120,8 @@ add_library(
     swap.h
     thread.cpp
     thread.h
+    adpf.cpp
+    adpf.h
     thread_queue_list.h
     thread_worker.h
     threadsafe_queue.h
@@ -139,8 +137,8 @@ add_library(
     uuid.cpp
     uuid.h
     vector_math.h
-    virtual_buffer.cpp
-    virtual_buffer.h
+    zbic_compression.cpp
+    zbic_compression.h
     zstd_compression.cpp
     zstd_compression.h
     fs/ryujinx_compat.h fs/ryujinx_compat.cpp
@@ -148,7 +146,12 @@ add_library(
     cpu_features.cpp
     cpu_features.h
     httplib.h
-    net/net.h net/net.cpp)
+    net/net.h net/net.cpp
+    container/unordered_map.h container/unordered_set.h)
+
+set_source_files_properties(zbic_compression.cpp PROPERTIES
+    INCLUDE_DIRECTORIES "${ZBIC_INCLUDE_DIR}"
+    COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,GNU>:-Wno-unused-function;-Wno-missing-declarations;-Wno-shadow>")
 
 if(WIN32)
     target_sources(common PRIVATE windows/timer_resolution.cpp
@@ -221,7 +224,7 @@ endif()
 if(CXX_CLANG)
     target_compile_options(common PRIVATE
         $<$<COMPILE_LANGUAGE:C,CXX>:-fsized-deallocation>
-        $<$<COMPILE_LANGUAGE:C,CXX>:-Werror=unreachable-code-aggressive>)
+        $<$<COMPILE_LANGUAGE:C,CXX>:-Wunreachable-code-aggressive>)
     target_compile_definitions(
         common
         PRIVATE
@@ -242,7 +245,7 @@ if (lz4_ADDED)
     target_include_directories(common PRIVATE ${lz4_SOURCE_DIR}/lib)
 endif()
 
-target_link_libraries(common PUBLIC fmt::fmt stb::headers Threads::Threads unordered_dense::unordered_dense)
+target_link_libraries(common PUBLIC fmt::fmt stb::headers Threads::Threads)
 target_link_libraries(common PRIVATE lz4::lz4 zstd::zstd)
 
 # Please refer to src/common/demangle.cpp

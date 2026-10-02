@@ -4,13 +4,13 @@ Use this guide to answer questions regarding and to start using the multiplayer 
 ## Multiplayer FAQ
 This FAQ will serve as a general quick question and answer simple questions.
 
-**Click [Here](https://evilperson1337.notion.site/Multiplayer-FAQ-2c357c2edaf680fca2e9ce59969a220f) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Multiplayer-FAQ-2c357c2edaf680fca2e9ce59969a220f) for an illustrated guide.**
 
 ### Can Eden Play Games with a Switch Console?
 No - The only emulator that has this kind of functionality is *Ryujinx* and it's forks.  This solution requires loading a custom module on a modded switch console to work.
 
 ### Can I Play Online Games?
-No - This would require hijacking requests to Nintendo's official servers to a custom server infrastructure built to emulate that functionality.  This is how services like [*Pretendo*](https://pretendo.network/) operate.  As such, you would not be able to play “Online”, you can however play multiplayer games.
+No - This would require hijacking requests to Nintendo's official servers to a custom server infrastructure built to emulate that functionality.  This is how services like [*Pretendo*](https://pretendo.network/) operate.  As such, you would not be able to play "Online", you can however play multiplayer games.
 
 ### What's the Difference Between Online and Multiplayer?
 I have chosen the wording carefully here for a reason.  
@@ -21,7 +21,7 @@ I have chosen the wording carefully here for a reason.
 The rule of thumb here is simple: If a game supports the ability to communicate without a server (Local Wireless, LAN, etc.) you will be able to play with other users.  If it requires a server to function - it will not.  You will need to look up if your title support Local Wireless/LAN play as an option.
 
 ### How Does Multiplayer Work on Eden Exactly?
-Eden's multiplayer works by emulating the Switch's local wireless (LDN) system, then tunneling that traffic over the internet through “rooms” that act like lobbies. Each player runs their own instance of the emulator, and as long as everyone joins the same room and the game supports local wireless multiplayer, the emulated consoles see each other as if they were on the same local network. This design avoids typical one-save netplay issues because every user keeps an independent save and console state while only the in-game wireless packets are forwarded through the room server.  In practice, you pick or host a room, configure your network interface/port forwarding if needed, then launch any LDN-capable game; from the game's perspective it is just doing standard local wireless, while the emulator handles discovery and communication over the internet or LAN.
+Eden's multiplayer works by emulating the Switch's local wireless (LDN) system, then tunneling that traffic over the internet through "rooms" that act like lobbies. Each player runs their own instance of the emulator, and as long as everyone joins the same room and the game supports local wireless multiplayer, the emulated consoles see each other as if they were on the same local network. This design avoids typical one-save netplay issues because every user keeps an independent save and console state while only the in-game wireless packets are forwarded through the room server.  In practice, you pick or host a room, configure your network interface/port forwarding if needed, then launch any LDN-capable game; from the game's perspective it is just doing standard local wireless, while the emulator handles discovery and communication over the internet or LAN.
 
 ### What Do I Need to Do?
 That depends entirely on what your goal is and your level of technical ability, you have a 2 options on how to proceed.  
@@ -40,7 +40,7 @@ While it would be nice if everything always worked perfectly - that is not reali
 1. Emulator Version Mismatches
     1. Occasionally updates to the emulator of choice alter how the LDN functionality is handled.  In these situations, unexpected behavior can occur when trying to establish LDN connections.  This is a good first step to check if you are having issues playing a game together, but can join the same lobby without issue.
 2. Game Version Mismatches
-    1. It is best practice to have the game version be identical to each other in order to ensure that there is no difference in how the programs are handling the LDN logic.  Games are black boxes that the dev team cannot see into to ensure the logic handling operates the same way.  For this reason, it is highly advised that the game versions match across all the players.  This would be a good 2nd step to check if you are having issues playing a game together, but can join the same lobby without issue.
+    1. It is best practice to have the game version be identical to each other in order to ensure that there is no difference in how the programs are handling the LDN logic.  Games are black boxes that the dev team can't see into to ensure the logic handling operates the same way.  For this reason, it is highly advised that the game versions match across all the players.  This would be a good 2nd step to check if you are having issues playing a game together, but can join the same lobby without issue.
 3. Latency
     1. Because this implementation is emulating a LAN/Local Wireless connection - it is extremely sensitive to network latency and drops.  Eden has done a good job of trying to account for this and not immediately drop users out - but it is not infallible.  If latency is a concern or becomes an issue - consider hosting a room.
 
@@ -49,7 +49,7 @@ While it would be nice if everything always worked perfectly - that is not reali
 ## Joining a Multiplayer Room
 Use this when you need to connect to a multiplayer room for LDN functionality inside of Eden.  This does not cover how to host a room, only joining existing ones.
 
-**Click [Here](https://evilperson1337.notion.site/Access-Your-Multiplayer-Room-Externally-2c357c2edaf681c0ab2ce2ee624d809d) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Access-Your-Multiplayer-Room-Externally-2c357c2edaf681c0ab2ce2ee624d809d) for an illustrated guide.**
 
 ### Pre-Requisites
 - Eden set up and functioning
@@ -66,12 +66,12 @@ There are 2 primary methods that you can use to connect to an existing room, dep
 
 <aside>
 
-***NOTE:*** Just because a lobby appears on the public lobby list, does not mean that the hoster has properly configured the necessary port forwarding/firewall rules to allow a connection.  If you cannot connect to a lobby, move onto another entry as the issue is probably not on your end.  Start looking at your environment if you are unable to connect to multiple/any lobbies.
+***NOTE:*** Just because a lobby appears on the public lobby list, does not mean that the host has properly configured the necessary port forwarding/firewall rules to allow a connection.  If you can't connect to a lobby, move onto another entry as the issue is probably not on your end.  Start looking at your environment if you are unable to connect to multiple/any lobbies.
 
 </aside>
 
 ## Joining a Public Lobby
-1. Open Eden and navigate to *Multiplayer → Browse Public Game Lobby*.
+1. Open Eden and navigate to *Multiplayer > Browse Public Game Lobby*.
 2. The **Public Room Browser** will now open and display a list of publicly accessible rooms.  Find one you want to connect to and double click it.
     
     <aside>
@@ -82,10 +82,10 @@ There are 2 primary methods that you can use to connect to an existing room, dep
 3. You will now see a window showing everyone on the lobby, or an error message.
 
 ### Direct Connecting to a Room
-If the hoster has not made the lobby public, or you don't want to find it in the public game browser - use this option to connect.
+If the host has not made the lobby public, or you don't want to find it in the public game browser - use this option to connect.
 
-1. Open Eden and navigate to *Multiplayer → Direct Connect*.
-2. Enter the *Server Address, Port*, *Nickname* (what your user will be called in the room), and a *Password* (if the hoster set one, otherwise leave it blank) and hit **Connect.**
+1. Open Eden and navigate to *Multiplayer > Direct Connect*.
+2. Enter the *Server Address, Port*, *Nickname* (what your user will be called in the room), and a *Password* (if the host set one, otherwise leave it blank) and hit **Connect.**
 3. You will now see a window showing everyone on the lobby, or an error message.
 
 ---
@@ -93,7 +93,7 @@ If the hoster has not made the lobby public, or you don't want to find it in the
 ## Hosting a Multiplayer Room
 Use this guide for when you want to host a multiplayer lobby to play with others in Eden.  In order to have someone access the room from outside your local network, see the *Access Your Multiplayer Room Externally* section for next steps.
 
-**Click [Here](https://evilperson1337.notion.site/Hosting-a-Multiplayer-Room-2c357c2edaf6819481dbe8a99926cea2) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Hosting-a-Multiplayer-Room-2c357c2edaf6819481dbe8a99926cea2) for an illustrated guide.**
 
 ### Pre-Requisites
 - Eden set up and Functioning
@@ -101,7 +101,7 @@ Use this guide for when you want to host a multiplayer lobby to play with others
 - Ability to allow programs through the firewall on your device.
 
 ### Steps
-1. Open Eden and navigate to *Emulation → Multiplayer → Create Room.*    
+1. Open Eden and navigate to *Emulation > Multiplayer > Create Room.*    
 2. Fill out the following information in the popup dialog box.
     
     
@@ -123,7 +123,7 @@ Use this guide for when you want to host a multiplayer lobby to play with others
 ## Access Your Multiplayer Room Externally
 Quite often the person with whom you want to play is located off of your internal network (LAN).  If you want to host a room and play with them you will need to get your devices to communicate with each other.  This guide will go over your options on how to do this so that you can play together.
 
-**Click [Here](https://evilperson1337.notion.site/Access-Your-Multiplayer-Room-Externally-2c357c2edaf681c0ab2ce2ee624d809d) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Access-Your-Multiplayer-Room-Externally-2c357c2edaf681c0ab2ce2ee624d809d) for an illustrated guide.**
 
 ### Pre-Requisites
 - Eden set up and Functioning
@@ -137,14 +137,14 @@ Quite often the person with whom you want to play is located off of your interna
     
     <aside>
     
-    Use this option if you want the greatest performance/lowest latency, don't want to install any software, and have the ability to modify your networking equipment's configuration (most notably - your router).  Avoid this option if you cannot modify your router's configuration or are uncomfortable with looking up things on your own.
+    Use this option if you want the greatest performance/lowest latency, don't want to install any software, and have the ability to modify your networking equipment's configuration (most notably - your router). Avoid this option if you can't modify your router's configuration or are uncomfortable with looking up things on your own.
     
     </aside>
     
 
 Port forwarding is a networking technique that directs incoming traffic arriving at a specific port on a router or firewall to a designated device and port inside a private local network. When an external client contacts the public IP address of the router on that port, the router rewrites the packet's destination information (IP address and sometimes port number) and forwards it to the internal host that is listening on the corresponding service. This allows services such as web servers, game servers, or remote desktop sessions hosted behind NAT (Network Address Translation) to be reachable from the wider Internet despite the devices themselves having non-routable private addresses.
 
-The process works by creating a static mapping—often called a “port-forward rule”—in the router's configuration. The rule specifies three pieces of data: the external (public) port, the internal (private) IP address of the target machine, and the internal port on which that machine expects the traffic. When a packet arrives, the router checks its NAT table, matches the external port to a rule, and then translates the packet's destination to the internal address before sending it onward. Responses from the internal host are similarly rewritten so they appear to come from the router's public IP, completing the bidirectional communication loop. This mechanism enables seamless access to services inside a protected LAN without exposing the entire network. 
+The process works by creating a static mapping-often called a "port-forward rule"-in the router's configuration. The rule specifies three pieces of data: the external (public) port, the internal (private) IP address of the target machine, and the internal port on which that machine expects the traffic. When a packet arrives, the router checks its NAT table, matches the external port to a rule, and then translates the packet's destination to the internal address before sending it onward. Responses from the internal host are similarly rewritten so they appear to come from the router's public IP, completing the bidirectional communication loop. This mechanism enables seamless access to services inside a protected LAN without exposing the entire network. 
 
 For our purposes we would pick the port we want to expose (*e.g. 24872*) and we would access our router's configuration and create a port-forward rule to send the traffic from an external connection to your local machine over our specified port (*24872)*.  The exact way to do so, varies greatly by router manufacturer - and sometimes require contacting your ISP to do so depending on your agreement.  You can look up your router on [*portforward.com*](https://portforward.com/router.htm) which may have instructions on how to do so for your specific equipment.  If it is not there, you will have to use Google/ChatGPT to determine the steps for your equipment.
 
@@ -155,12 +155,12 @@ Remember you can't have one port open for multiple devices at the same time - yo
     
     <aside>
     
-    Use this option if you don't want to have to worry about other users machine/configuration settings, but also cannot do port forwarding.  This will still require that you as the hoster install a program and sign up for an account - but will prevent you from having to deal with port forwards or networking equipment. Avoid this option if there is not a close relay and you are getting issues with latency.
+    Use this option if you don't want to have to worry about other users machine/configuration settings, but also can't do port forwarding. This will still require that you as the host install a program and sign up for an account - but will prevent you from having to deal with port forwards or networking equipment. Avoid this option if there is not a close relay and you are getting issues with latency.
     
     </aside>
     
 
-Using a Tunnelling service may be the solution to avoid port forward, but also avoid worrying about your users setup. A tunnelling service works by having a lightweight client run on the machine that hosts the game server. That client immediately opens an **outbound** encrypted connection (typically over TLS/QUIC) to a relay node operated by the tunnel provider's cloud infrastructure. Because outbound traffic is almost always allowed through NAT routers and ISP firewalls, the tunnel can be established even when the host sits behind carrier-grade NAT or a strict firewall. The tunnel provider then assigns a public address (e.g., `mygame.playit.gg:12345`). When a remote player connects to that address, the traffic reaches the the tunnel provider relay, which forwards it through the already-established tunnel back to the client on the private network, and finally onto the local game server's port. In effect, the server appears to the Internet as if it were listening on the public address, while the host never needs to configure port-forwarding rules or expose its own IP directly.
+Using a Tunnelling service may be the solution to avoid port forward, but also avoid worrying about your users setup. A tunnelling service works by having a lightweight client run on the machine that hosts the game server. That client immediately opens an **outbound** encrypted connection (typically over TLS/QUIC) to a relay node operated by the tunnel provider's cloud infrastructure. Because outbound traffic is almost always allowed through NAT routers and ISP firewalls, the tunnel can be established even when the host sits behind carrier-grade NAT or a strict firewall. The tunnel provider then assigns a public address (e.g., `mygame.playit.gg:12345`). When a remote player connects to that address, the traffic reaches the the tunnel provider relay, which forwards it through the already-established tunnel back to the client on the private network, and finally onto the local game server's port. In effect, the server appears to the Internet as if it were listening on the public address, while the host never needs to configure port-forwarding rules or expose its own IP directly.
 
 For our purposes we would spawn the listener for the port that way chose when hosting our room.  The user would connect to our assigned public address/port combination, and it would be routed to our machine.  The tunnel must remain active for as long as you want the connection to remain open.  Closing the terminal will kill the tunnel and disconnect the users.
 
@@ -193,7 +193,7 @@ The VPN solution is a good compromise between the tunnelling solution and port f
 ## Finding the Server Information for a Multiplayer Room
 Use this guide when you need to determine the connection information for the Public Multiplayer Lobby you are connected to.
 
-**Click [Here](https://evilperson1337.notion.site/Finding-the-Server-Information-for-a-Multiplayer-Room-2c557c2edaf6809e94e8ed3429b9eb26) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Finding-the-Server-Information-for-a-Multiplayer-Room-2c557c2edaf6809e94e8ed3429b9eb26) for an illustrated guide.**
 
 ### Pre-Requisites
 - Eden set up and configured
@@ -204,7 +204,7 @@ Use this guide when you need to determine the connection information for the Pub
 ### Method 1: Grabbing the Address from the Log File
 1. Open Eden and Connect to the room you want to identify.
     1. See the *Joining a Multiplayer Room* section for instructions on how to do so if you need them.
-2. Go to *File → Open Eden Folder*, then open the **config** folder.
+2. Go to *File > Open Eden Folder*, then open the **config** folder.
 3. Open the the **qt-config.ini** file in a text editor.
 4. Search for the following keys: 
     1. `Multiplayer\ip=` 
@@ -256,7 +256,7 @@ Use this guide when you need to determine the connection information for the Pub
 ## Multiplayer for Local Co-Op Games
 Use this guide when you want to play with a friend on a different system for games that only support local co-op.
 
-**Click [Here](https://evilperson1337.notion.site/Multiplayer-for-Local-Co-Op-Games-2c657c2edaf680c59975ec6b52022a2d) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Multiplayer-for-Local-Co-Op-Games-2c657c2edaf680c59975ec6b52022a2d) for an illustrated guide.**
 
 Occasionally you will want to play a game with a friend on a game that does not support LDN multiplayer, and only offer local co-op (multiple controllers connected to a single console), such as with *New Super Mario Bros. U Deluxe.*  Emulation solutions have developed 2 primary methods for handling these cases.
 
@@ -286,7 +286,7 @@ This guide will assume you are the one hosting the game and go over things *Pars
     2. If you are joining a game, you will have to send a connection request the host will have to accept.
 3. Verify that the remote player can see the screen and that there is no issues with the connection.
 4. Launch Eden.
-5. Navigate to *Emulation → Configure*.
+5. Navigate to *Emulation > Configure*.
 6. Select the **Controls** tab.
 7. Set up your controller, if necessary.
 8. Select the **Player 2** tab and select the **Connect Controller** checkbox.  This enables inputs from another device to be seen as a second controller.

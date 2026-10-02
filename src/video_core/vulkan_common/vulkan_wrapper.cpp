@@ -123,6 +123,7 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkCmdEndDebugUtilsLabelEXT);
     X(vkCmdFillBuffer);
     X(vkCmdPipelineBarrier);
+    X(vkCmdPipelineBarrier2);
     X(vkCmdPushConstants);
     X(vkCmdPushDescriptorSetWithTemplateKHR);
     X(vkCmdSetBlendConstants);
@@ -161,8 +162,10 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkCmdSetStencilTestEnableEXT);
     X(vkCmdSetVertexInputEXT);
     X(vkCmdSetColorWriteMaskEXT);
+    X(vkCmdSetColorWriteEnableEXT);
     X(vkCmdSetColorBlendEnableEXT);
     X(vkCmdSetColorBlendEquationEXT);
+    X(vkCmdResetQueryPool);
     X(vkCmdResolveImage);
     X(vkCreateBuffer);
     X(vkCreateBufferView);
@@ -181,6 +184,7 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkCreatePipelineLayout);
     X(vkCreateQueryPool);
     X(vkCreateRenderPass);
+    X(vkCreateRenderPass2);
     X(vkCreateSampler);
     X(vkCreateSemaphore);
     X(vkCreateShaderModule);
@@ -225,7 +229,9 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkGetPipelineExecutableStatisticsKHR);
     X(vkGetSemaphoreCounterValue);
     X(vkMapMemory);
+    X(vkQueueBindSparse);
     X(vkQueueSubmit);
+    X(vkQueueSubmit2);
     X(vkResetFences);
     X(vkResetQueryPool);
     X(vkSetDebugUtilsObjectNameEXT);
@@ -233,6 +239,12 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     X(vkUnmapMemory);
     X(vkUpdateDescriptorSetWithTemplate);
     X(vkUpdateDescriptorSets);
+    X(vkGetBufferDeviceAddress);
+    X(vkGetDescriptorSetLayoutSizeEXT);
+    X(vkGetDescriptorSetLayoutBindingOffsetEXT);
+    X(vkGetDescriptorEXT);
+    X(vkCmdBindDescriptorBuffersEXT);
+    X(vkCmdSetDescriptorBufferOffsetsEXT);
     X(vkWaitForFences);
     X(vkWaitSemaphores);
 
@@ -251,6 +263,18 @@ void Load(VkDevice device, DeviceDispatch& dld) noexcept {
     if (!dld.vkCmdDrawIndirectCount) {
         Proc(dld.vkCmdDrawIndirectCount, dld, "vkCmdDrawIndirectCountKHR", device);
         Proc(dld.vkCmdDrawIndexedIndirectCount, dld, "vkCmdDrawIndexedIndirectCountKHR", device);
+    }
+
+    // Synchronization2 is core in Vulkan 1.3, otherwise requires VK_KHR_synchronization2
+    if (!dld.vkCmdPipelineBarrier2) {
+        Proc(dld.vkCmdPipelineBarrier2, dld, "vkCmdPipelineBarrier2KHR", device);
+    }
+    if (!dld.vkQueueSubmit2) {
+        Proc(dld.vkQueueSubmit2, dld, "vkQueueSubmit2KHR", device);
+    }
+
+    if (!dld.vkCreateRenderPass2) {
+        Proc(dld.vkCreateRenderPass2, dld, "vkCreateRenderPass2KHR", device);
     }
 #undef X
 }
@@ -289,6 +313,7 @@ bool Load(VkInstance instance, InstanceDispatch& dld) noexcept {
     X(vkDestroyDebugReportCallbackEXT);
     X(vkDestroySurfaceKHR);
     X(vkGetPhysicalDeviceFeatures2);
+    X(vkGetPhysicalDeviceFormatProperties2);
     X(vkGetPhysicalDeviceProperties2);
     X(vkGetPhysicalDeviceSurfaceCapabilitiesKHR);
     X(vkGetPhysicalDeviceSurfaceFormatsKHR);
@@ -435,8 +460,20 @@ Instance Instance::Create(u32 version, Span<const char*> layers, Span<const char
 #else
     constexpr VkFlags ci_flags{};
 #endif
-    // DO NOT TOUCH, breaks RNDA3!!
-    // Don't know why, but gloom + yellow line glitch appears
+    // DO NOT TOUCH OR CHANGE THE ENGINE NAME/APPLICATION NAME, breaks RNDA3!!
+    // AMD drivers have fixes for Yuzu
+    // if remove => gloom + yellow line glitch appears
+#ifdef __ANDROID__
+    const VkApplicationInfo application_info{
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pNext = nullptr,
+        .pApplicationName = "PUBGMobile",
+        .applicationVersion = VK_MAKE_VERSION(1, 7, 0),
+        .pEngineName = "UnrealEngine",
+        .engineVersion = VK_MAKE_VERSION(4, 23, 0),
+        .apiVersion = VK_API_VERSION_1_3,
+    };
+#else
     const VkApplicationInfo application_info{
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pNext = nullptr,
@@ -446,6 +483,7 @@ Instance Instance::Create(u32 version, Span<const char*> layers, Span<const char
         .engineVersion = VK_MAKE_VERSION(1, 3, 0),
         .apiVersion = VK_API_VERSION_1_3,
     };
+#endif
     const VkInstanceCreateInfo ci{
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pNext = nullptr,
@@ -706,6 +744,12 @@ RenderPass Device::CreateRenderPass(const VkRenderPassCreateInfo& ci) const {
     return RenderPass(object, handle, *dld);
 }
 
+RenderPass Device::CreateRenderPass2(const VkRenderPassCreateInfo2& ci) const {
+    VkRenderPass object;
+    Check(dld->vkCreateRenderPass2(handle, &ci, nullptr, &object));
+    return RenderPass(object, handle, *dld);
+}
+
 DescriptorSetLayout Device::CreateDescriptorSetLayout(
     const VkDescriptorSetLayoutCreateInfo& ci) const {
     VkDescriptorSetLayout object;
@@ -902,6 +946,23 @@ VkFormatProperties PhysicalDevice::GetFormatProperties(VkFormat format) const no
     VkFormatProperties properties;
     dld->vkGetPhysicalDeviceFormatProperties(physical_device, format, &properties);
     return properties;
+}
+
+VkFormatProperties3 PhysicalDevice::GetFormatProperties3(VkFormat format) const noexcept {
+    VkFormatProperties3 properties3{
+        .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3,
+        .pNext = nullptr,
+        .linearTilingFeatures = 0,
+        .optimalTilingFeatures = 0,
+        .bufferFeatures = 0,
+    };
+    VkFormatProperties2 properties2{
+        .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+        .pNext = &properties3,
+        .formatProperties = {},
+    };
+    dld->vkGetPhysicalDeviceFormatProperties2(physical_device, format, &properties2);
+    return properties3;
 }
 
 std::vector<VkExtensionProperties> PhysicalDevice::EnumerateDeviceExtensionProperties() const {

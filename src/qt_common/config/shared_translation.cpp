@@ -23,7 +23,7 @@ namespace ConfigurationShared {
 
 std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     std::unique_ptr<TranslationMap> translations = std::make_unique<TranslationMap>();
-    const auto& tr = [parent](const char* text) -> QString { return parent->tr(text); };
+    const auto& tr = [](const char* text) -> QString { return QCoreApplication::translate("ConfigurationShared", text); };
 
 #define INSERT(SETTINGS, ID, NAME, TOOLTIP)                                                        \
     translations->insert(std::pair{SETTINGS::values.ID.Id(), std::pair{(NAME), (TOOLTIP)}})
@@ -92,12 +92,9 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Change the accuracy of the emulated CPU (for debugging only)."));
     INSERT(Settings, cpu_backend, tr("Backend:"), QString());
 
-    INSERT(Settings, fast_cpu_time, tr("CPU Overclock"),
-           tr("Overclocks the emulated CPU to remove some FPS limiters. Weaker CPUs may see "
-              "reduced performance, "
-              "and certain games may behave improperly.\nUse Boost (1700MHz) to run at the "
-              "Switch's highest native "
-              "clock, or Fast (2000MHz) to run at 2x clock."));
+    INSERT(Settings, cpu_clock, tr("CPU Clocks"),
+           tr("Raises the clock the emulated CPU reports, which removes some FPS limiters.\n"
+              "Weaker CPUs may see reduced performance, and certain games may behave improperly."));
 
     INSERT(Settings, use_custom_cpu_ticks, QString(), QString());
     INSERT(Settings, cpu_ticks, tr("Custom CPU Ticks"),
@@ -153,6 +150,10 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, anti_aliasing, tr("Anti-Aliasing Method:"),
            tr("The anti-aliasing method to use.\nSMAA offers the best quality.\nFXAA "
               "can produce a more stable picture in lower resolutions."));
+    INSERT(Settings, post_shader_chain, QString(), QString());
+    INSERT(Settings, post_shader_preset, QString(), QString());
+    INSERT(Settings, post_shader_enabled, tr("Enable post-processing effects"),
+           tr("Applies post-processing effects to the final image."));
     INSERT(Settings, fullscreen_mode, tr("Fullscreen Mode:"),
            tr("The method used to render the window in fullscreen.\nBorderless offers the best "
               "compatibility with the on-screen keyboard that some games request for "
@@ -193,9 +194,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
     INSERT(Settings, skip_cpu_inner_invalidation, tr("Skip CPU Inner Invalidation"),
            tr("Skips certain cache invalidations during memory updates, reducing CPU usage and "
               "improving latency. This may cause soft-crashes."));
-    INSERT(Settings, antiflicker, tr("Anti-Flicker"),
-           tr("Forces GPU fence callbacks to wait for submitted GPU work.\n"
-              "Use with Fast GPU mode, to avoid flicker with lower performance impact."));
     INSERT(Settings, vsync_mode, tr("VSync Mode:"),
            tr("FIFO (VSync) does not drop frames or exhibit tearing but is limited by the screen "
               "refresh rate.\nFIFO Relaxed allows tearing as it recovers from a slow down.\n"
@@ -223,17 +221,17 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the quality of texture rendering at oblique angles.\nSafe to set at 16x on "
               "most GPUs."));
     INSERT(Settings, gpu_accuracy, tr("GPU Mode:"),
-           tr("Controls the GPU emulation mode.\nMost games render fine with Fast or Balanced "
-              "modes, but Accurate is still "
+           tr("Controls the GPU emulation mode.\nMost games render fine with Fast, but Accurate is still "
               "required for some.\nParticles tend to only render correctly with Accurate mode."));
     INSERT(Settings, dma_accuracy, tr("DMA Accuracy:"),
-           tr("Controls the DMA precision accuracy. Safe precision fixes issues in some games but "
-              "may degrade performance."));
+           tr("Controls the DMA read mode.\nUnsafe is faster, while Safe is more stable and can fix issues in some games.\nDefault follows the GPU Accuracy setting."));
+    INSERT(Settings, gpu_fence_behavior, tr("GPU Fence Behavior:"),
+           tr("Controls the GPU fence synchronization behavior.\nImmediate is the fastest option, but can introduce some issues.\nBalanced offers better compatibility and may fix issues in some games.\nAccurate further improves compatibility at the cost of some performance.\nDefault follows the GPU Mode setting."));
     INSERT(Settings, use_asynchronous_shaders, tr("Enable asynchronous shader compilation"),
            tr("May reduce shader stutter."));
-    INSERT(Settings, fast_gpu_time, tr("Fast GPU Time"),
-           tr("Overclocks the emulated GPU to increase dynamic resolution and render "
-              "distance.\nUse 256 for maximal performance and 512 for maximal graphics fidelity."));
+    INSERT(Settings, gpu_clock, tr("GPU Clocks"),
+           tr("Makes the game believe GPU work finishes faster than it does, so it stops lowering "
+              "resolution and render distance to fit the Switch's clocks."));
     INSERT(Settings, gpu_unswizzle_enabled, tr("GPU Unswizzle"),
            tr("Accelerates BCn 3D texture decoding using GPU compute.\n"
               "Disable if experiencing crashes or graphical glitches."));
@@ -301,6 +299,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
            tr("Controls the seed of the random number generator.\nMainly used for speedrunning."));
     INSERT(Settings, rng_seed_enabled, QString(), QString());
     INSERT(Settings, device_name, tr("Device Name"), tr("The name of the console."));
+    INSERT(Settings, program_args, tr("Homebrew Args"),
+           tr("Command-line arguments passed to homebrew at launch (e.g. -noglsl)."));
     INSERT(Settings, custom_rtc, tr("Custom RTC Date:"),
            tr("This option allows to change the clock of the console.\n"
               "Can be used to manipulate time in games."));
@@ -342,9 +342,6 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
               "it bypasses such prompts and directly exits the emulation."));
     INSERT(UISettings, hide_mouse, tr("Hide mouse on inactivity"),
            tr("Hides the mouse after 2.5s of inactivity."));
-    INSERT(UISettings, controller_applet_disabled, tr("Disable controller applet"),
-           tr("Forcibly disables the use of the controller applet in emulated programs.\n"
-              "When a program attempts to open the controller applet, it is immediately closed."));
     INSERT(UISettings, check_for_updates, tr("Check for updates"),
            tr("Whether or not to check for updates upon startup."));
 
@@ -369,8 +366,8 @@ std::unique_ptr<TranslationMap> InitializeTranslations(QObject* parent) {
 std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
     std::unique_ptr<ComboboxTranslationMap> translations =
         std::make_unique<ComboboxTranslationMap>();
-    const auto& tr = [&](const char* text, const char* context = "") {
-        return parent->tr(text, context);
+    const auto& tr = [](const char* text, const char* context = "") {
+        return QCoreApplication::translate("ConfigurationShared", text, context);
     };
 
 #define PAIR(ENUM, VALUE, TRANSLATION) {static_cast<u32>(Settings::ENUM::VALUE), (TRANSLATION)}
@@ -380,6 +377,7 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           {
                               PAIR(AppletMode, HLE, tr("Custom frontend")),
                               PAIR(AppletMode, LLE, tr("Real applet")),
+                              PAIR(AppletMode, Disabled, tr("Disabled")),
                           }});
 
     translations->insert({Settings::EnumMetadata<Settings::SpirvOptimizeMode>::Index(),
@@ -426,7 +424,6 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
     translations->insert({Settings::EnumMetadata<Settings::GpuAccuracy>::Index(),
                           {
                               PAIR(GpuAccuracy, Low, tr("Fast")),
-                              PAIR(GpuAccuracy, Medium, tr("Balanced")),
                               PAIR(GpuAccuracy, High, tr("Accurate")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::DmaAccuracy>::Index(),
@@ -434,6 +431,13 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(DmaAccuracy, Default, tr("Default")),
                               PAIR(DmaAccuracy, Unsafe, tr("Unsafe (fast)")),
                               PAIR(DmaAccuracy, Safe, tr("Safe (stable)")),
+                          }});
+    translations->insert({Settings::EnumMetadata<Settings::GpuFenceBehavior>::Index(),
+                          {
+                              PAIR(GpuFenceBehavior, Default, tr("Default")),
+                              PAIR(GpuFenceBehavior, Immediate, tr("Immediate")),
+                              PAIR(GpuFenceBehavior, Balanced, tr("Balanced")),
+                              PAIR(GpuFenceBehavior, Accurate, tr("Accurate")),
                           }});
     translations->insert(
         {Settings::EnumMetadata<Settings::CpuAccuracy>::Index(),
@@ -517,9 +521,6 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                               PAIR(AnisotropyMode, X4, tr("4x")),
                               PAIR(AnisotropyMode, X8, tr("8x")),
                               PAIR(AnisotropyMode, X16, tr("16x")),
-                              PAIR(AnisotropyMode, X32, tr("32x")),
-                              PAIR(AnisotropyMode, X64, tr("64x")),
-                              PAIR(AnisotropyMode, None, tr("None")),
                           }});
     translations->insert(
         {Settings::EnumMetadata<Settings::Language>::Index(),
@@ -631,9 +632,9 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
                           }});
     translations->insert({Settings::EnumMetadata<Settings::CpuClock>::Index(),
                           {
-                              PAIR(CpuClock, Off, tr("Off")),
-                              PAIR(CpuClock, Boost, tr("Boost (1700MHz)")),
-                              PAIR(CpuClock, Fast, tr("Fast (2000MHz)")),
+                              PAIR(CpuClock, Normal, tr("Normal")),
+                              PAIR(CpuClock, Boost, tr("Boost")),
+                              PAIR(CpuClock, Overclock, tr("Overclock")),
                           }});
     translations->insert(
         {Settings::EnumMetadata<Settings::ConfirmStop>::Index(),
@@ -642,11 +643,11 @@ std::unique_ptr<ComboboxTranslationMap> ComboboxEnumeration(QObject* parent) {
              PAIR(ConfirmStop, Ask_Based_On_Game, tr("Only if game specifies not to stop")),
              PAIR(ConfirmStop, Ask_Never, tr("Never ask")),
          }});
-    translations->insert({Settings::EnumMetadata<Settings::GpuOverclock>::Index(),
+    translations->insert({Settings::EnumMetadata<Settings::GpuClock>::Index(),
                           {
-                              PAIR(GpuOverclock, Normal, tr("Off")),
-                              PAIR(GpuOverclock, Medium, tr("Medium (256)")),
-                              PAIR(GpuOverclock, High, tr("High (512)")),
+                              PAIR(GpuClock, Normal, tr("Normal")),
+                              PAIR(GpuClock, Boost, tr("Boost")),
+                              PAIR(GpuClock, Overclock, tr("Overclock")),
                           }});
     translations->insert({Settings::EnumMetadata<Settings::GpuUnswizzleSize>::Index(),
                           {

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
@@ -24,8 +24,8 @@ static u64 GetCurrentBuildID(const Core::System::CurrentBuildProcessID& id) {
     return out;
 }
 
-IBcatService::IBcatService(Core::System& system_, BcatBackend& backend_)
-    : ServiceFramework{system_, "IBcatService"}, backend{backend_},
+IBcatService::IBcatService(Core::System& system_, BcatBackend& backend_, u64 program_id_)
+    : ServiceFramework{system_, "IBcatService"}, backend{backend_}, program_id{program_id_},
       progress{{
           ProgressServiceBackend{system_, "Normal"},
           ProgressServiceBackend{system_, "Directory"},
@@ -70,8 +70,7 @@ Result IBcatService::RequestSyncDeliveryCache(
     LOG_DEBUG(Service_BCAT, "called");
 
     auto& progress_backend{GetProgressBackend(SyncType::Normal)};
-    backend.Synchronize({system.GetApplicationProcessProgramID(),
-                         GetCurrentBuildID(system.GetApplicationProcessBuildID())},
+    backend.Synchronize(system.Kernel(), {program_id, GetCurrentBuildID(system.GetApplicationProcessBuildID())},
                         GetProgressBackend(SyncType::Normal));
 
     *out_interface = std::make_shared<IDeliveryCacheProgressService>(
@@ -86,9 +85,8 @@ Result IBcatService::RequestSyncDeliveryCacheWithDirectoryName(
     LOG_DEBUG(Service_BCAT, "called, name={}", name);
 
     auto& progress_backend{GetProgressBackend(SyncType::Directory)};
-    backend.SynchronizeDirectory({system.GetApplicationProcessProgramID(),
-                                  GetCurrentBuildID(system.GetApplicationProcessBuildID())},
-                                 name, progress_backend);
+    backend.SynchronizeDirectory(system.Kernel(), {program_id, GetCurrentBuildID(system.GetApplicationProcessBuildID())},
+        name, progress_backend);
 
     *out_interface = std::make_shared<IDeliveryCacheProgressService>(
         system, progress_backend.GetEvent(), progress_backend.GetImpl());
@@ -107,7 +105,7 @@ Result IBcatService::SetPassphrase(u64 application_id,
     std::memcpy(passphrase.data(), passphrase_buffer.data(),
                 (std::min)(passphrase.size(), passphrase_buffer.size()));
 
-    backend.SetPassphrase(application_id, passphrase);
+    backend.SetPassphrase(system.Kernel(), application_id, passphrase);
     R_SUCCEED();
 }
 
@@ -120,7 +118,7 @@ Result IBcatService::ClearDeliveryCacheStorage(u64 application_id) {
     LOG_DEBUG(Service_BCAT, "called, title_id={:016X}", application_id);
 
     R_UNLESS(application_id != 0, ResultInvalidArgument);
-    R_UNLESS(backend.Clear(application_id), FileSys::ResultPermissionDenied);
+    R_UNLESS(backend.Clear(system.Kernel(), application_id), FileSys::ResultPermissionDenied);
     R_SUCCEED();
 }
 

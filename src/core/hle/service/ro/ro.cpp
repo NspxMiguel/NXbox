@@ -16,15 +16,22 @@
 #include "core/hle/service/ro/ro_types.h"
 #include "core/hle/service/server_manager.h"
 #include "core/hle/service/service.h"
+#ifdef HAS_NCE
+#include "core/arm/nce/patcher.h"
+#include "core/hle/kernel/k_shared_memory.h"
+#endif
 
 namespace Service::RO {
 
 namespace {
 
-// Convenience definitions.
-constexpr size_t MaxSessions = 0x3;
-constexpr size_t MaxNrrInfos = 0x40;
-constexpr size_t MaxNroInfos = 0x40;
+// Atmosphere defines as follows:
+// Sessions = 0x03, NrrInfos = 0x40, NroInfos = 0x40
+// This may not be enough for some mods (plugin.nro dependant games) like SSBU
+// Suppose someone loads like 64 plugins of these, now what?
+constexpr size_t MaxSessions = 0x03; // No change
+constexpr size_t MaxNrrInfos = 0x100; // Up to 256 NRRs
+constexpr size_t MaxNroInfos = 0x100; // Up to 256 NROs
 
 constexpr u64 InvalidProcessId = 0xffffffffffffffffULL;
 constexpr u64 InvalidContextId = 0xffffffffffffffffULL;
@@ -54,7 +61,7 @@ struct NrrInfo {
 struct ProcessContext {
     constexpr ProcessContext() = default;
 
-    void Initialize(Kernel::KProcess* process, u64 process_id) {
+    void Initialize(Kernel::KernelCore& kernel, Kernel::KProcess* process, u64 process_id) {
         ASSERT(!m_in_use);
 
         m_nro_in_use = {};
@@ -67,15 +74,15 @@ struct ProcessContext {
         m_in_use = true;
 
         if (m_process) {
-            m_process->Open();
+            m_process->Open(kernel);
         }
     }
 
-    void Finalize() {
+    void Finalize(Kernel::KernelCore& kernel) {
         ASSERT(m_in_use);
 
         if (m_process) {
-            m_process->Close();
+            m_process->Close(kernel);
         }
 
         m_nro_in_use = {};
@@ -304,7 +311,7 @@ class RoContext {
 public:
     explicit RoContext() = default;
 
-    Result RegisterProcess(size_t* out_context_id, Kernel::KProcess* process, u64 process_id) {
+    Result RegisterProcess(Kernel::KernelCore& kernel, size_t* out_context_id, Kernel::KProcess* process, u64 process_id) {
         // Validate process id.
         R_UNLESS(process->GetProcessId() == process_id, RO::ResultInvalidProcess);
 
@@ -312,7 +319,7 @@ public:
         R_UNLESS(this->GetContextByProcessId(process_id) == nullptr, RO::ResultInvalidSession);
 
         // Allocate a context to manage the process handle.
-        *out_context_id = this->AllocateContext(process, process_id);
+        *out_context_id = this->AllocateContext(kernel, process, process_id);
 
         R_SUCCEED();
     }
@@ -324,8 +331,8 @@ public:
         R_SUCCEED();
     }
 
-    void UnregisterProcess(size_t context_id) {
-        this->FreeContext(context_id);
+    void UnregisterProcess(Kernel::KernelCore& kernel, size_t context_id) {
+        this->FreeContext(kernel, context_id);
     }
 
     Result RegisterModuleInfo(size_t context_id, u64 nrr_address, u64 nrr_size, NrrKind nrr_kind,
@@ -383,7 +390,7 @@ public:
         R_SUCCEED();
     }
 
-    Result MapManualLoadModuleMemory(u64* out_address, size_t context_id, u64 nro_address,
+    Result MapManualLoadModuleMemory(Kernel::KernelCore& kernel, u64* out_address, size_t context_id, u64 nro_address,
                                      u64 nro_size, u64 bss_address, u64 bss_size) {
         // Get context.
         ProcessContext* context = this->GetContextById(context_id);
@@ -418,7 +425,31 @@ public:
         R_TRY(context->ValidateNro(std::addressof(nro_info->module_id), std::addressof(rx_size),
                                    std::addressof(ro_size), std::addressof(rw_size),
                                    nro_info->base_address, nro_size, bss_size));
+#ifdef HAS_NCE
+        if (Settings::IsNceEnabled()) {
+            auto* process = context->GetProcess();
+            auto& memory = process->GetMemory();
 
+            std::vector<u8> image(total_size);
+            memory.ReadBlock(nro_info->base_address, image.data(), rx_size);
+
+            Kernel::CodeSet::Segment code{.size = static_cast<u32>(rx_size)};
+            Core::NCE::Patcher patch;
+            patch.PatchText(image, code);
+            patch.RelocateAndCopy(nro_info->base_address, code, image, nullptr);
+
+            const u64 patch_address = nro_info->base_address + total_size;
+            const size_t patch_size = patch.GetSectionSize();
+            constexpr auto permission = Kernel::Svc::MemoryPermission::ReadExecute;
+
+            auto* patch_memory = Kernel::KSharedMemory::Create(kernel);
+            R_TRY(patch_memory->Initialize(kernel, kernel.System().DeviceMemory(), process, permission, permission, patch_size));
+            std::memcpy(patch_memory->GetPointer(), image.data() + total_size, patch_size);
+            R_TRY(process->AddSharedMemory(kernel, patch_memory, patch_address, patch_size));
+            R_TRY(patch_memory->Map(*process, patch_address, patch_size, permission));
+            memory.WriteBlock(nro_info->base_address, image.data(), rx_size);
+        }
+#endif
         // Set NRO perms.
         R_TRY(SetNroPerms(context->GetProcess(), nro_info->base_address, rx_size, ro_size,
                           rw_size + bss_size));
@@ -478,13 +509,13 @@ private:
         return nullptr;
     }
 
-    size_t AllocateContext(Kernel::KProcess* process, u64 process_id) {
+    size_t AllocateContext(Kernel::KernelCore& kernel, Kernel::KProcess* process, u64 process_id) {
         // Find a free process context.
         for (size_t i = 0; i < MaxSessions; i++) {
             ProcessContext* context = std::addressof(process_contexts[i]);
 
             if (context->IsFree()) {
-                context->Initialize(process, process_id);
+                context->Initialize(kernel, process, process_id);
                 return i;
             }
         }
@@ -493,9 +524,9 @@ private:
         UNREACHABLE();
     }
 
-    void FreeContext(size_t context_id) {
+    void FreeContext(Kernel::KernelCore& kernel, size_t context_id) {
         if (ProcessContext* context = GetContextById(context_id); context != nullptr) {
-            context->Finalize();
+            context->Finalize(kernel);
         }
     }
 };
@@ -522,13 +553,13 @@ public:
     }
 
     ~RoInterface() {
-        m_ro->UnregisterProcess(m_context_id);
+        m_ro->UnregisterProcess(system.Kernel(), m_context_id);
     }
 
     Result MapManualLoadModuleMemory(Out<u64> out_load_address, ClientProcessId client_pid,
                                      u64 nro_address, u64 nro_size, u64 bss_address, u64 bss_size) {
         R_TRY(m_ro->ValidateProcess(m_context_id, *client_pid));
-        R_RETURN(m_ro->MapManualLoadModuleMemory(out_load_address.Get(), m_context_id, nro_address,
+        R_RETURN(m_ro->MapManualLoadModuleMemory(system.Kernel(), out_load_address.Get(), m_context_id, nro_address,
                                                  nro_size, bss_address, bss_size));
     }
 
@@ -548,20 +579,16 @@ public:
         R_RETURN(m_ro->UnregisterModuleInfo(m_context_id, nrr_address));
     }
 
-    Result RegisterProcessHandle(ClientProcessId client_pid,
-                                 InCopyHandle<Kernel::KProcess> process) {
+    Result RegisterProcessHandle(ClientProcessId client_pid, InCopyHandle<Kernel::KProcess> process) {
         // Register the process.
-        R_RETURN(m_ro->RegisterProcess(std::addressof(m_context_id), process.Get(), *client_pid));
+        R_RETURN(m_ro->RegisterProcess(system.Kernel(), std::addressof(m_context_id), process.Get(), *client_pid));
     }
 
-    Result RegisterProcessModuleInfo(ClientProcessId client_pid, u64 nrr_address, u64 nrr_size,
-                                     InCopyHandle<Kernel::KProcess> process) {
+    Result RegisterProcessModuleInfo(ClientProcessId client_pid, u64 nrr_address, u64 nrr_size, InCopyHandle<Kernel::KProcess> process) {
         // Validate the process.
         R_TRY(m_ro->ValidateProcess(m_context_id, *client_pid));
-
         // Register the module.
-        R_RETURN(m_ro->RegisterModuleInfo(m_context_id, nrr_address, nrr_size, m_nrr_kind,
-                                          m_nrr_kind == NrrKind::JitPlugin));
+        R_RETURN(m_ro->RegisterModuleInfo(m_context_id, nrr_address, nrr_size, m_nrr_kind, m_nrr_kind == NrrKind::JitPlugin));
     }
 
 private:
@@ -572,6 +599,19 @@ private:
 
 } // namespace
 
+
+class IDebugMonitorInterface final : public ServiceFramework<IDebugMonitorInterface> {
+public:
+    explicit IDebugMonitorInterface(Core::System& system_)
+        : ServiceFramework{system_, "ro:dmnt"}
+    {
+        static const FunctionInfo functions[] = {
+            { 0, nullptr, "GetProcessModuleInfo" },
+        };
+        RegisterHandlers(functions);
+    }
+};
+
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
@@ -581,13 +621,9 @@ void LoopProcess(Core::System& system) {
         return std::make_shared<RoInterface>(system, "ldr:ro", ro, NrrKind::User);
     };
 
-    const auto RoInterfaceFactoryForJitPlugin = [&, ro] {
-        return std::make_shared<RoInterface>(system, "ro:1", ro, NrrKind::JitPlugin);
-    };
-
-    server_manager->RegisterNamedService("ldr:ro", std::move(RoInterfaceFactoryForUser));
-    server_manager->RegisterNamedService("ro:1", std::move(RoInterfaceFactoryForJitPlugin));
-
+    server_manager->RegisterNamedService("ldr:ro", std::move(RoInterfaceFactoryForUser), 2);
+    server_manager->RegisterNamedService("ro:1", std::make_shared<RoInterface>(system, "ro:1", ro, NrrKind::JitPlugin), 2);
+    server_manager->RegisterNamedService("ro:dmnt", std::make_shared<IDebugMonitorInterface>(system), 2);
     ServerManager::RunServer(std::move(server_manager));
 }
 

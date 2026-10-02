@@ -25,9 +25,8 @@ namespace Tegra::Engines {
 /// First register id that is actually a Macro call.
 constexpr u32 MacroRegistersStart = 0xE00;
 
-Maxwell3D::Maxwell3D(Core::System& system_, MemoryManager& memory_manager_)
+Maxwell3D::Maxwell3D(MemoryManager& memory_manager_)
     : draw_manager()
-    , system{system_}
     , memory_manager{memory_manager_}
 #ifdef ARCHITECTURE_x86_64
     , macro_engine(bool(Settings::values.disable_macro_jit))
@@ -201,28 +200,23 @@ bool Maxwell3D::IsMethodExecutable(u32 method) {
     }
 }
 
-void Maxwell3D::ProcessMacro(u32 method, const u32* base_start, u32 amount, bool is_last_call) {
+void Maxwell3D::ProcessMacro(Core::System& system, u32 method, const u32* base_start, u32 amount, bool is_last_call) {
     if (executing_macro == 0) {
         // A macro call must begin by writing the macro method's register, not its argument.
-        ASSERT_MSG((method % 2) == 0,
-                   "Can't start macro execution by writing to the ARGS register");
+        ASSERT((method % 2) == 0 && "Can't start macro execution by writing to the ARGS register");
         executing_macro = method;
     }
 
     macro_params.insert(macro_params.end(), base_start, base_start + amount);
-    for (size_t i = 0; i < amount; i++) {
-        macro_addresses.push_back(current_dma_segment + i * sizeof(u32));
-    }
     macro_segments.emplace_back(current_dma_segment, amount);
     current_macro_dirty |= current_dirty;
     current_dirty = false;
 
     // Call the macro when there are no more parameters in the command buffer
     if (is_last_call) {
-        ConsumeSink();
-        CallMacroMethod(executing_macro, macro_params);
+        ConsumeSink(system);
+        CallMacroMethod(system, executing_macro, macro_params);
         macro_params.clear();
-        macro_addresses.clear();
         macro_segments.clear();
         current_macro_dirty = false;
     }
@@ -287,7 +281,7 @@ u32 Maxwell3D::ProcessShadowRam(u32 method, u32 argument) {
     return argument;
 }
 
-void Maxwell3D::ConsumeSinkImpl() {
+void Maxwell3D::ConsumeSinkImpl(Core::System& system) {
     const auto control = shadow_state.shadow_ram_control;
     if (control == Regs::ShadowRamControl::Track || control == Regs::ShadowRamControl::TrackWithFilter) {
         for (auto [method, value] : method_sink) {
@@ -378,7 +372,7 @@ void Maxwell3D::ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argume
     }
 }
 
-void Maxwell3D::CallMacroMethod(u32 method, const std::vector<u32>& parameters) {
+void Maxwell3D::CallMacroMethod(Core::System& system, u32 method, const std::vector<u32>& parameters) {
     // Reset the current macro.
     executing_macro = 0;
 
@@ -387,11 +381,11 @@ void Maxwell3D::CallMacroMethod(u32 method, const std::vector<u32>& parameters) 
         ((method - MacroRegistersStart) >> 1) % static_cast<u32>(macro_positions.size());
 
     // Execute the current macro.
-    macro_engine.Execute(*this, macro_positions[entry], parameters);
+    macro_engine.Execute(system, *this, macro_positions[entry], parameters);
     draw_manager.DrawDeferred(*this);
 }
 
-void Maxwell3D::CallMethod(u32 method, u32 method_argument, bool is_last_call) {
+void Maxwell3D::CallMethod(Core::System& system, u32 method, u32 method_argument, bool is_last_call) {
     // It is an error to write to a register other than the current macro's ARG register before
     // it has finished execution.
     if (executing_macro != 0) {
@@ -401,7 +395,7 @@ void Maxwell3D::CallMethod(u32 method, u32 method_argument, bool is_last_call) {
     // Methods after 0xE00 are special, they're actually triggers for some microcode that was
     // uploaded to the GPU during initialization.
     if (method >= MacroRegistersStart) {
-        ProcessMacro(method, &method_argument, 1, is_last_call);
+        ProcessMacro(system, method, &method_argument, 1, is_last_call);
         return;
     }
 
@@ -411,12 +405,11 @@ void Maxwell3D::CallMethod(u32 method, u32 method_argument, bool is_last_call) {
     ProcessMethodCall(method, argument, method_argument, is_last_call);
 }
 
-void Maxwell3D::CallMultiMethod(u32 method, const u32* base_start, u32 amount,
-                                u32 methods_pending) {
+void Maxwell3D::CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) {
     // Methods after 0xE00 are special, they're actually triggers for some microcode that was
     // uploaded to the GPU during initialization.
     if (method >= MacroRegistersStart) {
-        ProcessMacro(method, base_start, amount, amount == methods_pending);
+        ProcessMacro(system, method, base_start, amount, amount == methods_pending);
         return;
     }
     switch (method) {
@@ -443,9 +436,17 @@ void Maxwell3D::CallMultiMethod(u32 method, const u32* base_start, u32 amount,
         upload_state.ProcessData(base_start, amount);
         return;
     }
+    case MAXWELL3D_REG_INDEX(draw_inline_index):
+    case MAXWELL3D_REG_INDEX(inline_index_2x16.even):
+    case MAXWELL3D_REG_INDEX(inline_index_4x8.index0):
+        if (shadow_state.shadow_ram_control != Regs::ShadowRamControl::Replay) {
+            ProcessInlineIndexMultiData(method, base_start, amount);
+            break;
+        }
+        [[fallthrough]];
     default:
         for (u32 i = 0; i < amount; i++) {
-            CallMethod(method, base_start[i], methods_pending - i <= 1);
+            CallMethod(system, method, base_start[i], methods_pending - i <= 1);
         }
         break;
     }
@@ -467,7 +468,7 @@ void Maxwell3D::ProcessFirmwareCall4() {
     regs.shadow_scratch[0] = 1;
 }
 
-void Maxwell3D::StampQueryResult(u64 payload, bool long_query) {
+void Maxwell3D::StampQueryResult(Core::System& system, u64 payload, bool long_query) {
     const GPUVAddr sequence_address{regs.report_semaphore.Address()};
     if (long_query) {
         memory_manager.Write<u64>(sequence_address + sizeof(u64), system.GPU().GetTicks());
@@ -627,6 +628,15 @@ void Maxwell3D::ProcessCBMultiData(const u32* start_base, u32 amount) {
 
 void Maxwell3D::ProcessCBData(u32 value) {
     ProcessCBMultiData(&value, 1);
+}
+
+void Maxwell3D::ProcessInlineIndexMultiData(u32 method, const u32* start_base, u32 amount) {
+    if (amount == 0) {
+        return;
+    }
+    const u32 argument = ProcessShadowRam(method, start_base[amount - 1]);
+    ProcessDirtyRegisters(method, argument);
+    draw_manager.SetInlineIndexBuffer(*this, method, start_base, amount);
 }
 
 Texture::TICEntry Maxwell3D::GetTICEntry(u32 tic_index) const {

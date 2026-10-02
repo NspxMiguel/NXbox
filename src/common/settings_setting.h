@@ -6,14 +6,13 @@
 
 #pragma once
 
+#include <algorithm>
 #include <limits>
-#include <map>
 #include <optional>
 #include <stdexcept>
 #include <string>
-#include <typeindex>
-#include <typeinfo>
-#include <fmt/core.h>
+#include <type_traits>
+#include <fmt/ranges.h>
 #include "common/common_types.h"
 #include "common/settings_common.h"
 #include "common/settings_enums.h"
@@ -101,7 +100,15 @@ public:
      * @param val The desired value
      */
     virtual void SetValue(const Type& val) {
-        Type temp{ranged ? std::clamp(val, minimum, maximum) : val};
+        // Enums have a maximal range which they're allowed
+        Type temp{};
+        if constexpr (std::is_enum_v<Type>) {
+            auto const r_min = std::underlying_type_t<Type>(0);
+            auto const r_max = std::underlying_type_t<Type>(EnumMetadata<Type>::GetLast());
+            temp = Type(std::clamp(std::underlying_type_t<Type>(val), r_min, r_max));
+        } else {
+            temp = ranged ? std::clamp(val, this->minimum, this->maximum) : val;
+        }
         std::swap(value, temp);
     }
 
@@ -129,7 +136,7 @@ protected:
         } else if constexpr (std::is_floating_point_v<Type>) {
             return fmt::format("{:f}", value_);
         } else if constexpr (std::is_enum_v<Type>) {
-            return std::to_string(u32(value_));
+            return std::to_string(std::underlying_type_t<Type>(value_));
         } else {
             return std::to_string(value_);
         }
@@ -371,7 +378,15 @@ public:
      * @param val The new value
      */
     void SetValue(const Type& val) override final {
-        Type temp{ranged ? std::clamp(val, this->minimum, this->maximum) : val};
+        // Enums have a maximal range which they're allowed
+        Type temp{};
+        if constexpr (std::is_enum_v<Type>) {
+            auto const r_min = std::underlying_type_t<Type>(0);
+            auto const r_max = std::underlying_type_t<Type>(EnumMetadata<Type>::GetLast());
+            temp = Type(std::clamp(std::underlying_type_t<Type>(val), r_min, r_max));
+        } else {
+            temp = ranged ? std::clamp(val, this->minimum, this->maximum) : val;
+        }
         if (use_global) {
             std::swap(this->value, temp);
         } else {

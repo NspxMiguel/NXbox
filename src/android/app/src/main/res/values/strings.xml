@@ -3,7 +3,7 @@
 
     <!-- General application strings -->
     <string name="app_name" translatable="false">Eden</string>
-    <string name="app_disclaimer">This software will run games for the Nintendo Switch game console. No game titles or keys are included.&lt;br /&gt;&lt;br /&gt;Before you begin, please locate your <![CDATA[<b> prod.keys </b>]]> file on your device storage.&lt;br /&gt;&lt;br /&gt;<![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Learn more</a>]]></string>
+    <string name="app_disclaimer">This software will run games for the Nintendo Switch game console. No game titles or keys are included.&lt;br /&gt;&lt;br /&gt;Before you begin, please locate your <![CDATA[<b> prod.keys </b>]]> file on your device storage.&lt;br /&gt;&lt;br /&gt;<![CDATA[<a href=\"https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/QuickStart.md\">Learn more</a>]]></string>
     <string name="notice_notification_channel_name">Notices and errors</string>
     <string name="notice_notification_channel_id" translatable="false">noticesAndErrors</string>
     <string name="notice_notification_channel_description">Shows notifications when something goes wrong.</string>
@@ -111,7 +111,7 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">NVDEC Emulation</string>
-    <string name="nvdec_emulation_description">Select how video decoding (NVDEC) is handled during cutscenes and intros.</string>
+    <string name="nvdec_emulation_description">Change to CPU if a crash occurs on cinematics.</string>
     <string name="nvdec_emulation_cpu" translatable="false">CPU</string>
     <string name="nvdec_emulation_gpu" translatable="false">GPU</string>
     <string name="nvdec_emulation_none">None</string>
@@ -298,6 +298,87 @@
     <string name="gpu_driver_fetcher">GPU driver fetcher</string>
     <string name="gpu_driver_manager">GPU driver manager</string>
     <string name="install_gpu_driver_description">Install alternative drivers for potentially better performance or accuracy</string>
+    <string name="post_processing">Post-Processing Effects</string>
+    <string name="post_processing_description">ReShade FX effects applied after rendering</string>
+    <string name="post_processing_per_game_description">Configure the effect chain for this game</string>
+    <string name="post_processing_add">Add effect</string>
+    <string name="post_processing_remove">Remove</string>
+    <string name="post_processing_open_list">Open list</string>
+    <string name="post_processing_close_list">Close list</string>
+    <string name="post_processing_remove_all">Remove effects</string>
+    <string name="post_processing_preset_locked">Preset active. Edit it in Post-Processing Effects before starting a game.</string>
+    <string name="post_processing_preset_modified">Values changed from the original preset.</string>
+    <string name="post_processing_presets">Presets</string>
+    <string name="post_processing_preset_new">New preset</string>
+    <string name="post_processing_preset_new_description">Saves the effects you have loaded, with their current values, as a preset you can pick later.</string>
+    <string name="post_processing_preset_name_invalid">Give the preset a name without an equals sign.</string>
+    <string name="post_processing_preset_none">No preset</string>
+    <string name="post_processing_preset_delete">Delete preset</string>
+    <string name="post_processing_preset_reset">Reset preset values</string>
+    <string name="post_processing_reset">Reset to default</string>
+    <string name="post_processing_empty">No effects found. Place .fx files in this folder:</string>
+    <string name="frame_gen">Frame generation</string>
+    <string name="frame_gen_per_game_description">Configure frame generation for this game</string>
+    <string name="frame_gen_description">Insert interpolated frames between rendered ones using Lossless Scaling. Forces FIFO presentation while enabled.</string>
+    <string name="frame_gen_multiplier">Frame multiplier</string>
+    <string name="frame_gen_multiplier_description">How many frames to display for each rendered frame. Higher values cost proportionally more GPU time. Asking for more than your display can present will slow emulation down.</string>
+    <string name="frame_gen_multiplier_2x">2x</string>
+    <string name="frame_gen_multiplier_3x">3x</string>
+    <string name="frame_gen_multiplier_4x">4x</string>
+    <string name="frame_gen_target_rate">Target frame rate</string>
+    <string name="frame_gen_target_rate_description">Pick the rate your display can actually show. The multiplier then rises or falls on its own to hold it, and rolls back any step that makes the game itself run slower.</string>
+    <string name="frame_gen_target_rate_off">Use a fixed multiplier</string>
+    <string name="frame_gen_target_rate_60">60 FPS</string>
+    <string name="frame_gen_target_rate_90">90 FPS</string>
+    <string name="frame_gen_target_rate_120">120 FPS</string>
+    <string name="frame_gen_on">On</string>
+    <string name="frame_gen_off">Off</string>
+    <string name="frame_gen_fixed">Fixed</string>
+    <string name="frame_gen_flow_auto">Auto</string>
+    <string name="frame_gen_quick_description">Turn frame generation on or off and choose the frame multiplier.</string>
+    <string name="frame_gen_target_rate_quick_description">Generate frames up to a target frame rate. The multiplier adjusts on its own.</string>
+    <string name="frame_gen_flow_scale_quick_description">Resolution used to estimate motion between frames. Lower values save GPU time.</string>
+    <string name="frame_gen_queue_target">Frame queue target</string>
+    <string name="frame_gen_queue_target_description">How many finished frames may wait ahead of the display. Larger queues absorb GPU spikes at the cost of input latency.</string>
+    <string name="frame_gen_queue_target_0">Lowest latency (Unbuffered)</string>
+    <string name="frame_gen_queue_target_1">Balanced (1 frame)</string>
+    <string name="frame_gen_queue_target_2">Smoothest (2 frames)</string>
+    <string name="frame_gen_flow_scale_auto">Match motion estimation to the game</string>
+    <string name="frame_gen_flow_scale_auto_description">Estimate motion at the resolution the game actually renders instead of the upscaled output. Costs nothing in accuracy, since upscaling adds no motion detail.</string>
+    <string name="frame_gen_flow_scale">Motion estimation resolution</string>
+    <string name="frame_gen_flow_scale_description">Resolution of the optical flow pass, as a fraction of the output. Lowering it is the cheapest way to reclaim performance.</string>
+    <string name="frame_gen_unsupported">Frame generation unavailable</string>
+    <string name="frame_gen_unsupported_description">This GPU driver lacks the Vulkan memory model or half precision (float16) support that the Lossless Scaling shaders require.</string>
+    <string name="lossless_scaling_setup_description">Optional. Provide your own Lossless.dll to enable frame generation later</string>
+    <string name="lossless_scaling_install">Install Lossless.dll</string>
+    <string name="lossless_scaling_install_description">Frame generation needs your own legal copy of Lossless.dll from Lossless Scaling</string>
+    <string name="lossless_scaling_replace_description">Select a different copy of Lossless.dll</string>
+    <string name="frame_generation_support">Frame generation</string>
+    <string name="frame_generation_supported">Supported</string>
+    <string name="frame_generation_unsupported">Unsupported (no Vulkan memory model or float16)</string>
+    <string name="lossless_scaling">Lossless Scaling</string>
+    <string name="lossless_scaling_description">Provide your own copy of Lossless.dll to enable frame generation</string>
+    <string name="lossless_scaling_installed">Installed</string>
+    <string name="lossless_scaling_not_installed">Not installed</string>
+    <string name="lossless_scaling_replace">Replace</string>
+    <string name="lossless_scaling_remove">Remove</string>
+    <string name="lossless_scaling_remove_description">Delete the installed Lossless.dll and its prepared shaders</string>
+    <string name="lossless_scaling_remove_confirmation">Frame generation will stop working until you install Lossless.dll again. Your original file is not affected.</string>
+    <string name="lossless_scaling_missing">Lossless.dll not installed</string>
+    <string name="lossless_scaling_missing_description">Install it from Settings › Lossless Scaling to use frame generation.</string>
+    <string name="lossless_scaling_locked">Close the game first</string>
+    <string name="lossless_scaling_locked_description">Lossless.dll cannot be changed while a game is running.</string>
+    <string name="lossless_scaling_remove_unavailable">Nothing to remove</string>
+    <string name="lossless_scaling_remove_unavailable_description">Lossless.dll is not installed yet.</string>
+    <string name="lossless_scaling_installing">Preparing frame generation shaders…</string>
+    <string name="lossless_scaling_install_success">Lossless.dll installed successfully</string>
+    <string name="lossless_scaling_install_failed">Could not install Lossless.dll</string>
+    <string name="error_lossless_copy_failed">The selected file could not be copied.</string>
+    <string name="error_lossless_unreadable">The selected file could not be read.</string>
+    <string name="error_lossless_not_pe">The selected file is not a Windows library. Select Lossless.dll from your Lossless Scaling installation.</string>
+    <string name="error_lossless_missing_shaders">This copy of Lossless.dll does not contain the frame generation shaders. Update Lossless Scaling and try again.</string>
+    <string name="error_lossless_translation_failed">The frame generation shaders could not be translated. This version of Lossless Scaling is not supported yet.</string>
+    <string name="error_lossless_cache_failed">The translated shaders could not be written to storage. Check that there is free space available.</string>
     <string name="advanced_settings">Advanced settings</string>
     <string name="settings_description">Configure emulator settings</string>
     <string name="search_recently_played">Recently played</string>
@@ -434,6 +515,9 @@
     <string name="cpu_accuracy">CPU accuracy</string>
     <string name="value_with_units">%1$s%2$s</string>
 
+    <string name="program_args">Homebrew Args</string>
+    <string name="program_args_description">Command-line arguments passed to homebrew at launch (e.g. -noglsl).</string>
+
     <!-- System settings strings -->
     <string name="device_name">Device name</string>
     <string name="use_docked_mode">Docked Mode</string>
@@ -447,8 +531,8 @@
     <string name="set_custom_rtc">Set custom RTC</string>
 
     <!-- CPU -->
-    <string name="fast_cpu_time">CPU Overclock</string>
-    <string name="fast_cpu_time_description">Forces the emulated CPU to run at a higher clock, reducing certain FPS limiters. Use Boost (1700MHz) to run at the Switch\'s highest native clock, or Fast (2000MHz) to run at 2x clock.</string>
+    <string name="fast_cpu_time">CPU Clocks</string>
+    <string name="fast_cpu_time_description">Raises the clock the emulated CPU reports, which removes some FPS limiters. Weaker CPUs may see reduced performance, and certain games may behave improperly.</string>
     <string name="custom_cpu_ticks">Custom CPU Ticks</string>
     <string name="custom_cpu_ticks_description">Set a custom value of CPU ticks. Higher values can increase performance, but may also cause the game to freeze. A range of 77–21000 is recommended.</string>
     <string name="cpu_ticks">Ticks</string>
@@ -476,9 +560,11 @@
     <string name="advanced">Advanced</string>
 
     <string name="renderer_accuracy">GPU Mode</string>
-    <string name="renderer_accuracy_description">Controls the GPU emulation mode. Most games render fine with Fast or Balanced modes, but Accurate is still required for some. Particles tend to only render correctly with Accurate mode.</string>
+    <string name="renderer_accuracy_description">Controls the GPU emulation mode. Most games render fine with Fast, but Accurate is still required for some. Particles tend to only render correctly with Accurate mode.</string>
     <string name="dma_accuracy">DMA Accuracy</string>
     <string name="dma_accuracy_description">Controls the DMA precision accuracy. Safe precision can fix issues in some games, but it can also impact performance in some cases. If unsure, leave this on Default.</string>
+    <string name="gpu_fence_behavior">GPU Fence Behavior</string>
+    <string name="gpu_fence_behavior_description">Controls the GPU fence synchronization behavior. Immediate is the fastest option, but can introduce some issues. Balanced offers better compatibility and may fix issues in some games. Accurate further improves compatibility at the cost of some performance. Strict is the slowest option, but can fix issues that require stricter synchronization. Default follows the GPU Accuracy setting.</string>
     <string name="anisotropic_filtering">Anisotropic filtering</string>
     <string name="anisotropic_filtering_description">Improves the quality of textures when viewed at oblique angles</string>
     <string name="vram_usage_mode">VRAM Usage Mode</string>
@@ -505,12 +591,10 @@
 
     <string name="hacks">Hacks</string>
 
-    <string name="fast_gpu_time">Fast GPU Time</string>
-    <string name="fast_gpu_time_description">Forces most games to run at their highest native resolution. Use 256 for maximal performance and 512 for maximal graphics fidelity.</string>
+    <string name="fast_gpu_time">GPU Clocks</string>
+    <string name="fast_gpu_time_description">Makes the game believe GPU work finishes faster than it does, so it stops lowering resolution and render distance to fit the Switch\'s clocks.</string>
     <string name="skip_cpu_inner_invalidation">Skip CPU Inner Invalidation</string>
     <string name="skip_cpu_inner_invalidation_description">Skips certain CPU-side cache invalidations during memory updates, reducing CPU usage and improving it\'s performance. This may cause glitches or crashes on some games.</string>
-    <string name="antiflicker">Anti-Flicker</string>
-    <string name="antiflicker_description">Forces GPU fence callbacks to wait for submitted GPU work. Use with Fast GPU mode, to avoid flicker with lower performance impact.</string>
     <string name="fix_bloom_effects">Fix Bloom Effects</string>
     <string name="fix_bloom_effects_description">Reduces bloom blur in LA/EOW (Adreno A6XX - A7XX/ Turnip), removes bloom in Burnout. Warning: may cause graphical artifacts in other games.</string>
     <string name="emulate_bgr565">Emulate BGR565</string>
@@ -555,6 +639,7 @@
 
     <!-- Debug settings strings -->
     <string name="cpu">CPU</string>
+    <string name="clocks">Clocks</string>
     <string name="use_auto_stub">Use Auto Stub</string>
     <string name="use_auto_stub_description">Automatically stub missing services and functions. This may improve compatibility but can cause crashes and stability issues.</string>
 
@@ -569,17 +654,23 @@
     <string name="log">Logging</string>
     <string name="flush_by_line">Flush debug logs by line</string>
     <string name="flush_by_line_description">Flushes debugging logs on each line written, making debugging easier in cases of crashing or freezing.</string>
+    <string name="extended_logging">Enable extended logging</string>
+    <string name="extended_logging_description">Increases the maximum log file size from 100 MiB to 1 GiB.</string>
+    <string name="log_filter">Log filter</string>
+    <string name="log_filter_description">Controls Eden\'s log categories. Example: *:Info Service.LM:Debug</string>
 
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">GPU Logging</string>
-    <string name="gpu_logging_enabled">Enable GPU Logging</string>
-    <string name="gpu_logging_enabled_description">Log GPU operations to eden_gpu.log for debugging Adreno drivers</string>
     <string name="gpu_log_level">Log Level</string>
     <string name="gpu_log_level_description">Detail level for GPU logs (higher = more detail, more overhead)</string>
     <string name="gpu_log_vulkan_calls">Log Vulkan API Calls</string>
     <string name="gpu_log_vulkan_calls_description">Track all Vulkan API calls in ring buffer</string>
-    <string name="gpu_log_shader_dumps">Dump Shaders</string>
-    <string name="gpu_log_shader_dumps_description">Save compiled shader SPIR-V to files</string>
+    <string name="gpu_log_shader_dumps">Dump SPIR-V Shaders</string>
+    <string name="gpu_log_shader_dumps_description">Save recompiled SPIR-V binaries (.spv) to dump folder. Inspect with spirv-dis/spirv-cross/spirv-val.</string>
+    <string name="dump_guest_shaders">Dump Guest (Maxwell) Shaders</string>
+    <string name="dump_guest_shaders_description">Save Maxwell guest shader bytecode files (*.ash) to dump folder. Inspect with nvdisasm.</string>
+    <string name="dump_macros">Dump Maxwell Macros</string>
+    <string name="dump_macros_description">Save Maxwell macro program files (*.macro) to dump folder. Inspect with envydis.</string>
     <string name="gpu_log_memory_tracking">Track GPU Memory</string>
     <string name="gpu_log_memory_tracking_description">Monitor GPU memory allocations and deallocations</string>
     <string name="gpu_log_driver_debug">Driver Debug Info</string>
@@ -860,7 +951,7 @@
     <string name="loader_error_file_not_found">ROM file does not exist</string>
 
     <string name="loader_requires_firmware">Game Requires Firmware</string>
-    <string name="loader_requires_firmware_description"><![CDATA[The game you are trying to launch requires firmware to boot or to get past the opening menu. Please <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> dump and install firmware</a>, or press \"OK\" to launch anyways.]]></string>
+    <string name="loader_requires_firmware_description"><![CDATA[This game may require firmware to function properly, and you don\'t have any installed. Please install firmware before launching, or press \"OK\" to launch anyways.]]></string>
 
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Searching for game...</string>
@@ -961,14 +1052,15 @@
     <string name="memory_6gb">6GB (Unsafe)</string>
     <string name="memory_8gb">8GB (Unsafe)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Boost (1700MHz)</string>
-    <string name="clock_fast">Fast (2000MHz)</string>
+    <!-- CPU clock levels -->
+    <string name="clock_normal">Normal</string>
+    <string name="clock_boost">Boost</string>
+    <string name="clock_fast">Overclock</string>
 
-    <!-- GPU overclock factors -->
-    <string name="off">Off</string>
-    <string name="fast_gpu_medium">Medium (256)</string>
-    <string name="fast_gpu_high">High (512)</string>
+    <!-- GPU clock levels -->
+    <string name="fast_gpu_normal">Normal</string>
+    <string name="fast_gpu_medium">Boost</string>
+    <string name="fast_gpu_high">Overclock</string>
 
     <!-- GPU swizzle texture size -->
     <string name="gpu_texturesizeswizzle_verysmall">Very Small (16 MB)</string>
@@ -1032,13 +1124,18 @@
 
     <!-- Renderer Accuracy -->
     <string name="renderer_accuracy_low">Fast</string>
-    <string name="renderer_accuracy_medium">Balanced</string>
     <string name="renderer_accuracy_high">Accurate</string>
 
     <!-- DMA Accuracy -->
     <string name="dma_accuracy_default">Default</string>
     <string name="dma_accuracy_unsafe">Unsafe</string>
     <string name="dma_accuracy_safe">Safe</string>
+
+    <!-- GPU Fence Behavior -->
+    <string name="gpu_fence_behavior_default">Default</string>
+    <string name="gpu_fence_behavior_immediate">Immediate</string>
+    <string name="gpu_fence_behavior_balanced">Balanced</string>
+    <string name="gpu_fence_behavior_accurate">Accurate</string>
 
     <!-- ASTC Decoding Method Choices -->
     <string name="accelerate_astc_cpu" translatable="false">CPU</string>
@@ -1162,7 +1259,7 @@
     <string name="theme_mode_dark">Dark</string>
 
     <!-- Audio output engines -->
-    <string name="oboe" translatable="false">oboe</string>
+    <string name="sdl3" translatable="false">SDL3</string>
     <string name="cubeb" translatable="false">cubeb</string>
 
     <!-- Anisotropic filtering options -->
@@ -1170,9 +1267,6 @@
     <string name="multiplier_x4" translatable="false">x4</string>
     <string name="multiplier_x8" translatable="false">x8</string>
     <string name="multiplier_x16" translatable="false">x16</string>
-    <string name="multiplier_x32" translatable="false">x32</string>
-    <string name="multiplier_x64" translatable="false">x64</string>
-    <string name="multiplier_none">None</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Black backgrounds</string>

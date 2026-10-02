@@ -16,7 +16,6 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     RENDERER_USE_SPEED_LIMIT("use_speed_limit"),
     USE_CUSTOM_CPU_TICKS("use_custom_cpu_ticks"),
     SKIP_CPU_INNER_INVALIDATION("skip_cpu_inner_invalidation"),
-    ANTIFLICKER("antiflicker"),
     FIX_BLOOM_EFFECTS("fix_bloom_effects"),
     EMULATE_BGR565("emulate_bgr565"),
     RESCALE_HACK("rescale_hack"),
@@ -37,6 +36,8 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     RENDERER_PATCH_OLD_QCOM_DRIVERS("patch_old_qcom_drivers"),
     RENDERER_VERTEX_INPUT_DYNAMIC_STATE("vertex_input_dynamic_state"),
     RENDERER_SAMPLE_SHADING("sample_shading"),
+    RENDERER_FRAME_GEN("frame_gen"),
+    RENDERER_FRAME_GEN_FLOW_SCALE_AUTO("frame_gen_flow_scale_auto"),
     GPU_UNSWIZZLE_ENABLED("gpu_unswizzle_enabled"),
     PICTURE_IN_PICTURE("picture_in_picture"),
     USE_CUSTOM_RTC("custom_rtc_enabled"),
@@ -79,13 +80,15 @@ enum class BooleanSetting(override val key: String) : AbstractBooleanSetting {
     SHOW_SHADERS_BUILDING("show_shaders_building"),
 
     DEBUG_FLUSH_BY_LINE("flush_line"),
+    EXTENDED_LOGGING("extended_logging"),
     DONT_SHOW_DRIVER_SHADER_WARNING("dont_show_driver_shader_warning"),
     ENABLE_OVERLAY("enable_overlay"),
 
     // GPU Logging
-    GPU_LOGGING_ENABLED("gpu_logging_enabled"),
     GPU_LOG_VULKAN_CALLS("gpu_log_vulkan_calls"),
     GPU_LOG_SHADER_DUMPS("gpu_log_shader_dumps"),
+    DUMP_GUEST_SHADERS("dump_guest_shaders"),
+    DUMP_MACROS("dump_macros"),
     GPU_LOG_MEMORY_TRACKING("gpu_log_memory_tracking"),
     GPU_LOG_DRIVER_DEBUG("gpu_log_driver_debug"),
 

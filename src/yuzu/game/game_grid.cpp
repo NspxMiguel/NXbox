@@ -5,10 +5,10 @@
 #include <QScrollerProperties>
 
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/model.h"
+#include "yuzu/game/common.h"
 #include "yuzu/game/game_card.h"
 #include "yuzu/game/game_grid.h"
-#include "qt_common/game_list/game_list_p.h"
-#include "qt_common/game_list/model.h"
 
 GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
     m_gameCard = new GameCard(this);
@@ -25,8 +25,6 @@ GameGrid::GameGrid(QWidget* parent) : QListView{parent} {
 
     setEditTriggers(QAbstractItemView::NoEditTriggers);
     setContextMenuPolicy(Qt::CustomContextMenu);
-    setGridSize(QSize(140, 160));
-    m_gameCard->setSize(gridSize(), 0, 4);
 
     setSpacing(10);
     setWordWrap(true);
@@ -43,26 +41,12 @@ void GameGrid::SetModel(GameListModel* model) {
 void GameGrid::ApplyFilter(const QString& edit_filter_text, GameListModel* model) {
     int row_count = model->rowCount();
 
-    auto ContainsAllWords = [](const QString& haystack, const QString& userinput) {
-        const QStringList userinput_split =
-            userinput.split(QLatin1Char{' '}, Qt::SkipEmptyParts);
-        return std::all_of(userinput_split.begin(), userinput_split.end(),
-                           [&haystack](const QString& s) { return haystack.contains(s); });
-    };
-
     for (int i = 0; i < row_count; ++i) {
         QStandardItem* item = model->item(i, 0);
         if (!item)
             continue;
 
-        const QString file_path =
-            item->data(GameListItemPath::FullPathRole).toString().toLower();
-        const QString file_title =
-            item->data(GameListItemPath::TitleRole).toString().toLower();
-        const QString file_name = file_path.mid(file_path.lastIndexOf(QLatin1Char{'/'}) + 1) +
-                                  QLatin1Char{' '} + file_title;
-
-        if (edit_filter_text.isEmpty() || ContainsAllWords(file_name, edit_filter_text)) {
+        if (Yuzu::FilterMatches(edit_filter_text, item)) {
             setRowHidden(i, false);
         } else {
             setRowHidden(i, true);
@@ -111,8 +95,17 @@ void GameGrid::UpdateIconSize() {
         setUpdatesEnabled(false);
 
         setGridSize(grid_size);
-        m_gameCard->setSize(grid_size, stretched_width - min_item_width, columns);
+        m_gameCard->setSize(grid_size, grid_size, stretched_width - min_item_width, columns);
 
         setUpdatesEnabled(true);
     }
+}
+
+QModelIndex GameGrid::indexAt(const QPoint& point) const {
+    QModelIndex index = QListView::indexAt(point);
+    if (!index.isValid())
+        return {};
+    if (m_gameCard && !m_gameCard->hitTest(point, index, this, visualRect(index)))
+        return {};
+    return index;
 }

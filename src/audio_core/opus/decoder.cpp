@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
@@ -8,6 +8,7 @@
 #include "audio_core/opus/hardware_opus.h"
 #include "audio_core/opus/parameters.h"
 #include "common/alignment.h"
+#include "common/scope_exit.h"
 #include "common/swap.h"
 #include "core/core.h"
 
@@ -28,10 +29,18 @@ OpusDecoder::OpusDecoder(Core::System& system_, HardwareOpus& hardware_opus_)
 OpusDecoder::~OpusDecoder() {
     if (decode_object_initialized) {
         hardware_opus.ShutdownDecodeObject(shared_buffer.data(), shared_buffer.size());
+        hardware_opus.UnregisterDecoder(this);
     }
 }
 
 Result OpusDecoder::Initialize(const OpusParametersEx& params, Kernel::KTransferMemory* transfer_memory, u64 transfer_memory_size) {
+    R_TRY(hardware_opus.RegisterDecoder(this));
+    SCOPE_EXIT {
+        if (!decode_object_initialized) {
+            hardware_opus.UnregisterDecoder(this);
+        }
+    };
+
     auto frame_size{params.use_large_frame_size ? 5760 : 1920};
     shared_buffer.resize(transfer_memory_size);
     shared_memory_mapped = true;
@@ -61,6 +70,13 @@ Result OpusDecoder::Initialize(const OpusParametersEx& params, Kernel::KTransfer
 }
 
 Result OpusDecoder::Initialize(const OpusMultiStreamParametersEx& params, Kernel::KTransferMemory* transfer_memory, u64 transfer_memory_size) {
+    R_TRY(hardware_opus.RegisterDecoder(this));
+    SCOPE_EXIT {
+        if (!decode_object_initialized) {
+            hardware_opus.UnregisterDecoder(this);
+        }
+    };
+
     auto frame_size{params.use_large_frame_size ? 5760 : 1920};
     shared_buffer.resize(transfer_memory_size, 0);
     shared_memory_mapped = true;
@@ -147,7 +163,7 @@ Result OpusDecoder::DecodeInterleavedForMultiStream(u32* out_data_size, u64* out
     auto* header_p{reinterpret_cast<const OpusPacketHeader*>(input_data.data())};
     OpusPacketHeader header{ReverseHeader(*header_p)};
 
-    LOG_TRACE(Service_Audio, "header size {:#X} input data size 0x{:X} in_data size 0x{:X}",
+    LOG_TRACE(Service_Audio, "header size {:#x} input data size {:#x} in_data size {:#x}",
               header.size, input_data.size_bytes(), in_data.size_bytes());
 
     R_UNLESS(in_data.size_bytes() >= header.size &&

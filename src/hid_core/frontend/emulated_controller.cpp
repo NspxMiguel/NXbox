@@ -10,6 +10,7 @@
 
 #include <ranges>
 #include "common/thread.h"
+#include "common/assert.h"
 #include "hid_core/frontend/emulated_controller.h"
 #include "hid_core/frontend/input_converter.h"
 #include "hid_core/hid_util.h"
@@ -760,9 +761,6 @@ void EmulatedController::StartMotionCalibration() {
 }
 
 void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback, std::size_t index, Common::UUID uuid) {
-    const auto player_index = Service::HID::NpadIdTypeToIndex(npad_id_type);
-    const auto& player = Settings::values.players.GetValue()[player_index];
-
     if (index >= controller.button_values.size()) {
         return;
     }
@@ -915,21 +913,10 @@ void EmulatedController::SetButton(const Common::Input::CallbackStatus& callback
         break;
     }
 
-    if (!is_connected) {
-        if (npad_type == NpadStyleIndex::Handheld) {
-            if (npad_id_type == NpadIdType::Handheld) {
-                Connect();
-                controller_connected[player_index] = true;
-            }
-        } else if (npad_type != NpadStyleIndex::Handheld) {
-            if (npad_id_type == NpadIdType::Player1) {
-                Connect();
-                controller_connected[player_index] = true;
-            } else if (player.connected && !controller_connected[player_index]) {
-                Connect();
-                controller_connected[player_index] = true;
-            }
-        }
+    const auto player_index = Service::HID::NpadIdTypeToIndex(npad_id_type);
+    const auto& player = Settings::values.players.GetValue()[player_index];
+    if (player.connected) {
+        Connect();
     }
 
     TriggerOnChange(ControllerTriggerType::Button, true);
@@ -1050,12 +1037,12 @@ void EmulatedController::SetMotion(const Common::Input::CallbackStatus& callback
     auto& emulated = controller.motion_values[index].emulated;
 
     raw_status = TransformToMotion(callback);
-    emulated.SetAcceleration(Common::Vec3f{
+    emulated.SetAcceleration(Common::Vec<f32, 3>{
         raw_status.accel.x.value,
         raw_status.accel.y.value,
         raw_status.accel.z.value,
     });
-    emulated.SetGyroscope(Common::Vec3f{
+    emulated.SetGyroscope(Common::Vec<f32, 3>{
         raw_status.gyro.x.value,
         raw_status.gyro.y.value,
         raw_status.gyro.z.value,
@@ -1661,17 +1648,17 @@ bool EmulatedController::IsControllerFullkey(bool use_temporary_value) const {
 bool EmulatedController::IsControllerSupported(bool use_temporary_value) const {
     const auto type = is_configuring.load() && use_temporary_value ? tmp_npad_type.load() : npad_type.load();
     switch (type) {
-    case NpadStyleIndex::Fullkey: return supported_style_tag.fullkey.As<bool>();
-    case NpadStyleIndex::Handheld: return supported_style_tag.handheld.As<bool>();
-    case NpadStyleIndex::JoyconDual: return supported_style_tag.joycon_dual.As<bool>();
-    case NpadStyleIndex::JoyconLeft: return supported_style_tag.joycon_left.As<bool>();
-    case NpadStyleIndex::JoyconRight: return supported_style_tag.joycon_right.As<bool>();
-    case NpadStyleIndex::GameCube: return supported_style_tag.gamecube.As<bool>();
-    case NpadStyleIndex::Pokeball: return supported_style_tag.palma.As<bool>();
-    case NpadStyleIndex::NES: return supported_style_tag.lark.As<bool>();
-    case NpadStyleIndex::SNES: return supported_style_tag.lucia.As<bool>();
-    case NpadStyleIndex::N64: return supported_style_tag.lagoon.As<bool>();
-    case NpadStyleIndex::SegaGenesis: return supported_style_tag.lager.As<bool>();
+    case NpadStyleIndex::Fullkey:     return bool(supported_style_tag.fullkey);
+    case NpadStyleIndex::Handheld:    return bool(supported_style_tag.handheld);
+    case NpadStyleIndex::JoyconDual:  return bool(supported_style_tag.joycon_dual);
+    case NpadStyleIndex::JoyconLeft:  return bool(supported_style_tag.joycon_left);
+    case NpadStyleIndex::JoyconRight: return bool(supported_style_tag.joycon_right);
+    case NpadStyleIndex::GameCube:    return bool(supported_style_tag.gamecube);
+    case NpadStyleIndex::Pokeball:    return bool(supported_style_tag.palma);
+    case NpadStyleIndex::NES:         return bool(supported_style_tag.lark);
+    case NpadStyleIndex::SNES:        return bool(supported_style_tag.lucia);
+    case NpadStyleIndex::N64:         return bool(supported_style_tag.lagoon);
+    case NpadStyleIndex::SegaGenesis: return bool(supported_style_tag.lager);
     default: return false;
     }
 }
@@ -1876,12 +1863,9 @@ NpadColor EmulatedController::GetNpadColor(u32 color) {
 
 void EmulatedController::TriggerOnChange(ControllerTriggerType type, bool is_npad_service_update) {
     std::unique_lock lock{callback_mutex};
-    for (const auto& poller_pair : callback_list) {
-        const ControllerUpdateCallback& poller = poller_pair.second;
-        if (!is_npad_service_update && poller.is_npad_service) {
-            continue;
-        }
-        if (poller.on_change) {
+    for (auto const& p : callback_list) {
+        auto const& poller = p.second;
+        if (is_npad_service_update || !poller.is_npad_service) {
             poller.on_change(type);
         }
     }
@@ -1889,18 +1873,16 @@ void EmulatedController::TriggerOnChange(ControllerTriggerType type, bool is_npa
 
 int EmulatedController::SetCallback(ControllerUpdateCallback update_callback) {
     std::unique_lock lock{callback_mutex};
+    ++last_callback_key;
     callback_list.insert_or_assign(last_callback_key, std::move(update_callback));
-    return last_callback_key++;
+    return last_callback_key;
 }
 
 void EmulatedController::DeleteCallback(int key) {
     std::unique_lock lock{callback_mutex};
-    const auto& iterator = callback_list.find(key);
-    if (iterator == callback_list.end()) {
-        LOG_ERROR(Input, "Tried to delete non-existent callback {}", key);
-        return;
-    }
-    callback_list.erase(iterator);
+    auto const it = callback_list.find(key);
+    ASSERT_MSG(it != callback_list.end(), "Tried to delete non-existent callback {}", key);
+    callback_list.erase(it);
 }
 
 void EmulatedController::StatusUpdate() {

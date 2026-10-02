@@ -1,37 +1,140 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
-#include <ctime>
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include "core/core.h"
 #include "core/hle/kernel/k_event.h"
+#include "core/hle/service/cmif_serialization.h"
+#include "core/hle/service/cmif_types.h"
 #include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/kernel_helpers.h"
 #include "core/hle/service/nim/nim.h"
+#include "core/hle/service/os/event.h"
 #include "core/hle/service/server_manager.h"
 #include "core/hle/service/service.h"
 
 namespace Service::NIM {
-
 class IShopServiceAsync final : public ServiceFramework<IShopServiceAsync> {
 public:
     explicit IShopServiceAsync(Core::System& system_)
-        : ServiceFramework{system_, "IShopServiceAsync"} {
+        : ServiceFramework{system_, "IShopServiceAsync"},
+          service_context{system_, "IShopServiceAsync"} {
         // clang-format off
         static const FunctionInfo functions[] = {
-            {0, nullptr, "Cancel"},
-            {1, nullptr, "GetSize"},
-            {2, nullptr, "Read"},
-            {3, nullptr, "GetErrorCode"},
-            {4, nullptr, "Request"},
-            {5, nullptr, "Prepare"},
+            {0, D<&IShopServiceAsync::Cancel>, "Cancel"},
+            {1, D<&IShopServiceAsync::GetSize>, "GetSize"},
+            {2, D<&IShopServiceAsync::Read>, "Read"},
+            {3, D<&IShopServiceAsync::GetErrorCode>, "GetErrorCode"},
+            {4, D<&IShopServiceAsync::Request>, "Request"},
+            {5, D<&IShopServiceAsync::Prepare>, "Prepare"},
         };
         // clang-format on
 
         RegisterHandlers(functions);
+
+        completion_event = service_context.CreateEvent("IShopServiceAsync:Completion");
+    }
+
+    ~IShopServiceAsync() override {
+        CancelImpl();
+        service_context.CloseEvent(completion_event);
+    }
+
+    Kernel::KReadableEvent* GetEvent() const {
+        return &completion_event->GetReadableEvent();
+    }
+
+private:
+    KernelHelpers::ServiceContext service_context;
+    Kernel::KEvent* completion_event;
+
+    std::jthread worker;
+    std::atomic<u32> error_code{0};
+
+    std::mutex data_mutex;
+    std::vector<u8> download_data;
+
+    void CancelImpl() {
+        worker.request_stop();
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+
+    Result Cancel() {
+        LOG_DEBUG(Service_NIM, "called");
+        CancelImpl();
+        R_SUCCEED();
+    }
+
+    Result GetSize(Out<u64> out_size) {
+        LOG_DEBUG(Service_NIM, "called");
+        std::scoped_lock lock{data_mutex};
+        *out_size = download_data.size();
+        R_SUCCEED();
+    }
+
+    Result Read(Out<u64> out_size, u64 offset, OutBuffer<BufferAttr_HipcAutoSelect> out_buffer) {
+        std::scoped_lock lock{data_mutex};
+
+        u64 actual_read = 0;
+        if (offset < download_data.size()) {
+            actual_read = std::min<u64>(out_buffer.size(), download_data.size() - offset);
+            std::memcpy(out_buffer.data(), download_data.data() + offset, actual_read);
+        }
+
+        *out_size = actual_read;
+        R_SUCCEED();
+    }
+
+    Result GetErrorCode(Out<u32> out_error_code) {
+        LOG_DEBUG(Service_NIM, "called");
+        *out_error_code = error_code.load();
+        R_SUCCEED();
+    }
+
+    Result Request() {
+        LOG_DEBUG(Service_NIM, "(STUBBED) called");
+        CancelImpl();
+
+        error_code.store(0);
+        completion_event->Clear(system.Kernel());
+
+        {
+            std::scoped_lock lock{data_mutex};
+            download_data.clear();
+        }
+
+        worker = std::jthread([this](const std::stop_token& stop_token) {
+            if (stop_token.stop_requested()) {
+                error_code.store(1);
+            } else {
+                std::scoped_lock lock{data_mutex};
+                // Dummy JSON response, else it fails...
+                const std::string dummy_response = "{}";
+                download_data.assign(dummy_response.begin(), dummy_response.end());
+                error_code.store(0);
+            }
+            completion_event->Signal(system.Kernel());
+        });
+
+        R_SUCCEED();
+    }
+
+    Result Prepare(InArray<char, BufferAttr_HipcMapAlias> in_path, InArray<char, BufferAttr_HipcMapAlias> in_post) {
+        LOG_DEBUG(Service_NIM, "called");
+        if (!in_path.empty()) {
+            std::string url(in_path.data(), in_path.size());
+            LOG_INFO(Service_NIM, "Preparing request for URL: {}", url);
+        }
+        R_SUCCEED();
     }
 };
 
@@ -49,11 +152,13 @@ public:
     }
 
 private:
-    void CreateAsyncInterface(HLERequestContext& ctx) {
-        LOG_WARNING(Service_NIM, "(STUBBED) called");
-        IPC::ResponseBuilder rb{ctx, 2, 0, 1};
+    void CreateAsyncInterface(HLERequestContext& ctx) {LOG_DEBUG(Service_NIM, "called");
+        auto async_interface = std::make_shared<IShopServiceAsync>(system);
+
+        IPC::ResponseBuilder rb{ctx, 2, 1, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAsync>(system);
+        rb.PushCopyObjects(ctx, async_interface->GetEvent());
+        rb.PushIpcInterface<IShopServiceAsync>(ctx, std::move(async_interface));
     }
 };
 
@@ -75,7 +180,7 @@ private:
         LOG_WARNING(Service_NIM, "(STUBBED) called");
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAccessor>(system);
+        rb.PushIpcInterface<IShopServiceAccessor>(ctx, system);
     }
 };
 
@@ -336,7 +441,7 @@ private:
         LOG_DEBUG(Service_NIM, "(STUBBED) called");
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAccessServer>(system);
+        rb.PushIpcInterface<IShopServiceAccessServer>(ctx, system);
     }
 
     void IsLargeResourceAvailable(HLERequestContext& ctx) {
@@ -356,7 +461,7 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IShopServiceAccessServer>(system);
+        rb.PushIpcInterface<IShopServiceAccessServer>(ctx, system);
     }
 };
 
@@ -429,7 +534,7 @@ private:
     void StartTask(HLERequestContext& ctx) {
         // No need to connect to the internet, just finish the task straight away.
         LOG_DEBUG(Service_NIM, "called");
-        finished_event->Signal();
+        finished_event->Signal(system.Kernel());
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
     }
@@ -439,7 +544,7 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 1};
         rb.Push(ResultSuccess);
-        rb.PushCopyObjects(finished_event->GetReadableEvent());
+        rb.PushCopyObjects(ctx, finished_event->GetReadableEvent());
     }
 
     void GetResult(HLERequestContext& ctx) {
@@ -451,7 +556,7 @@ private:
 
     void Cancel(HLERequestContext& ctx) {
         LOG_DEBUG(Service_NIM, "called");
-        finished_event->Clear();
+        finished_event->Clear(system.Kernel());
         IPC::ResponseBuilder rb{ctx, 2};
         rb.Push(ResultSuccess);
     }
@@ -500,7 +605,7 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IEnsureNetworkClockAvailabilityService>(system);
+        rb.PushIpcInterface<IEnsureNetworkClockAvailabilityService>(ctx, system);
     }
 
     // TODO(ogniK): Do we need these?
@@ -519,11 +624,25 @@ private:
     }
 };
 
+class NIM_ECAS final : public ServiceFramework<NIM_ECAS> {
+public:
+    explicit NIM_ECAS(Core::System& system_) : ServiceFramework{system_, "nim:ecas"} {
+        // clang-format off
+        static const FunctionInfo functions[] = {
+            {0, nullptr, "RegisterSpecialClient"},
+            {1, nullptr, "UnregisterSpecialClient"},
+        };
+        // clang-format on
+        RegisterHandlers(functions);
+    }
+};
+
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
     server_manager->RegisterNamedService("nim", std::make_shared<NIM>(system));
     server_manager->RegisterNamedService("nim:eca", std::make_shared<NIM_ECA>(system));
+    server_manager->RegisterNamedService("nim:ecas", std::make_shared<NIM_ECAS>(system));
     server_manager->RegisterNamedService("nim:shp", std::make_shared<NIM_SHP>(system));
     server_manager->RegisterNamedService("ntc", std::make_shared<NTC>(system));
     ServerManager::RunServer(std::move(server_manager));

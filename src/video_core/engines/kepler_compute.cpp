@@ -16,8 +16,10 @@
 
 namespace Tegra::Engines {
 
-KeplerCompute::KeplerCompute(Core::System& system_, MemoryManager& memory_manager_)
-    : system{system_}, memory_manager{memory_manager_}, upload_state{memory_manager, regs.upload} {
+KeplerCompute::KeplerCompute(MemoryManager& memory_manager_)
+    : memory_manager{memory_manager_}
+    , upload_state{memory_manager, regs.upload}
+{
     execution_mask.reset();
     execution_mask[KEPLER_COMPUTE_REG_INDEX(exec_upload)] = true;
     execution_mask[KEPLER_COMPUTE_REG_INDEX(data_upload)] = true;
@@ -31,16 +33,15 @@ void KeplerCompute::BindRasterizer(VideoCore::RasterizerInterface* rasterizer_) 
     upload_state.BindRasterizer(rasterizer);
 }
 
-void KeplerCompute::ConsumeSinkImpl() {
+void KeplerCompute::ConsumeSinkImpl(Core::System& system) {
     for (auto [method, value] : method_sink) {
         regs.reg_array[method] = value;
     }
     method_sink.clear();
 }
 
-void KeplerCompute::CallMethod(u32 method, u32 method_argument, bool is_last_call) {
-    ASSERT_MSG(method < Regs::NUM_REGS,
-               "Invalid KeplerCompute register, increase the size of the Regs structure");
+void KeplerCompute::CallMethod(Core::System& system, u32 method, u32 method_argument, bool is_last_call) {
+    ASSERT_MSG(method < Regs::NUM_REGS, "Invalid KeplerCompute register, increase the size of the Regs structure");
 
     regs.reg_array[method] = method_argument;
 
@@ -48,13 +49,16 @@ void KeplerCompute::CallMethod(u32 method, u32 method_argument, bool is_last_cal
     case KEPLER_COMPUTE_REG_INDEX(exec_upload): {
         UploadInfo info{.upload_address = upload_address,
                         .exec_address = upload_state.ExecTargetAddress(),
-                        .copy_size = upload_state.GetUploadSize()};
+                        .copy_size = upload_state.GetUploadSize(),
+                        .was_dirty = upload_dirty};
         uploads.push_back(info);
         upload_state.ProcessExec(regs.exec_upload.linear != 0);
         break;
     }
     case KEPLER_COMPUTE_REG_INDEX(data_upload): {
         upload_address = current_dma_segment;
+        upload_dirty = current_dirty;
+        current_dirty = false;
         upload_state.ProcessData(method_argument, is_last_call);
         break;
     }
@@ -63,9 +67,11 @@ void KeplerCompute::CallMethod(u32 method, u32 method_argument, bool is_last_cal
 
         for (auto& data : uploads) {
             const GPUVAddr offset = data.exec_address - launch_desc_loc;
-            if (offset / sizeof(u32) == LAUNCH_REG_INDEX(grid_dim_x) &&
-                memory_manager.IsMemoryDirty(data.upload_address, data.copy_size)) {
-                indirect_compute = {data.upload_address};
+            if (offset / sizeof(u32) == LAUNCH_REG_INDEX(grid_dim_x)) {
+                const bool source_dirty = memory_manager.IsMemoryDirty(data.upload_address, data.copy_size);
+                if (data.was_dirty || source_dirty) {
+                    indirect_compute = {data.upload_address};
+                }
             }
         }
         uploads.clear();
@@ -78,16 +84,17 @@ void KeplerCompute::CallMethod(u32 method, u32 method_argument, bool is_last_cal
     }
 }
 
-void KeplerCompute::CallMultiMethod(u32 method, const u32* base_start, u32 amount,
-                                    u32 methods_pending) {
+void KeplerCompute::CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) {
     switch (method) {
     case KEPLER_COMPUTE_REG_INDEX(data_upload):
         upload_address = current_dma_segment;
+        upload_dirty = current_dirty;
+        current_dirty = false;
         upload_state.ProcessData(base_start, amount);
         return;
     default:
         for (u32 i = 0; i < amount; i++) {
-            CallMethod(method, base_start[i], methods_pending - i <= 1);
+            CallMethod(system, method, base_start[i], methods_pending - i <= 1);
         }
         break;
     }

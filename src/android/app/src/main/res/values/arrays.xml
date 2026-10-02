@@ -34,7 +34,7 @@
     </integer-array>
 
     <string-array name="clockNames">
-        <item>@string/off</item>
+        <item>@string/clock_normal</item>
         <item>@string/clock_boost</item>
         <item>@string/clock_fast</item>
     </string-array>
@@ -103,53 +103,46 @@
 
     <string-array name="rendererAccuracyNames">
         <item>@string/renderer_accuracy_low</item>
-        <item>@string/renderer_accuracy_medium</item>
         <item>@string/renderer_accuracy_high</item>
     </string-array>
 
     <integer-array name="rendererAccuracyValues">
         <item>0</item>
         <item>1</item>
-        <item>2</item>
     </integer-array>
 
-    <!-- VRAM USAGE MODE CHOICES -->
     <string-array name="vramUsageMethodNames">
         <item>@string/vram_usage_conservative</item>
         <item>@string/vram_usage_aggressive</item>
     </string-array>
 
-    <!-- VRAM USAGE MODE VALUES -->
     <integer-array name="vramUsageMethodValues">
-        <item>0</item> <!-- Conservative -->
-        <item>1</item> <!-- Aggressive -->
+        <item>0</item>
+        <item>1</item>
     </integer-array>
 
-    <!-- ASTC Decoding Method Choices -->
     <string-array name="astcDecodingMethodNames">
         <item>@string/accelerate_astc_cpu</item>
         <item>@string/accelerate_astc_gpu</item>
         <item>@string/accelerate_astc_async</item>
     </string-array>
 
-    <!-- ASTC Decoding Method Values -->
     <integer-array name="astcDecodingMethodValues">
-        <item>0</item> <!-- CPU -->
-        <item>1</item> <!-- GPU -->
-        <item>2</item> <!-- CPU Asynchronously -->
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
     </integer-array>
-    <!-- NVDEC Emulation Choices -->
+
     <string-array name="rendererNvdecNames">
-        <item>@string/nvdec_emulation_none</item> <!-- Off -->
-        <item>@string/nvdec_emulation_cpu</item>  <!-- Cpu -->
-        <item>@string/nvdec_emulation_gpu</item>  <!-- Gpu -->
+        <item>@string/nvdec_emulation_none</item>
+        <item>@string/nvdec_emulation_cpu</item>
+        <item>@string/nvdec_emulation_gpu</item>
     </string-array>
 
-    <!-- NVDEC Emulation Values -->
     <integer-array name="rendererNvdecValues">
-        <item>3</item> <!-- Off value -->
-        <item>1</item> <!-- CPU value -->
-        <item>2</item> <!-- GPU value -->
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
     </integer-array>
 
     <string-array name="rendererResolutionNames">
@@ -163,6 +156,50 @@
         <item>@string/resolution_three</item>
         <item>@string/resolution_four</item>
     </string-array>
+
+    <string-array name="frameGenMultiplierNames">
+        <item>@string/frame_gen_multiplier_2x</item>
+        <item>@string/frame_gen_multiplier_3x</item>
+        <item>@string/frame_gen_multiplier_4x</item>
+    </string-array>
+
+    <integer-array name="frameGenMultiplierValues">
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+    </integer-array>
+
+    <string-array name="frameGenTargetRateNames">
+        <item>@string/frame_gen_target_rate_off</item>
+        <item>@string/frame_gen_target_rate_60</item>
+        <item>@string/frame_gen_target_rate_90</item>
+        <item>@string/frame_gen_target_rate_120</item>
+    </string-array>
+
+    <integer-array name="frameGenTargetRateValues">
+        <item>0</item>
+        <item>60</item>
+        <item>90</item>
+        <item>120</item>
+    </integer-array>
+
+    <integer-array name="frameGenFlowScaleValues">
+        <item>50</item>
+        <item>75</item>
+        <item>100</item>
+    </integer-array>
+
+    <string-array name="frameGenQueueTargetNames">
+        <item>@string/frame_gen_queue_target_0</item>
+        <item>@string/frame_gen_queue_target_1</item>
+        <item>@string/frame_gen_queue_target_2</item>
+    </string-array>
+
+    <integer-array name="frameGenQueueTargetValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+    </integer-array>
 
     <string-array name="rendererVSyncNames">
         <item>@string/renderer_vsync_immediate</item>
@@ -430,13 +467,13 @@
 
     <string-array name="outputEngineEntries">
         <item>@string/auto</item>
-        <item>@string/oboe</item>
+        <item>@string/sdl3</item>
         <item>@string/cubeb</item>
         <item>@string/string_null</item>
     </string-array>
     <integer-array name="outputEngineValues">
         <item>0</item>
-        <item>4</item>
+        <item>2</item>
         <item>1</item>
         <item>3</item>
     </integer-array>
@@ -473,9 +510,6 @@
         <item>@string/multiplier_x4</item>
         <item>@string/multiplier_x8</item>
         <item>@string/multiplier_x16</item>
-        <item>@string/multiplier_x32</item>
-        <item>@string/multiplier_x64</item>
-        <item>@string/multiplier_none</item>
     </string-array>
     <integer-array name="anisoValues">
         <item>0</item>
@@ -484,9 +518,6 @@
         <item>3</item>
         <item>4</item>
         <item>5</item>
-        <item>6</item>
-        <item>7</item>
-        <item>8</item>
     </integer-array>
 
     <string-array name="verticalAlignmentEntries">
@@ -522,6 +553,20 @@
         <item>2</item>
     </integer-array>
 
+    <string-array name="gpuFenceBehaviorNames">
+        <item>@string/gpu_fence_behavior_default</item>
+        <item>@string/gpu_fence_behavior_immediate</item>
+        <item>@string/gpu_fence_behavior_balanced</item>
+        <item>@string/gpu_fence_behavior_accurate</item>
+    </string-array>
+    <integer-array name="gpuFenceBehaviorValues">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+    </integer-array>
+
 
     <string-array name="appletEntries">
         <item>@string/applet_hle</item>
@@ -534,7 +579,7 @@
     </integer-array>
 
     <string-array name="gpuEntries">
-        <item>@string/off</item>
+        <item>@string/fast_gpu_normal</item>
         <item>@string/fast_gpu_medium</item>
         <item>@string/fast_gpu_high</item>
     </string-array>
@@ -623,6 +668,16 @@
         <item>@string/error_keys_copy_failed</item>
         <item>@string/error_keys_invalid_filename</item>
         <item>@string/error_keys_failed_init</item>
+    </string-array>
+
+    <string-array name="losslessDllResults">
+        <item>""</item>
+        <item>@string/error_lossless_copy_failed</item>
+        <item>@string/error_lossless_unreadable</item>
+        <item>@string/error_lossless_not_pe</item>
+        <item>@string/error_lossless_missing_shaders</item>
+        <item>@string/error_lossless_translation_failed</item>
+        <item>@string/error_lossless_cache_failed</item>
     </string-array>
 
     <!-- GPU Logging Arrays -->

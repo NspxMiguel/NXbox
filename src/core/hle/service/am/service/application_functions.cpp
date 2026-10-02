@@ -4,13 +4,18 @@
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <openssl/evp.h>
+
+#include "common/hex_util.h"
 #include "common/settings.h"
 #include "common/uuid.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/control_metadata.h"
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/savedata_factory.h"
 #include "core/hle/kernel/k_transfer_memory.h"
+#include "core/hle/result.h"
 #include "core/hle/service/am/am_results.h"
 #include "core/hle/service/am/applet.h"
 #include "core/hle/service/am/service/application_functions.h"
@@ -24,6 +29,27 @@
 #include "core/hle/service/sm/sm.h"
 
 namespace Service::AM {
+
+namespace {
+
+FileSys::PatchManager::Metadata GetApplicationMetadata(Core::System& system, u64 program_id) {
+    auto metadata = FileSys::PatchManager::GetMetadataFromBaseOrUpdate(system, program_id);
+    if (metadata.first != nullptr) {
+        return metadata;
+    }
+
+    const auto application_id = FileSys::GetBaseTitleID(program_id);
+    if (application_id == program_id) {
+        return metadata;
+    }
+
+    LOG_DEBUG(Service_AM,
+              "no metadata for program_id={:016X}, falling back to application_id={:016X}",
+              program_id, application_id);
+    return FileSys::PatchManager::GetMetadataFromBaseOrUpdate(system, application_id);
+}
+
+} // Anonymous namespace
 
 IApplicationFunctions::IApplicationFunctions(Core::System& system_, std::shared_ptr<Applet> applet)
     : ServiceFramework{system_, "IApplicationFunctions"}, m_applet{std::move(applet)} {
@@ -56,7 +82,7 @@ IApplicationFunctions::IApplicationFunctions(Core::System& system_, std::shared_
         {37, nullptr, "GetLimitedApplicationLicenseUpgradableEvent"},
         {40, D<&IApplicationFunctions::NotifyRunning>, "NotifyRunning"},
         {50, D<&IApplicationFunctions::GetPseudoDeviceId>, "GetPseudoDeviceId"},
-        {60, nullptr, "SetMediaPlaybackStateForApplication"},
+        {60, D<&IApplicationFunctions::SetMediaPlaybackStateForApplication>, "SetMediaPlaybackStateForApplication"},
         {65, D<&IApplicationFunctions::IsGamePlayRecordingSupported>, "IsGamePlayRecordingSupported"},
         {66, D<&IApplicationFunctions::InitializeGamePlayRecording>, "InitializeGamePlayRecording"},
         {67, D<&IApplicationFunctions::SetGamePlayRecordingState>, "SetGamePlayRecordingState"},
@@ -153,20 +179,7 @@ Result IApplicationFunctions::GetDesiredLanguage(Out<u64> out_language_code) {
     // Default to 0 (all languages supported)
     u32 supported_languages = 0;
 
-    const auto res = [this] {
-        const FileSys::PatchManager pm{m_applet->program_id, system.GetFileSystemController(),
-                                       system.GetContentProvider()};
-        auto metadata = pm.GetControlMetadata();
-        if (metadata.first != nullptr) {
-            return metadata;
-        }
-
-        const FileSys::PatchManager pm_update{FileSys::GetUpdateTitleID(m_applet->program_id),
-                                              system.GetFileSystemController(),
-                                              system.GetContentProvider()};
-        return pm_update.GetControlMetadata();
-    }();
-
+    const auto res = GetApplicationMetadata(system, m_applet->program_id);
     if (res.first != nullptr) {
         supported_languages = res.first->GetSupportedLanguages();
     }
@@ -204,20 +217,7 @@ Result IApplicationFunctions::SetTerminateResult(Result terminate_result) {
 Result IApplicationFunctions::GetDisplayVersion(Out<DisplayVersion> out_display_version) {
     LOG_DEBUG(Service_AM, "called");
 
-    const auto res = [this] {
-        const FileSys::PatchManager pm{m_applet->program_id, system.GetFileSystemController(),
-                                       system.GetContentProvider()};
-        auto metadata = pm.GetControlMetadata();
-        if (metadata.first != nullptr) {
-            return metadata;
-        }
-
-        const FileSys::PatchManager pm_update{FileSys::GetUpdateTitleID(m_applet->program_id),
-                                              system.GetFileSystemController(),
-                                              system.GetContentProvider()};
-        return pm_update.GetControlMetadata();
-    }();
-
+    const auto res = GetApplicationMetadata(system, m_applet->program_id);
     if (res.first != nullptr) {
         const auto& version = res.first->GetVersionString();
         std::memcpy(out_display_version->string.data(), version.data(),
@@ -346,8 +346,23 @@ Result IApplicationFunctions::NotifyRunning(Out<bool> out_became_running) {
 }
 
 Result IApplicationFunctions::GetPseudoDeviceId(Out<Common::UUID> out_pseudo_device_id) {
-    LOG_WARNING(Service_AM, "(STUBBED) called");
-    *out_pseudo_device_id = {};
+    LOG_WARNING(Service_AM, "(stubbed)");
+    R_UNLESS(out_pseudo_device_id != nullptr, ResultUnknown);
+
+    // This should be hashed with the device specific hash
+    // for now this will do
+    const auto res = FileSys::PatchManager::GetMetadataFromBaseOrUpdate(system, m_applet->program_id);
+    R_UNLESS(res.first != nullptr, ResultUnknown);
+    std::array<u8, EVP_MAX_MD_SIZE> hash;
+    unsigned int hash_len = 0;
+    auto const seed = res.first->raw.seed_for_pseudo_device_id;
+    EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+    auto const algorithm = EVP_sha1();
+    EVP_DigestInit_ex(ctx, algorithm, nullptr);
+    EVP_DigestUpdate(ctx, &seed, sizeof(seed));
+    EVP_DigestFinal_ex(ctx, hash.data(), &hash_len);
+    EVP_MD_CTX_free(ctx);
+    *out_pseudo_device_id = Common::UUID::MakeRFC4122V5(std::span<u8, 16>{hash.begin(), hash.begin() + 16});
     R_SUCCEED();
 }
 
@@ -361,6 +376,13 @@ Result IApplicationFunctions::IsGamePlayRecordingSupported(
 Result IApplicationFunctions::InitializeGamePlayRecording(
     u64 transfer_memory_size, InCopyHandle<Kernel::KTransferMemory> transfer_memory_handle) {
     LOG_WARNING(Service_AM, "(STUBBED) called");
+    R_SUCCEED();
+}
+
+Result IApplicationFunctions::SetMediaPlaybackStateForApplication(bool enabled) {
+    LOG_WARNING(Service_AM, "(stubbed) {}", enabled);
+    std::scoped_lock lk{m_applet->lock};
+    m_applet->media_playback_state = enabled;
     R_SUCCEED();
 }
 
@@ -433,15 +455,21 @@ Result IApplicationFunctions::ExecuteProgram(ProgramSpecifyKind kind, u64 value)
 
 // https://switchbrew.org/wiki/Applet_Manager_services#CreateApplicationAndRequestToStart
 Result IApplicationFunctions::CreateApplicationAndRequestToStart(u64 application_id) {
-    LOG_INFO(Service_AM, "called, application_id={:016X}", application_id);
+    LOG_INFO(Service_AM, "called, application_id={:016X} current_program_id={:016X}", application_id, m_applet->program_id);
 
-    // If application_id is 0, relaunch the current application
-    const u64 target_application_id =
-        (application_id == 0) ? m_applet->program_id : application_id;
+    if (application_id == 0 ||
+        FileSys::GetBaseTitleID(application_id) == FileSys::GetBaseTitleID(m_applet->program_id)) {
+        const auto program_index = application_id == 0
+                                       ? 0
+                                       : application_id - FileSys::GetBaseTitleID(application_id);
 
-    system.GetUserChannel() = m_applet->user_channel_launch_parameter;
-    system.ExecuteProgram(target_application_id);
-    R_SUCCEED();
+        system.GetUserChannel() = m_applet->user_channel_launch_parameter;
+        system.ExecuteProgram(program_index);
+        R_SUCCEED();
+    }
+
+    LOG_ERROR(Service_AM, "Launching a different application ({:016X}) is not implemented!", application_id);
+    R_THROW(ResultUnknown);
 }
 
 Result IApplicationFunctions::ClearUserChannel() {

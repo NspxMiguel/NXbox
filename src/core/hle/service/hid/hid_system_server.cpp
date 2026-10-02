@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
@@ -38,10 +38,30 @@ IHidSystemServer::IHidSystemServer(Core::System& system_, std::shared_ptr<Resour
         {213, nullptr, "ActivateNfc"},
         {214, nullptr, "GetXcdHandleForNpadWithNfc"},
         {215, nullptr, "IsNfcActivated"},
-        {230, nullptr, "AcquireIrSensorEventHandle"},
+        {216, nullptr, "GetAbstractedPadIdForNpadWithNfc"},
+        {217, nullptr, "SetNfcEvent"},
+        {218, nullptr, "GetNfcInfo"},
+        {219, nullptr, "StartNfcDiscovery"},
+        {220, nullptr, "StopNfcDiscovery"},
+        {221, nullptr, "StartNtagRead"},
+        {222, nullptr, "StartNtagWrite"},
+        {223, nullptr, "SendNfcRawData"},
+        {224, nullptr, "RegisterMifareKey"},
+        {225, nullptr, "ClearMifareKey"},
+        {226, nullptr, "StartMifareRead"},
+        {227, nullptr, "StartMifareWrite"},
+        {230, nullptr, "AcquireIrSensorEventHndle" },
         {231, nullptr, "ActivateIrSensor"},
         {232, nullptr, "GetIrSensorState"},
-        {233, nullptr, "GetXcdHandleForNpadWithIrSensor"},
+        {233, nullptr, "GetXcdHandleForNpadWihIrSensor" },
+        {234, nullptr, "GetNpadJoyHoldType"},
+        {241, nullptr, "GetDataFormat"},
+        {242, nullptr, "SetDataFormat"},
+        {243, nullptr, "GetMcuState"},
+        {244, nullptr, "SetMcuState"},
+        {245, nullptr, "GetMcuVersionForNfc"},
+        {246, nullptr, "CheckNfcDevicePower"},
+        {247, nullptr, "SetMcuStateImmediate"},
         {301, nullptr, "ActivateNpadSystem"},
         {303, &IHidSystemServer::ApplyNpadSystemCommonPolicy, "ApplyNpadSystemCommonPolicy"},
         {304, &IHidSystemServer::EnableAssigningSingleOnSlSrPress, "EnableAssigningSingleOnSlSrPress"},
@@ -101,7 +121,7 @@ IHidSystemServer::IHidSystemServer(Core::System& system_, std::shared_ptr<Resour
         {547, nullptr, "GetAllowedBluetoothLinksCount"},
         {548, &IHidSystemServer::GetRegisteredDevices, "GetRegisteredDevices"},
         {549, nullptr, "GetConnectableRegisteredDevices"},
-        {551, nullptr, "GetRegisteredDevicesForControllerSupport"}, //20.0.0+
+        {551, &IHidSystemServer::GetRegisteredDevices, "GetRegisteredDevicesForControllerSupport"}, //20.0.0+ //mocked via 548 for Diablo 3 (at least)
         {700, nullptr, "ActivateUniquePad"},
         {702, &IHidSystemServer::AcquireUniquePadConnectionEventHandle, "AcquireUniquePadConnectionEventHandle"},
         {703, &IHidSystemServer::GetUniquePadIds, "GetUniquePadIds"},
@@ -281,7 +301,7 @@ void IHidSystemServer::ApplyNpadSystemCommonPolicy(HLERequestContext& ctx) {
 
     LOG_INFO(Service_HID, "called, applet_resource_user_id={}", applet_resource_user_id);
 
-    GetResourceManager()->GetNpad()->ApplyNpadSystemCommonPolicy(applet_resource_user_id);
+    GetResourceManager()->GetNpad()->ApplyNpadSystemCommonPolicy(system.Kernel(), applet_resource_user_id);
 
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
@@ -328,7 +348,7 @@ void IHidSystemServer::ApplyNpadSystemCommonPolicyFull(HLERequestContext& ctx) {
 
     LOG_INFO(Service_HID, "called, applet_resource_user_id={}", applet_resource_user_id);
 
-    GetResourceManager()->GetNpad()->ApplyNpadSystemCommonPolicyFull(applet_resource_user_id);
+    GetResourceManager()->GetNpad()->ApplyNpadSystemCommonPolicyFull(system.Kernel(), applet_resource_user_id);
 
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
@@ -358,9 +378,8 @@ void IHidSystemServer::GetMaskedSupportedNpadStyleSet(HLERequestContext& ctx) {
     LOG_INFO(Service_HID, "called, applet_resource_user_id={}", applet_resource_user_id);
 
     Core::HID::NpadStyleSet supported_styleset{};
-    const auto& npad = GetResourceManager()->GetNpad();
-    const Result result =
-        npad->GetMaskedSupportedNpadStyleSet(applet_resource_user_id, supported_styleset);
+    const auto npad = GetResourceManager()->GetNpad();
+    const Result result = npad->GetMaskedSupportedNpadStyleSet(system.Kernel(), applet_resource_user_id, supported_styleset);
 
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(result);
@@ -373,9 +392,8 @@ void IHidSystemServer::SetSupportedNpadStyleSetAll(HLERequestContext& ctx) {
 
     LOG_DEBUG(Service_HID, "called, applet_resource_user_id={}", applet_resource_user_id);
 
-    const auto& npad = GetResourceManager()->GetNpad();
-    const auto result =
-        npad->SetSupportedNpadStyleSet(applet_resource_user_id, Core::HID::NpadStyleSet::All);
+    const auto npad = GetResourceManager()->GetNpad();
+    const auto result = npad->SetSupportedNpadStyleSet(system.Kernel(), applet_resource_user_id, Core::HID::NpadStyleSet::All);
 
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(result);
@@ -728,7 +746,7 @@ void IHidSystemServer::AcquireConnectionTriggerTimeoutEvent(HLERequestContext& c
 
     IPC::ResponseBuilder rb{ctx, 2, 1};
     rb.Push(ResultSuccess);
-    rb.PushCopyObjects(acquire_device_registered_event->GetReadableEvent());
+    rb.PushCopyObjects(ctx, acquire_device_registered_event->GetReadableEvent());
 }
 
 void IHidSystemServer::AcquireDeviceRegisteredEventForControllerSupport(HLERequestContext& ctx) {
@@ -736,11 +754,11 @@ void IHidSystemServer::AcquireDeviceRegisteredEventForControllerSupport(HLEReque
 
     IPC::ResponseBuilder rb{ctx, 2, 1};
     rb.Push(ResultSuccess);
-    rb.PushCopyObjects(acquire_device_registered_event->GetReadableEvent());
+    rb.PushCopyObjects(ctx, acquire_device_registered_event->GetReadableEvent());
 }
 
 void IHidSystemServer::GetRegisteredDevices(HLERequestContext& ctx) {
-    LOG_WARNING(Service_HID, "(STUBBED) called");
+    LOG_WARNING(Service_HID, "(STUBBED) called, command={}", ctx.GetCommand()); //548 or 551
 
     struct RegisterData {
         std::array<u8, 0x68> data;
@@ -761,7 +779,7 @@ void IHidSystemServer::AcquireUniquePadConnectionEventHandle(HLERequestContext& 
     LOG_WARNING(Service_HID, "(STUBBED) called");
 
     IPC::ResponseBuilder rb{ctx, 2, 1};
-    rb.PushCopyObjects(unique_pad_connection_event->GetReadableEvent());
+    rb.PushCopyObjects(ctx, unique_pad_connection_event->GetReadableEvent());
     rb.Push(ResultSuccess);
 }
 
@@ -778,7 +796,7 @@ void IHidSystemServer::AcquireJoyDetachOnBluetoothOffEventHandle(HLERequestConte
 
     IPC::ResponseBuilder rb{ctx, 2, 1};
     rb.Push(ResultSuccess);
-    rb.PushCopyObjects(joy_detach_event->GetReadableEvent());
+    rb.PushCopyObjects(ctx, joy_detach_event->GetReadableEvent());
 }
 
 void IHidSystemServer::IsUsbFullKeyControllerEnabled(HLERequestContext& ctx) {

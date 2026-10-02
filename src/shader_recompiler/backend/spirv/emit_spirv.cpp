@@ -322,6 +322,11 @@ void DefineEntryPoint(const IR::Program& program, EmitContext& ctx, Id main) {
         if (ctx.runtime_info.force_early_z) {
             ctx.AddExecutionMode(main, spv::ExecutionMode::EarlyFragmentTests);
         }
+        if (ctx.profile.support_shader_quad_control && program.info.uses_quad_shuffles) {
+            ctx.AddExtension("SPV_KHR_quad_control");
+            ctx.AddCapability(spv::Capability::QuadControlKHR);
+            ctx.AddExecutionMode(main, spv::ExecutionMode::RequireFullQuadsKHR);
+        }
         break;
     default:
         throw NotImplementedException("Stage {}", program.stage);
@@ -335,7 +340,7 @@ void SetupDenormControl(const Profile& profile, const IR::Program& program, Emit
     if (info.uses_fp32_denorms_flush && info.uses_fp32_denorms_preserve) {
         LOG_DEBUG(Shader_SPIRV, "Fp32 denorm flush and preserve on the same shader");
     } else if (info.uses_fp32_denorms_flush) {
-        if (profile.support_fp32_denorm_flush) {
+        if (profile.support_fp32_denorm_flush && !profile.has_broken_fp32_denorm_flush) {
             ctx.AddCapability(spv::Capability::DenormFlushToZero);
             ctx.AddExecutionMode(main_func, spv::ExecutionMode::DenormFlushToZero, 32U);
         } else {
@@ -403,6 +408,9 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
     if (info.uses_sampled_1d) {
         ctx.AddCapability(spv::Capability::Sampled1D);
     }
+    if (info.uses_image_1d) {
+        ctx.AddCapability(spv::Capability::Image1D);
+    }
     if (info.uses_sparse_residency) {
         ctx.AddCapability(spv::Capability::SparseResidency);
     }
@@ -432,13 +440,19 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
     }
     if ((info.uses_subgroup_vote || info.uses_subgroup_invocation_id ||
          info.uses_subgroup_shuffles) &&
-        profile.support_vote) {
+        profile.support_vote && profile.SupportsSubgroupStage(ctx.stage)) {
         ctx.AddCapability(spv::Capability::GroupNonUniformBallot);
         ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
         if (!profile.warp_size_potentially_larger_than_guest) {
             // vote ops are only used when not taking the long path
             ctx.AddCapability(spv::Capability::GroupNonUniformVote);
         }
+    }
+    if (info.uses_quad_shuffles) {
+        if (profile.support_quad_shuffles) {
+            ctx.AddCapability(spv::Capability::GroupNonUniformQuad);
+        }
+        ctx.AddCapability(spv::Capability::GroupNonUniformShuffle);
     }
     if (info.uses_int64_bit_atomics && profile.support_int64_atomics) {
         ctx.AddCapability(spv::Capability::Int64Atomics);
@@ -462,12 +476,22 @@ void SetupCapabilities(const Profile& profile, const Info& info, EmitContext& ct
     ctx.AddCapability(spv::Capability::ImageGatherExtended);
     ctx.AddCapability(spv::Capability::ImageQuery);
     ctx.AddCapability(spv::Capability::SampledBuffer);
-    // TODO: this usage needs to be tracked properly
-    if (ctx.profile.support_sampled_image_array_nonuniform_indexing) {
-        if (ctx.profile.supported_spirv < 0x00010400)
+    if (!ctx.non_uniform_ids.empty()) {
+        if (ctx.profile.supported_spirv < 0x00010500)
             ctx.AddExtension("SPV_EXT_descriptor_indexing");
         ctx.AddCapability(spv::Capability::ShaderNonUniform);
-        ctx.AddCapability(spv::Capability::SampledImageArrayNonUniformIndexing);
+        if (ctx.uses_nonuniform_sampled_image) {
+            ctx.AddCapability(spv::Capability::SampledImageArrayNonUniformIndexing);
+        }
+        if (ctx.uses_nonuniform_storage_image) {
+            ctx.AddCapability(spv::Capability::StorageImageArrayNonUniformIndexing);
+        }
+        if (ctx.uses_nonuniform_uniform_texel_buffer) {
+            ctx.AddCapability(spv::Capability::UniformTexelBufferArrayNonUniformIndexing);
+        }
+        if (ctx.uses_nonuniform_storage_texel_buffer) {
+            ctx.AddCapability(spv::Capability::StorageTexelBufferArrayNonUniformIndexing);
+        }
     }
 }
 

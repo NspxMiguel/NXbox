@@ -222,7 +222,7 @@ if (MSVC)
     )
 else()
     target_compile_options(audio_core PRIVATE
-        $<$<COMPILE_LANGUAGE:C,CXX>:-Werror=conversion>
+        $<$<COMPILE_LANGUAGE:C,CXX>:-Wconversion>
         $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-sign-conversion>)
 endif()
 
@@ -246,14 +246,7 @@ if (ENABLE_CUBEB)
     target_compile_definitions(audio_core PRIVATE HAVE_CUBEB=1)
 endif()
 
-if(ANDROID)
-    target_sources(audio_core PRIVATE
-        sink/oboe_sink.cpp
-        sink/oboe_sink.h)
-
-    target_link_libraries(audio_core PRIVATE oboe)
-    target_compile_definitions(audio_core PUBLIC HAVE_OBOE)
-elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     target_sources(audio_core PRIVATE
         sink/sdl3_sink.cpp
         sink/sdl3_sink.h)
@@ -261,9 +254,9 @@ elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "WindowsStore")
     target_link_libraries(audio_core PRIVATE SDL3::SDL3)
     target_compile_definitions(audio_core PRIVATE HAVE_SDL3)
 endif()
-# Xbox/UWP AppContainer: deliberately NO audio device backend. The headless boot uses the null sink
-# (audio_core/sink/null_sink.h, always built). Linking SDL3 here would drag its entire desktop
-# windowing/input stack (GDI32/SHELL32/USER32/IMM32/SETUPAPI/HID/WINMM) into the app — none of which
-# the AppContainer provides — so the package fails to activate at load. (CORE: headless dep-strip.)
+# Xbox/UWP AppContainer: deliberately NO SDL3 audio device backend (XAudio2 / null sink only).
+# Linking SDL3 here would drag its entire desktop windowing/input stack (GDI32/SHELL32/USER32/
+# IMM32/SETUPAPI/HID/WINMM) into the app -- none of which the AppContainer provides -- so the
+# package fails to activate at load. (CORE: headless dep-strip.)
 
 create_target_directory_groups(audio_core)

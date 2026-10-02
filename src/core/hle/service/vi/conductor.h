@@ -7,7 +7,7 @@
 #pragma once
 
 #include <memory>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 
 #include "common/common_types.h"
 #include "common/polyfill_thread.h"
@@ -44,11 +44,12 @@ private:
     void ProcessVsync();
     void VsyncThread(std::stop_token token);
     s64 GetNextTicks() const;
+    s64 GetFramePeriodNs() const;
 
 private:
     Core::System& m_system;
     Container& m_container;
-    ankerl::unordered_dense::map<u64, VsyncManager> m_vsync_managers;
+    ::Common::unordered_map<u64, VsyncManager> m_vsync_managers;
     std::shared_ptr<Core::Timing::EventType> m_event;
     Common::Event m_signal;
     std::jthread m_thread;

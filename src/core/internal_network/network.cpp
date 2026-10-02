@@ -28,7 +28,6 @@
 
 #include "common/assert.h"
 #include "common/common_types.h"
-#include "common/expected.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "core/internal_network/network.h"
@@ -532,7 +531,8 @@ int TranslateTypeToNative(Type type) {
     NETWORK_PROTOCOL_TRANSLATE_ELEM(MPLS) \
     NETWORK_PROTOCOL_TRANSLATE_ELEM(PFSYNC)
 #elif defined(__linux__)
-// Other platforms get fucked
+// Other platforms may not support some niche protocols.
+// This is usually not an issue
 #define NETWORK_PROTOCOL_TRANSLATE_LIST \
     NETWORK_PROTOCOL_TRANSLATE_ELEM(IP) \
     /*NETWORK_PROTOCOL_TRANSLATE_ELEM(HOPOPTS)*/ \
@@ -653,13 +653,13 @@ short TranslatePollEvents(PollEvents events) {
     // Unlike poll on other OSes, WSAPoll will complain if any other flags are set on input.
     if (result & ~allowed_events) {
         LOG_DEBUG(Network,
-                  "Removing WSAPoll input events 0x{:x} because Windows doesn't support them",
+                  "Removing WSAPoll input events {:#x} because Windows doesn't support them",
                   result & ~allowed_events);
     }
     result &= allowed_events;
 #endif
 
-    UNIMPLEMENTED_IF_MSG((u16)events != 0, "Unhandled guest events=0x{:x}", (u16)events);
+    UNIMPLEMENTED_IF_MSG((u16)events != 0, "Unhandled guest events={:#x}", (u16)events);
 
     return result;
 }
@@ -683,7 +683,7 @@ PollEvents TranslatePollRevents(short revents) {
     translate(POLLRDBAND, PollEvents::RdBand);
     translate(POLLWRBAND, PollEvents::WrBand);
 
-    UNIMPLEMENTED_IF_MSG(revents != 0, "Unhandled host revents=0x{:x}", revents);
+    UNIMPLEMENTED_IF_MSG(revents != 0, "Unhandled host revents={:#x}", revents);
 
     return result;
 }
@@ -733,15 +733,14 @@ u32 IPv4AddressToInteger(IPv4Address ip_addr) {
            static_cast<u32>(ip_addr[2]) << 8 | static_cast<u32>(ip_addr[3]);
 }
 
-Common::Expected<std::vector<AddrInfo>, GetAddrInfoError> GetAddressInfo(
+std::variant<std::vector<AddrInfo>, GetAddrInfoError> GetAddressInfo(
     const std::string& host, const std::optional<std::string>& service) {
     addrinfo hints{};
     hints.ai_family = AF_INET; // Switch only supports IPv4.
     addrinfo* addrinfo;
-    s32 gai_err = getaddrinfo(host.c_str(), service.has_value() ? service->c_str() : nullptr,
-                              &hints, &addrinfo);
+    s32 gai_err = getaddrinfo(host.c_str(), service.has_value() ? service->c_str() : nullptr, &hints, &addrinfo);
     if (gai_err != 0) {
-        return Common::Unexpected(TranslateGetAddrInfoErrorFromNative(gai_err));
+        return TranslateGetAddrInfoErrorFromNative(gai_err);
     }
     std::vector<AddrInfo> ret;
     for (auto* current = addrinfo; current; current = current->ai_next) {

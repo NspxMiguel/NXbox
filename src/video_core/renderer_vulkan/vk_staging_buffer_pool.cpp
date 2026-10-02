@@ -27,8 +27,17 @@ using namespace Common::Literals;
 
 // Maximum potential alignment of a Vulkan buffer
 constexpr VkDeviceSize MAX_ALIGNMENT = 256;
+
 // Stream buffer size in bytes
+// *NIX drivers are more sensitive to increased buffers for streaming.
+// Windows ones however, can intake bigger buffers and generally do not OOM.
+// - GTX 960 on Windows will not OOM with 256mib
+// - GT 1030 on ^NIX will OOM with 256mib
+#if defined(__FreeBSD__)
 constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 128_MiB;
+#else
+constexpr VkDeviceSize MAX_STREAM_BUFFER_SIZE = 256_MiB;
+#endif
 
 size_t GetStreamBufferSize(const Device& device) {
     if (!device.HasDebuggingToolAttached()) {
@@ -46,7 +55,7 @@ size_t GetStreamBufferSize(const Device& device) {
         // If rebar is not supported, cut the max heap size to 40%. This will allow 2 captures to be
         // loaded at the same time in RenderDoc. If rebar is supported, this shouldn't be an issue
         // as the heap will be much larger.
-        if (size <= 256_MiB) {
+        if (size <= MAX_STREAM_BUFFER_SIZE) {
             size = size * 40 / 100;
         }
     } else {
@@ -75,9 +84,15 @@ StagingBufferPool::StagingBufferPool(const Device& device_, MemoryAllocator& mem
     if (device.IsExtTransformFeedbackSupported()) {
         stream_ci.usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
     }
+    if (device.IsBufferDeviceAddressSupported()) {
+        stream_ci.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
     stream_buffer = memory_allocator.CreateBuffer(stream_ci, MemoryUsage::Stream);
     if (device.HasDebuggingToolAttached()) {
         stream_buffer.SetObjectNameEXT("Stream Buffer");
+    }
+    if (device.IsBufferDeviceAddressSupported()) {
+        stream_buffer_address = device.GetLogical().GetBufferDeviceAddress(*stream_buffer);
     }
     stream_pointer = stream_buffer.Mapped();
     ASSERT_MSG(!stream_pointer.empty(), "Stream buffer must be host visible!");
@@ -140,6 +155,7 @@ StagingBufferRef StagingBufferPool::GetStreamBuffer(size_t size) {
     iterator = Common::AlignUp(iterator + size, MAX_ALIGNMENT);
     return StagingBufferRef{
         .buffer = *stream_buffer,
+        .device_address = stream_buffer_address,
         .offset = static_cast<VkDeviceSize>(offset),
         .mapped_span = stream_pointer.subspan(offset, size),
         .usage{},
@@ -165,7 +181,7 @@ StagingBufferRef StagingBufferPool::GetStagingBuffer(size_t size, MemoryUsage us
 std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t size,
                                                                         MemoryUsage usage,
                                                                         bool deferred) {
-    StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil64(size)];
+    StagingBuffers& cache_level = GetCache(usage)[Common::Log2Ceil(size)];
 
     const auto is_free = [this](const StagingBuffer& entry) {
         return !entry.deferred && scheduler.IsFree(entry.tick);
@@ -186,14 +202,13 @@ std::optional<StagingBufferRef> StagingBufferPool::TryGetReservedBuffer(size_t s
     return it->Ref();
 }
 
-StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage usage,
-                                                        bool deferred) {
-    const u32 log2 = Common::Log2Ceil64(size);
+StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage usage, bool deferred) {
+    auto const log2_size = Common::Log2Ceil<u32>(u32(size));
     VkBufferCreateInfo buffer_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .size = 1ULL << log2,
+        .size = 1ULL << log2_size,
         .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
                  VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                  VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
@@ -204,17 +219,25 @@ StagingBufferRef StagingBufferPool::CreateStagingBuffer(size_t size, MemoryUsage
     if (device.IsExtTransformFeedbackSupported()) {
         buffer_ci.usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
     }
+    if (device.IsBufferDeviceAddressSupported()) {
+        buffer_ci.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
     vk::Buffer buffer = memory_allocator.CreateBuffer(buffer_ci, usage);
     if (device.HasDebuggingToolAttached()) {
         ++buffer_index;
         buffer.SetObjectNameEXT(fmt::format("Staging Buffer {}", buffer_index).c_str());
     }
     const std::span<u8> mapped_span = buffer.Mapped();
-    StagingBuffer& entry = GetCache(usage)[log2].entries.emplace_back(StagingBuffer{
+    const VkDeviceAddress buffer_address =
+        device.IsBufferDeviceAddressSupported()
+            ? device.GetLogical().GetBufferDeviceAddress(*buffer)
+            : VkDeviceAddress{};
+    StagingBuffer& entry = GetCache(usage)[log2_size].entries.emplace_back(StagingBuffer{
         .buffer = std::move(buffer),
+        .device_address = buffer_address,
         .mapped_span = mapped_span,
         .usage = usage,
-        .log2_level = log2,
+        .log2_level = log2_size,
         .index = unique_ids++,
         .tick = deferred ? (std::numeric_limits<u64>::max)() : scheduler.CurrentTick(),
         .deferred = deferred,

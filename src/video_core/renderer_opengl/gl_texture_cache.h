@@ -75,6 +75,8 @@ public:
 
     void Finish();
 
+    void FlushDeferredClear() {}
+
     StagingBufferMap UploadStagingBuffer(size_t size, bool deferred = false);
 
     StagingBufferMap DownloadStagingBuffer(size_t size, bool deferred = false);
@@ -164,7 +166,7 @@ private:
     UtilShaders util_shaders;
     FormatConversionPass format_conversion_pass;
 
-    std::array<ankerl::unordered_dense::map<GLenum, FormatProperties>, 3> format_properties;
+    std::array<::Common::unordered_map<GLenum, FormatProperties>, 3> format_properties;
     bool has_broken_texture_view_formats = false;
 
     OGLTexture null_image_1d_array;
@@ -377,6 +379,7 @@ struct TextureCacheParams {
     static constexpr bool HAS_EMULATED_COPIES = true;
     static constexpr bool HAS_DEVICE_MEMORY_INFO = true;
     static constexpr bool IMPLEMENTS_ASYNC_DOWNLOADS = true;
+    static constexpr bool HAS_MSAA_DOWNLOADS = false;
 
     using Runtime = OpenGL::TextureCacheRuntime;
     using Image = OpenGL::Image;

@@ -24,7 +24,7 @@ IFileSystem::IFileSystem(Core::System& system_, FileSys::VirtualDir dir_, SizeGe
         {3, D<&IFileSystem::DeleteDirectory>, "DeleteDirectory"},
         {4, D<&IFileSystem::DeleteDirectoryRecursively>, "DeleteDirectoryRecursively"},
         {5, D<&IFileSystem::RenameFile>, "RenameFile"},
-        {6, nullptr, "RenameDirectory"},
+        {6, D<&IFileSystem::RenameDirectory>, "RenameDirectory"},
         {7, D<&IFileSystem::GetEntryType>, "GetEntryType"},
         {8, D<&IFileSystem::OpenFile>, "OpenFile"},
         {9, D<&IFileSystem::OpenDirectory>, "OpenDirectory"},
@@ -41,7 +41,7 @@ IFileSystem::IFileSystem(Core::System& system_, FileSys::VirtualDir dir_, SizeGe
 
 Result IFileSystem::CreateFile(const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path,
                                s32 option, s64 size) {
-    LOG_DEBUG(Service_FS, "called. file={}, option={:#X}, size=0x{:08X}", path->str, option, size);
+    LOG_DEBUG(Service_FS, "called. file={}, option={:#x}, size={:#08x}", path->str, option, size);
 
     R_RETURN(backend->CreateFile(FileSys::Path(path->str), size));
 }
@@ -86,6 +86,14 @@ Result IFileSystem::RenameFile(
     LOG_DEBUG(Service_FS, "called. file '{}' to file '{}'", old_path->str, new_path->str);
 
     R_RETURN(backend->RenameFile(FileSys::Path(old_path->str), FileSys::Path(new_path->str)));
+}
+
+Result IFileSystem::RenameDirectory(
+    const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> old_path,
+    const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> new_path) {
+    LOG_DEBUG(Service_FS, "called. directory '{}' to directory '{}'", old_path->str, new_path->str);
+
+    R_RETURN(backend->RenameDirectory(FileSys::Path(old_path->str), FileSys::Path(new_path->str)));
 }
 
 Result IFileSystem::OpenFile(OutInterface<IFile> out_interface,
@@ -151,7 +159,7 @@ Result IFileSystem::GetTotalSpaceSize(
 Result IFileSystem::GetFileTimeStampRaw(
     Out<FileSys::FileTimeStampRaw> out_timestamp,
     const InLargeData<FileSys::Sf::Path, BufferAttr_HipcPointer> path) {
-    LOG_WARNING(Service_FS, "(Partial Implementation) called. file={}", path->str);
+    LOG_DEBUG(Service_FS, "(Partial Implementation) called. file={}", path->str);
 
     FileSys::FileTimeStampRaw vfs_timestamp{};
     R_TRY(backend->GetFileTimeStampRaw(&vfs_timestamp, FileSys::Path(path->str)));

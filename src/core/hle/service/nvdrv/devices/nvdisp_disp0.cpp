@@ -6,6 +6,7 @@
 
 #include <boost/container/small_vector.hpp>
 
+#include "common/adpf.h"
 #include "common/assert.h"
 #include "common/logging.h"
 #include "core/core.h"
@@ -76,6 +77,7 @@ void nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers
             .transform_flags = layer.transform,
             .crop_rect = layer.crop_rect,
             .blending = ConvertBlending(layer.blending),
+            .layer_stack_mask = layer.layer_stack_mask,
         });
 
         for (size_t i = 0; i < layer.acquire_fence.num_fences; i++) {
@@ -86,9 +88,14 @@ void nvdisp_disp0::Composite(std::span<const Nvnflinger::HwcLayer> sorted_layers
     }
 
     system.GPU().RequestComposite(std::move(output_layers), std::move(output_fences));
+    Common::ADPF::ReportFrameInterval();
     system.SpeedLimiter().DoSpeedLimiting(system.CoreTiming().GetGlobalTimeUs());
     system.GetPerfStats().EndSystemFrame();
     system.GetPerfStats().BeginSystemFrame();
+}
+
+void nvdisp_disp0::WaitForComposite() {
+    system.GPU().WaitForComposite();
 }
 
 Kernel::KEvent* nvdisp_disp0::QueryEvent(u32 event_id) {

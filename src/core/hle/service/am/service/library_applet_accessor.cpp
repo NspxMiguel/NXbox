@@ -75,7 +75,7 @@ ILibraryAppletAccessor::ILibraryAppletAccessor(Core::System& system_,
         {105, D<&ILibraryAppletAccessor::GetPopOutDataEvent>, "GetPopOutDataEvent"},
         {106, D<&ILibraryAppletAccessor::GetPopInteractiveOutDataEvent>, "GetPopInteractiveOutDataEvent"},
         {110, nullptr, "NeedsToExitProcess"},
-        {120, nullptr, "GetLibraryAppletInfo"},
+        {120, D<&ILibraryAppletAccessor::GetLibraryAppletInfo>, "GetLibraryAppletInfo"},
         {150, nullptr, "RequestForAppletToGetForeground"},
         {160, D<&ILibraryAppletAccessor::GetIndirectLayerConsumerHandle>, "GetIndirectLayerConsumerHandle"}, //2.0.0+
         {170, D<&ILibraryAppletAccessor::Unknown170>, "Unknown170"}, //22.0.0+
@@ -123,7 +123,7 @@ Result ILibraryAppletAccessor::RequestExit() {
     LOG_DEBUG(Service_AM, "called");
     {
         std::scoped_lock lk{m_applet->lock};
-        m_applet->lifecycle_manager.RequestExit();
+        m_applet->lifecycle_manager.RequestExit(system.Kernel());
     }
     FrontendRequestExit();
     R_SUCCEED();
@@ -157,21 +157,21 @@ Result ILibraryAppletAccessor::PushInData(SharedPointer<IStorage> storage) {
         }
     }
 
-    m_broker->GetInData().Push(storage);
+    m_broker->GetInData().Push(system.Kernel(), storage);
     R_SUCCEED();
 }
 
 Result ILibraryAppletAccessor::PopOutData(Out<SharedPointer<IStorage>> out_storage) {
     LOG_DEBUG(Service_AM, "called");
 
+    R_TRY(m_broker->GetOutData().Pop(system.Kernel(), out_storage.Get()));
     if (auto caller_applet = m_applet->caller_applet.lock(); caller_applet) {
-        caller_applet->lifecycle_manager.GetSystemEvent().Signal();
-        caller_applet->lifecycle_manager.RequestResumeNotification();
-        caller_applet->lifecycle_manager.GetSystemEvent().Clear();
-        caller_applet->lifecycle_manager.UpdateRequestedFocusState();
+        std::scoped_lock lk{caller_applet->lock};
+        const bool focus_state_changed = caller_applet->lifecycle_manager.UpdateRequestedFocusState();
+        const bool is_front_app = m_applet->frontend && caller_applet->lifecycle_manager.IsApplication();
+        if (focus_state_changed) caller_applet->lifecycle_manager.SignalSystemEventIfNeeded(system.Kernel());
+        else if (is_front_app) caller_applet->lifecycle_manager.RequestFocusStateChangedNotification(system.Kernel());
     }
-
-    R_TRY(m_broker->GetOutData().Pop(out_storage.Get()));
 
     if (m_applet->applet_id == AppletId::ProfileSelect && *out_storage) {
         auto impl = (*out_storage)->GetImpl();
@@ -186,14 +186,14 @@ Result ILibraryAppletAccessor::PopOutData(Out<SharedPointer<IStorage>> out_stora
 
 Result ILibraryAppletAccessor::PushInteractiveInData(SharedPointer<IStorage> storage) {
     LOG_DEBUG(Service_AM, "called");
-    m_broker->GetInteractiveInData().Push(storage);
+    m_broker->GetInteractiveInData().Push(system.Kernel(), storage);
     FrontendExecuteInteractive();
     R_SUCCEED();
 }
 
 Result ILibraryAppletAccessor::PopInteractiveOutData(Out<SharedPointer<IStorage>> out_storage) {
     LOG_DEBUG(Service_AM, "called");
-    R_RETURN(m_broker->GetInteractiveOutData().Pop(out_storage.Get()));
+    R_RETURN(m_broker->GetInteractiveOutData().Pop(system.Kernel(), out_storage.Get()));
 }
 
 Result ILibraryAppletAccessor::GetPopOutDataEvent(OutCopyHandle<Kernel::KReadableEvent> out_event) {
@@ -215,6 +215,16 @@ Result ILibraryAppletAccessor::GetIndirectLayerConsumerHandle(Out<u64> out_handl
     // We require a non-zero handle to be valid. Using 0xdeadbeef allows us to trace if this is
     // actually used anywhere
     *out_handle = 0xdeadbeef;
+    R_SUCCEED();
+}
+
+Result ILibraryAppletAccessor::GetLibraryAppletInfo(
+    Out<LibraryAppletInfo> out_library_applet_info) {
+    LOG_INFO(Service_AM, "called");
+    *out_library_applet_info = {
+        .applet_id = m_applet->applet_id,
+        .library_applet_mode = m_applet->library_applet_mode,
+    };
     R_SUCCEED();
 }
 

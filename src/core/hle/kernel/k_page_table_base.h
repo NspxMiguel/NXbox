@@ -7,6 +7,7 @@
 #pragma once
 
 #include <memory>
+#include <type_traits>
 
 #include "common/common_funcs.h"
 #include "common/page_table.h"
@@ -61,14 +62,12 @@ public:
 
     class MemoryRange {
     private:
-        KernelCore& m_kernel;
-        KPhysicalAddress m_address;
-        size_t m_size;
-        bool m_heap;
+        KPhysicalAddress m_address = 0;
+        size_t m_size = 0;
+        bool m_heap = false;
 
     public:
-        explicit MemoryRange(KernelCore& kernel)
-            : m_kernel(kernel), m_address(0), m_size(0), m_heap(false) {}
+        explicit MemoryRange() : m_address(0), m_size(0), m_heap(false) {}
 
         void Set(KPhysicalAddress address, size_t size, bool heap) {
             m_address = address;
@@ -86,8 +85,8 @@ public:
             return m_heap;
         }
 
-        void Open();
-        void Close();
+        void Open(KernelCore& kernel);
+        void Close(KernelCore& kernel);
     };
 
 protected:
@@ -189,7 +188,6 @@ private:
     };
 
 private:
-    KernelCore& m_kernel;
     Core::System& m_system;
     KProcessAddress m_address_space_start{};
     KProcessAddress m_address_space_end{};
@@ -329,35 +327,35 @@ protected:
     bool IsLinearMappedPhysicalAddress(KPhysicalAddress phys_addr) {
         ASSERT(this->IsLockedByCurrentThread());
 
-        return m_kernel.MemoryLayout().IsLinearMappedPhysicalAddress(
+        return m_system.Kernel().MemoryLayout().IsLinearMappedPhysicalAddress(
             m_cached_physical_linear_region, phys_addr);
     }
 
     bool IsLinearMappedPhysicalAddress(KPhysicalAddress phys_addr, size_t size) {
         ASSERT(this->IsLockedByCurrentThread());
 
-        return m_kernel.MemoryLayout().IsLinearMappedPhysicalAddress(
+        return m_system.Kernel().MemoryLayout().IsLinearMappedPhysicalAddress(
             m_cached_physical_linear_region, phys_addr, size);
     }
 
     bool IsHeapPhysicalAddress(KPhysicalAddress phys_addr) {
         ASSERT(this->IsLockedByCurrentThread());
 
-        return m_kernel.MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
+        return m_system.Kernel().MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
                                                              phys_addr);
     }
 
     bool IsHeapPhysicalAddress(KPhysicalAddress phys_addr, size_t size) {
         ASSERT(this->IsLockedByCurrentThread());
 
-        return m_kernel.MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
+        return m_system.Kernel().MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
                                                              phys_addr, size);
     }
 
     bool IsHeapPhysicalAddressForFinalize(KPhysicalAddress phys_addr) {
         ASSERT(!this->IsLockedByCurrentThread());
 
-        return m_kernel.MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
+        return m_system.Kernel().MemoryLayout().IsHeapPhysicalAddress(m_cached_physical_heap_region,
                                                              phys_addr);
     }
 
@@ -371,6 +369,10 @@ private:
     KProcessAddress FindFreeArea(KProcessAddress region_start, size_t region_num_pages,
                                  size_t num_pages, size_t alignment, size_t offset,
                                  size_t guard_pages) const;
+
+    bool BeginTraversal(const Common::PageTable& impl, TraversalEntry* out_entry, TraversalContext* out_context,
+                        Common::ProcessAddress address) const;
+    bool ContinueTraversal(const Common::PageTable& impl, TraversalEntry* out_entry, TraversalContext* context) const;
 
     Result CheckMemoryStateContiguous(size_t* out_blocks_needed, KProcessAddress addr, size_t size,
                                       KMemoryState state_mask, KMemoryState state,
@@ -476,7 +478,14 @@ private:
         // Validate pre-conditions.
         ASSERT(this->IsLockedByCurrentThread());
 
-        return this->GetImpl().GetPhysicalAddress(out, virt_addr);
+        if (virt_addr > (1ULL << m_address_space_width)) {
+            return false;
+        }
+
+        *out = m_system.DeviceMemory().GetPhysicalAddr(
+            this->GetImpl().entries[GetInteger(virt_addr) >> PageBits].Pointer(true) + GetInteger(virt_addr));
+
+        return true;
     }
 
 public:
@@ -744,15 +753,15 @@ public:
 
     // Member heap
     u8* GetHeapVirtualPointer(KPhysicalAddress addr) {
-        return GetHeapVirtualPointer(m_kernel, addr);
+        return GetHeapVirtualPointer(m_system.Kernel(), addr);
     }
 
     KPhysicalAddress GetHeapPhysicalAddress(KVirtualAddress addr) {
-        return GetHeapPhysicalAddress(m_kernel, addr);
+        return GetHeapPhysicalAddress(m_system.Kernel(), addr);
     }
 
     KVirtualAddress GetHeapVirtualAddress(KPhysicalAddress addr) {
-        return GetHeapVirtualAddress(m_kernel, addr);
+        return GetHeapVirtualAddress(m_system.Kernel(), addr);
     }
 
     // TODO: GetPageTableVirtualAddress

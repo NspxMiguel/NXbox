@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -83,6 +83,7 @@ struct Applet {
 
     // Application functions
     bool game_play_recording_supported{};
+    bool media_playback_state{};
     GamePlayRecordingState game_play_recording_state{GamePlayRecordingState::Disabled};
     bool jit_service_launched{};
     bool application_crash_report_enabled{};
@@ -90,6 +91,7 @@ struct Applet {
     // Common state
     bool sleep_lock_enabled{};
     bool vr_mode_enabled{};
+    bool vr_mode_enabled_3d{};
     bool lcd_backlight_off_enabled{};
     APM::CpuBoostMode boost_mode{};
     bool request_exit_to_library_applet_at_execute_next_program_enabled{};
@@ -108,6 +110,10 @@ struct Applet {
     std::list<std::shared_ptr<Applet>> child_applets{};
     bool is_completed{};
 
+    std::shared_ptr<Applet> reserved_applet{};
+    bool unwind_after_reserved{};
+    bool is_winding{};
+
     // Self state
     bool exit_locked{};
     s32 fatal_section_count{};
@@ -120,9 +126,11 @@ struct Applet {
     bool album_image_taken_notification_enabled{};
     bool record_volume_muted{};
     bool is_activity_runnable{};
-    bool is_interactible{true};
+    bool is_pad_interactible{true};
+    bool is_touch_interactible{true};
     bool window_visible{true};
-    bool overlay_in_foreground{false};
+    bool overlay_watching_short_home_button{false};
+    bool overlay_handling_touch_input{false};
 
     // Events
     Event overlay_event;
@@ -143,7 +151,7 @@ struct Applet {
 
     // Process state management
     void UpdateSuspensionStateLocked(bool force_message);
-    void SetInteractibleLocked(bool interactible);
+    void SetInteractibleLocked(bool pad_interactible, bool touch_interactible);
     void OnProcessTerminatedLocked();
 };
 

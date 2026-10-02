@@ -54,7 +54,6 @@ SWITCHABLE(CpuBackend, true);
 SWITCHABLE(CpuAccuracy, true);
 SWITCHABLE(FullscreenMode, true);
 SWITCHABLE(GpuAccuracy, true);
-SWITCHABLE(GpuLogLevel, true);
 SWITCHABLE(Language, true);
 SWITCHABLE(MemoryLayout, true);
 SWITCHABLE(NvdecEmulation, false);
@@ -127,17 +126,15 @@ void LogSettings() {
                     setting->UsingGlobal() ? '-' : 'C', TranslateCategory(category),
                     setting->GetLabel());
                 if (is_default)
-                    settings_list.push_back(fmt::format("{}: {}\n", name, setting->Canonicalize()));
+                    settings_list.push_back(fmt::format("{}: {}", name, setting->Canonicalize()));
                 else
-                    settings_list.push_front(fmt::format("{}: {}\n", name, setting->Canonicalize()));
+                    settings_list.push_front(fmt::format("{}: {}", name, setting->Canonicalize()));
             }
         }
     }
-
-    std::string settings_str{};
+    LOG_INFO(Config, "Eden Configuration:");
     for (auto const& e : settings_list)
-        settings_str += e;
-    LOG_INFO(Config, "Eden Configuration:\n{}", settings_str);
+        LOG_INFO(Config, "{}", e);
 #define LOG_PATH(NAME) \
     LOG_INFO(Config, #NAME ": {}", Common::FS::PathToUTF8String(Common::FS::GetEdenPath(Common::FS::EdenPath::NAME)))
     LOG_PATH(CacheDir);
@@ -149,20 +146,12 @@ void LogSettings() {
 #undef LOG_PATH
 }
 
-bool getDebugKnobAt(u8 i) {
+bool GetDebugKnobAt(u8 i) {
     return (values.debug_knobs.GetValue() & (1 << (i & 0xF))) != 0;
 }
 
 void UpdateGPUAccuracy() {
     values.current_gpu_accuracy = values.gpu_accuracy.GetValue();
-}
-
-bool IsGPULevelLow() {
-    return values.current_gpu_accuracy == GpuAccuracy::Low;
-}
-
-bool IsGPULevelMedium() {
-    return values.current_gpu_accuracy == GpuAccuracy::Medium;
 }
 
 bool IsGPULevelHigh() {
@@ -175,6 +164,18 @@ bool IsDMALevelDefault() {
 
 bool IsDMALevelSafe() {
     return values.dma_accuracy.GetValue() == DmaAccuracy::Safe;
+}
+
+bool IsGPUFenceBehaviorDefault() {
+    return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Default;
+}
+
+bool IsGPUFenceBehaviorBalanced() {
+    return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Balanced;
+}
+
+bool IsGPUFenceBehaviorAccurate() {
+    return values.gpu_fence_behavior.GetValue() == GpuFenceBehavior::Accurate;
 }
 
 bool IsFastmemEnabled() {
@@ -221,6 +222,16 @@ void SetNceEnabled(bool is_39bit) {
 
 bool IsNceEnabled() {
     return is_nce_enabled;
+}
+
+static u64 current_program_id = 0;
+
+void SetCurrentProgramID(u64 program_id) {
+    current_program_id = program_id;
+}
+
+u64 GetCurrentProgramID() {
+    return current_program_id;
 }
 
 bool IsDockedMode() {
@@ -371,6 +382,28 @@ void UpdateRescalingInfo() {
     const auto setup = values.resolution_setup.GetValue();
     auto& info = values.resolution_info;
     TranslateResolutionInfo(setup, info);
+}
+
+u32 FrameGenMultiplier() {
+    return std::clamp(values.frame_gen_multiplier.GetValue(), MIN_FRAME_GEN_MULTIPLIER,
+                      MAX_FRAME_GEN_MULTIPLIER);
+}
+
+size_t FrameGenGenerations() {
+    if (!values.frame_gen.GetValue()) {
+        return 0;
+    }
+    return FrameGenMultiplier() - 1;
+}
+
+size_t FrameGenMaxGenerations() {
+    if (!values.frame_gen.GetValue()) {
+        return 0;
+    }
+    if (values.frame_gen_target_rate.GetValue() != 0) {
+        return MAX_FRAME_GEN_MULTIPLIER - 1;
+    }
+    return FrameGenMultiplier() - 1;
 }
 
 void RestoreGlobalState(bool is_powered_on) {

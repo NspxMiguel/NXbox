@@ -13,6 +13,8 @@
 #include "core/hle/service/am/process_creation.h"
 #include "core/hle/service/am/service/library_applet_accessor.h"
 #include "core/hle/service/am/service/library_applet_creator.h"
+
+#include "core/hle/api_version.h"
 #include "core/hle/service/am/service/storage.h"
 #include "core/hle/service/am/window_system.h"
 #include "core/hle/service/cmif_serialization.h"
@@ -108,40 +110,27 @@ std::shared_ptr<ILibraryAppletAccessor> CreateGuestApplet(Core::System& system,
         return {};
     }
 
-    // TODO: enable other versions of applets
-    enum : u8 {
-        Firmware1400 = 14,
-        Firmware1500 = 15,
-        Firmware1600 = 16,
-        Firmware1700 = 17,
-        Firmware1800 = 18,
-        Firmware1900 = 19,
-        Firmware2000 = 20,
-        Firmware2100 = 21,
-        Firmware2200 = 22,
-    };
+    auto process = CreateProcess(system, program_id, 1, HLE::ApiVersion::HOS_VERSION_MAJOR);
+    if (process) {
+        const auto applet = std::make_shared<Applet>(system, std::move(process), false);
+        applet->program_id = program_id;
+        applet->applet_id = applet_id;
+        applet->type = AppletType::LibraryApplet;
+        applet->library_applet_mode = mode;
+        applet->window_visible = mode != LibraryAppletMode::AllForegroundInitiallyHidden;
 
-    auto process = CreateProcess(system, program_id, Firmware1400, Firmware2200);
-    if (!process) {
-        // Couldn't initialize the guest process
-        return {};
+        auto broker = std::make_shared<AppletDataBroker>(system);
+        applet->caller_applet = caller_applet;
+        applet->caller_applet_broker = broker;
+        {
+            std::scoped_lock lk{caller_applet->lock};
+            caller_applet->child_applets.push_back(applet);
+        }
+        window_system.TrackApplet(applet, false);
+        return std::make_shared<ILibraryAppletAccessor>(system, broker, applet);
     }
-
-    const auto applet = std::make_shared<Applet>(system, std::move(process), false);
-    applet->program_id = program_id;
-    applet->applet_id = applet_id;
-    applet->type = AppletType::LibraryApplet;
-    applet->library_applet_mode = mode;
-    applet->window_visible = mode != LibraryAppletMode::AllForegroundInitiallyHidden;
-
-    auto broker = std::make_shared<AppletDataBroker>(system);
-    applet->caller_applet = caller_applet;
-    applet->caller_applet_broker = broker;
-    caller_applet->child_applets.push_back(applet);
-
-    window_system.TrackApplet(applet, false);
-
-    return std::make_shared<ILibraryAppletAccessor>(system, broker, applet);
+    // Couldn't initialize the guest process
+    return {};
 }
 
 std::shared_ptr<ILibraryAppletAccessor> CreateFrontendApplet(Core::System& system,
@@ -162,10 +151,10 @@ std::shared_ptr<ILibraryAppletAccessor> CreateFrontendApplet(Core::System& syste
     applet->caller_applet = caller_applet;
     applet->caller_applet_broker = storage;
     applet->frontend = system.GetFrontendAppletHolder().GetApplet(applet, applet_id, mode);
-    caller_applet->child_applets.push_back(applet);
-
-    window_system.TrackApplet(applet, false);
-
+    {
+        std::scoped_lock lk{caller_applet->lock};
+        caller_applet->child_applets.push_back(applet);
+    }
     return std::make_shared<ILibraryAppletAccessor>(system, storage, applet);
 }
 
@@ -210,7 +199,7 @@ Result ILibraryAppletCreator::CreateLibraryApplet(
     }
 
     // Applet is created, can now be launched.
-    m_applet->library_applet_launchable_event.Signal();
+    m_applet->library_applet_launchable_event.Signal(system.Kernel());
     *out_library_applet_accessor = library_applet;
     R_SUCCEED();
 }
@@ -236,7 +225,7 @@ Result ILibraryAppletCreator::CreateLibraryAppletEx(
     }
 
     // Applet is created, can now be launched.
-    m_applet->library_applet_launchable_event.Signal();
+    m_applet->library_applet_launchable_event.Signal(system.Kernel());
     *out_library_applet_accessor = library_applet;
     R_SUCCEED();
 }
@@ -269,7 +258,7 @@ Result ILibraryAppletCreator::CreateTransferMemoryStorage(
     }
 
     *out_storage = std::make_shared<IStorage>(
-        system, AM::CreateTransferMemoryStorage(transfer_memory_handle->GetOwner()->GetMemory(),
+        system, AM::CreateTransferMemoryStorage(system.Kernel(), transfer_memory_handle->GetOwner()->GetMemory(),
                                                 transfer_memory_handle.Get(), is_writable, size));
     R_SUCCEED();
 }
@@ -290,7 +279,7 @@ Result ILibraryAppletCreator::CreateHandleStorage(
     }
 
     *out_storage = std::make_shared<IStorage>(
-        system, AM::CreateHandleStorage(transfer_memory_handle->GetOwner()->GetMemory(),
+        system, AM::CreateHandleStorage(system.Kernel(), transfer_memory_handle->GetOwner()->GetMemory(),
                                         transfer_memory_handle.Get(), size));
     R_SUCCEED();
 }

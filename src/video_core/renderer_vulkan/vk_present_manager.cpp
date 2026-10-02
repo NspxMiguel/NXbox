@@ -7,6 +7,9 @@
 #include "common/settings.h"
 #include "common/thread.h"
 #include "core/frontend/emu_window.h"
+#ifdef HAS_LSFG
+#include "video_core/renderer_vulkan/present/lsfg_common.h"
+#endif
 #include "video_core/renderer_vulkan/vk_present_manager.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
@@ -18,6 +21,20 @@ namespace Vulkan {
 
 
 namespace {
+
+constexpr size_t MAX_FRAMES_IN_FLIGHT = 7;
+#ifdef HAS_LSFG
+static_assert(MAX_FRAMES_IN_FLIGHT <= LSFG_MAX_TARGETS);
+#endif
+
+bool CanStoreToFrame(const vk::PhysicalDevice& physical_device, VkFormat format) {
+#ifdef HAS_LSFG
+    const VkFormatProperties props{physical_device.GetFormatProperties(format)};
+    return (props.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) != 0;
+#else
+    return false;
+#endif
+}
 
 bool CanBlitToSwapchain(const vk::PhysicalDevice& physical_device, VkFormat format) {
     const VkFormatProperties props{physical_device.GetFormatProperties(format)};
@@ -110,6 +127,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     , swapchain{swapchain_}
     , surface{surface_}
     , blit_supported{CanBlitToSwapchain(device.GetPhysical(), swapchain.GetImageViewFormat())}
+    , storage_supported{CanStoreToFrame(device.GetPhysical(), swapchain.GetImageFormat())}
     , use_present_thread{Settings::values.async_presentation.GetValue()}
 {
     SetImageCount();
@@ -127,6 +145,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
     frames.resize(image_count);
     for (u32 i = 0; i < frames.size(); i++) {
         Frame& frame = frames[i];
+        frame.index = i;
         frame.cmdbuf = vk::CommandBuffer{cmdbuffers[i], device.GetDispatchLoader()};
         frame.render_ready = dld.CreateSemaphore({
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -138,6 +157,7 @@ PresentManager::PresentManager(const vk::Instance& instance_,
             .pNext = nullptr,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         });
+        frame.storage_capable = storage_supported;
         free_queue.push_back(&frame);
     }
 
@@ -179,12 +199,26 @@ void PresentManager::Present(Frame* frame) {
     }
 }
 
+size_t PresentManager::MaxExtraFrames() const {
+    return image_count - 1;
+}
+
+bool PresentManager::NeedsStorage(const Frame* frame, bool required) const {
+    return required && frame->storage_capable && !frame->storage_view;
+}
+
 void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat image_view_format,
-                                   VkRenderPass rd) {
+                                   VkRenderPass rd, bool storage) {
     auto& dld = device.GetLogical();
 
     frame->width = width;
     frame->height = height;
+
+    const bool with_storage = storage && frame->storage_capable;
+    VkImageUsageFlags storage_usage = 0;
+    if (with_storage) {
+        storage_usage = VK_IMAGE_USAGE_STORAGE_BIT;
+    }
 
     frame->image = memory_allocator.CreateImage({
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -202,7 +236,8 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | storage_usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
@@ -232,6 +267,33 @@ void PresentManager::RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat
                 .layerCount = 1,
             },
     });
+
+    frame->storage_view = vk::ImageView{};
+    if (with_storage) {
+        frame->storage_view = dld.CreateImageView({
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = *frame->image,
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = swapchain.GetImageFormat(),
+            .components =
+                {
+                    .r = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .g = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .b = VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .a = VK_COMPONENT_SWIZZLE_IDENTITY,
+                },
+            .subresourceRange =
+                {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+        });
+    }
 
     const VkImageView image_view{*frame->image_view};
     frame->framebuffer = dld.CreateFramebuffer({
@@ -266,6 +328,8 @@ void PresentManager::WaitPresent() {
 
 void PresentManager::PresentThread(std::stop_token token) {
     Common::SetCurrentThreadName("VulkanPresent");
+    Common::SetCurrentThreadPriority(Common::ThreadPriority::High);
+    Common::SetCurrentThreadToPerformanceCores();
     while (!token.stop_requested()) {
         std::unique_lock lock{queue_mutex};
         // Wait for presentation frames
@@ -279,7 +343,7 @@ void PresentManager::PresentThread(std::stop_token token) {
             // By exchanging the lock ownership we take the swapchain lock
             // before the queue lock goes out of scope. This way the swapchain
             // lock in WaitPresent is guaranteed to occur after here.
-            std::exchange(lock, std::unique_lock{swapchain_mutex});
+            void(std::exchange(lock, std::unique_lock{swapchain_mutex}));
             CopyToSwapchain(frame);
 
             // Free the frame for reuse
@@ -299,7 +363,15 @@ void PresentManager::SetImageCount() {
     // We cannot have more than 7 images in flight at any given time.
     // FRAMES_IN_FLIGHT is 8, and the cache TICKS_TO_DESTROY is 8.
     // Mali drivers will give us 6.
-    image_count = std::min<size_t>(swapchain.GetImageCount(), 7);
+#ifdef HAS_LSFG
+    const size_t generations = Settings::FrameGenMaxGenerations();
+    const size_t queued_composites = Settings::values.frame_gen_queue_target.GetValue() + 1;
+    image_count =
+        std::clamp<size_t>((generations + 1) * queued_composites, swapchain.GetImageCount(),
+                           MAX_FRAMES_IN_FLIGHT);
+#else
+    image_count = std::min<size_t>(swapchain.GetImageCount(), MAX_FRAMES_IN_FLIGHT);
+#endif
 }
 
 void PresentManager::CopyToSwapchain(Frame* frame) {

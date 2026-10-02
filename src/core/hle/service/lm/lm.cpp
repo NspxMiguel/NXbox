@@ -7,7 +7,7 @@
 #include <string>
 
 #include <optional>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <boost/container_hash/hash.hpp>
 #include "common/logging.h"
 #include "core/core.h"
@@ -331,7 +331,7 @@ private:
     };
     static_assert(sizeof(LogPacketHeader) == 0x18, "LogPacketHeader is an invalid size");
 
-    ankerl::unordered_dense::map<LogPacketHeaderEntry, std::vector<u8>> entries{};
+    ::Common::unordered_map<LogPacketHeaderEntry, std::vector<u8>> entries{};
     LogDestination destination{LogDestination::All};
 };
 
@@ -353,7 +353,22 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<ILogger>(system);
+        rb.PushIpcInterface<ILogger>(ctx, system);
+    }
+};
+
+class LM_GET final : public ServiceFramework<LM_GET> {
+public:
+    explicit LM_GET(Core::System& system_)
+        : ServiceFramework{system_, "lm:get"}
+    {
+        static const FunctionInfo functions[] = {
+            {0, nullptr, "StartLogging"},
+            {1, nullptr, "StopLogging"},
+            {2, nullptr, "GetLog"},
+            {100, nullptr, "CreateDevNotificationReceiver"},
+        };
+        RegisterHandlers(functions);
     }
 };
 
@@ -361,6 +376,7 @@ void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
     server_manager->RegisterNamedService("lm", std::make_shared<LM>(system));
+    server_manager->RegisterNamedService("lm:get", std::make_shared<LM_GET>(system));
     ServerManager::RunServer(std::move(server_manager));
 }
 

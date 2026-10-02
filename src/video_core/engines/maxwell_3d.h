@@ -55,7 +55,7 @@ namespace Tegra::Engines {
 
 class Maxwell3D final : public EngineInterface {
 public:
-    explicit Maxwell3D(Core::System& system, MemoryManager& memory_manager);
+    explicit Maxwell3D(MemoryManager& memory_manager);
     ~Maxwell3D();
 
     /// Binds a rasterizer to this engine.
@@ -2257,7 +2257,7 @@ public:
             /// Returns whether the vertex array specified by index is supposed to be
             /// accessed per instance or not.
             bool IsInstancingEnabled(std::size_t index) const {
-                return bool(is_instanced[index]); //FUCK YOU MSVC
+                return bool(is_instanced[index]);
             }
         };
 
@@ -3077,6 +3077,7 @@ public:
         void DrawArrayIndirect(Maxwell3D& maxwell3d, Maxwell3D::Regs::PrimitiveTopology topology);
         void DrawIndexedIndirect(Maxwell3D& maxwell3d, Maxwell3D::Regs::PrimitiveTopology topology, u32 index_first, u32 index_count);
         void SetInlineIndexBuffer(Maxwell3D& maxwell3d, u32 index);
+        void SetInlineIndexBuffer(Maxwell3D& maxwell3d, u32 method, const u32* base_start, u32 amount);
         void DrawBegin(Maxwell3D& maxwell3d);
         void DrawEnd(Maxwell3D& maxwell3d, u32 instance_count = 1, bool force_draw = false);
         void DrawIndexSmall(Maxwell3D& maxwell3d, u32 argument);
@@ -3110,7 +3111,7 @@ public:
 
     void SetHLEReplacementAttributeType(u32 bank, u32 offset, HLEReplacementAttributeType name);
 
-    ankerl::unordered_dense::map<u64, HLEReplacementAttributeType> replace_table;
+    ::Common::unordered_map<u64, HLEReplacementAttributeType> replace_table;
 
     static_assert(sizeof(Regs) == Regs::NUM_REGS * sizeof(u32), "Maxwell3D Regs has wrong size");
     static_assert(std::is_trivially_copyable_v<Regs>, "Maxwell3D Regs must be trivially copyable");
@@ -3129,11 +3130,10 @@ public:
     u32 GetRegisterValue(u32 method) const;
 
     /// Write the value to the register identified by method.
-    void CallMethod(u32 method, u32 method_argument, bool is_last_call) override;
+    void CallMethod(Core::System& system, u32 method, u32 method_argument, bool is_last_call) override;
 
     /// Write multiple values to the register identified by method.
-    void CallMultiMethod(u32 method, const u32* base_start, u32 amount,
-                         u32 methods_pending) override;
+    void CallMultiMethod(Core::System& system, u32 method, const u32* base_start, u32 amount, u32 methods_pending) override;
 
     bool ShouldExecute() const {
         return execute_on;
@@ -3159,7 +3159,14 @@ public:
     DrawManager draw_manager;
 
     GPUVAddr GetMacroAddress(size_t index) const {
-        return macro_addresses[index];
+        size_t base = 0;
+        for (const auto& [addr, count] : macro_segments) {
+            if (index < base + count) {
+                return addr + (index - base) * sizeof(u32);
+            }
+            base += count;
+        }
+        return 0;
     }
 
     void RefreshParameters() {
@@ -3187,16 +3194,18 @@ public:
     void ProcessCBData(u32 value);
     void ProcessCBMultiData(const u32* start_base, u32 amount);
 
+    void ProcessInlineIndexMultiData(u32 method, const u32* start_base, u32 amount);
+
 private:
     void InitializeRegisterDefaults();
 
-    void ProcessMacro(u32 method, const u32* base_start, u32 amount, bool is_last_call);
+    void ProcessMacro(Core::System& system, u32 method, const u32* base_start, u32 amount, bool is_last_call);
 
     u32 ProcessShadowRam(u32 method, u32 argument);
 
     void ProcessDirtyRegisters(u32 method, u32 argument);
 
-    void ConsumeSinkImpl() override;
+    void ConsumeSinkImpl(Core::System& system) override;
 
     void ProcessMethodCall(u32 method, u32 argument, u32 nonshadow_argument, bool is_last_call);
 
@@ -3212,7 +3221,7 @@ private:
      * @param method Method to call
      * @param parameters Arguments to the method call
      */
-    void CallMacroMethod(u32 method, const std::vector<u32>& parameters);
+    void CallMacroMethod(Core::System& system, u32 method, const std::vector<u32>& parameters);
 
     /// Handles writes to the macro uploading register.
     void ProcessMacroUpload(u32 data);
@@ -3227,7 +3236,7 @@ private:
     void ProcessQueryGet();
 
     /// Writes the query result accordingly.
-    void StampQueryResult(u64 payload, bool long_query);
+    void StampQueryResult(Core::System& system, u64 payload, bool long_query);
 
     /// Handles conditional rendering.
     void ProcessQueryCondition();
@@ -3242,7 +3251,6 @@ private:
 
     bool IsMethodExecutable(u32 method);
 
-    Core::System& system;
     MemoryManager& memory_manager;
 
     VideoCore::RasterizerInterface* rasterizer = nullptr;
@@ -3263,7 +3271,6 @@ private:
     bool execute_on{true};
 
     std::vector<std::pair<GPUVAddr, size_t>> macro_segments;
-    std::vector<GPUVAddr> macro_addresses;
     bool current_macro_dirty{};
 };
 

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -25,8 +25,10 @@
 #include "core/hle/service/friend/friend.h"
 #include "core/hle/service/glue/glue.h"
 #include "core/hle/service/grc/grc.h"
+#include "core/hle/service/gpio/gpio.h"
 #include "core/hle/service/hid/hid.h"
 #include "core/hle/service/ipc_helpers.h"
+#include "core/hle/service/i2c/i2c.h"
 #include "core/hle/service/jit/jit.h"
 #include "core/hle/service/lbl/lbl.h"
 #include "core/hle/service/ldn/ldn.h"
@@ -35,7 +37,7 @@
 #include "core/hle/service/mig/mig.h"
 #include "core/hle/service/mii/mii.h"
 #include "core/hle/service/mm/mm_u.h"
-#include "core/hle/service/mnpp/mnpp_app.h"
+#include "core/hle/service/mnpp/mnpp.h"
 #include "core/hle/service/ncm/ncm.h"
 #include "core/hle/service/nfc/nfc.h"
 #include "core/hle/service/nfp/nfp.h"
@@ -62,6 +64,8 @@
 #include "core/hle/service/sockets/sockets.h"
 #include "core/hle/service/spl/spl_module.h"
 #include "core/hle/service/ssl/ssl.h"
+#include "core/hle/service/wlan/wlan.h"
+#include "core/hle/service/tma/tma.h"
 #include "core/hle/service/usb/usb.h"
 #include "core/hle/service/vi/vi.h"
 
@@ -87,9 +91,7 @@ Services::Services(std::shared_ptr<SM::ServiceManager>& sm, Core::System& system
     for (auto const& e : std::vector<std::pair<std::string_view, void (*)(Core::System&)>>{
         {"audio",      &Audio::LoopProcess},
         {"FS",         &FileSystem::LoopProcess},
-        {"jit",        &JIT::LoopProcess},
         {"ldn",        &LDN::LoopProcess},
-        {"Loader",     &LDR::LoopProcess},
         {"nvservices", &Nvidia::LoopProcess},
         {"bsdsocket",  &Sockets::LoopProcess},
     })
@@ -118,19 +120,21 @@ Services::Services(std::shared_ptr<SM::ServiceManager>& sm, Core::System& system
         {"glue",       &Glue::LoopProcess},
         {"grc",        &GRC::LoopProcess},
         {"hid",        &HID::LoopProcess},
+        {"jit",        &JIT::LoopProcess},
         {"lbl",        &LBL::LoopProcess},
+        {"Loader",     &LDR::LoopProcess},
         {"LogManager.Prod", &LM::LoopProcess},
         {"mig",        &Migration::LoopProcess},
         {"mii",        &Mii::LoopProcess},
         {"mm",         &MM::LoopProcess},
         {"mnpp",       &MNPP::LoopProcess},
-        {"nvnflinger", &Nvnflinger::LoopProcess},
         {"NCM",        &NCM::LoopProcess},
         {"nfc",        &NFC::LoopProcess},
         {"nfp",        &NFP::LoopProcess},
         {"ngc",        &NGC::LoopProcess},
         {"nifm",       &NIFM::LoopProcess},
         {"nim",        &NIM::LoopProcess},
+        {"nvnflinger", &Nvnflinger::LoopProcess},
         {"npns",       &NPNS::LoopProcess},
         {"ns",         &NS::LoopProcess},
         {"olsc",       &OLSC::LoopProcess},
@@ -144,7 +148,11 @@ Services::Services(std::shared_ptr<SM::ServiceManager>& sm, Core::System& system
         {"ro",         &RO::LoopProcess},
         {"spl",        &SPL::LoopProcess},
         {"ssl",        &SSL::LoopProcess},
-        {"usb",        &USB::LoopProcess}
+        {"wlan",       &WLAN::LoopProcess},
+        {"tma",        &TMA::LoopProcess},
+        {"usb",        &USB::LoopProcess},
+        {"i2c",        &I2C::LoopProcess},
+        {"gpio",        &GPIO::LoopProcess},
     })
         kernel.RunOnGuestCoreProcess(std::string(e.first), [&system, f = e.second] { f(system); });
 }

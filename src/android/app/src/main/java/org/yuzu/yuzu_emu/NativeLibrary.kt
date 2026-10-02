@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.annotation.Keep
 import androidx.core.net.toUri
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import org.libsdl.app.SDL
 import java.lang.ref.WeakReference
 import org.yuzu.yuzu_emu.activities.EmulationActivity
 import org.yuzu.yuzu_emu.fragments.CoreErrorDialogFragment
@@ -52,6 +53,8 @@ object NativeLibrary {
     init {
         try {
             System.loadLibrary("yuzu-android")
+            SDL.setupJNI()
+            initJvm()
         } catch (ex: UnsatisfiedLinkError) {
             error("[NativeLibrary] $ex")
         }
@@ -218,7 +221,9 @@ object NativeLibrary {
 
     external fun logSettings()
 
-    external fun getDebugKnobAt(index: Int): Boolean
+    external fun refreshThreadPolicies()
+
+    external fun GetDebugKnobAt(index: Int): Boolean
 
     /**
      * Set the current speed limit to the configured turbo speed.
@@ -365,6 +370,7 @@ object NativeLibrary {
         NetPlayManager.clearChat()
     }
 
+    external fun initJvm()
     external fun initMultiplayer()
 
     @Keep
@@ -536,6 +542,40 @@ object NativeLibrary {
      * @return The result code.
      */
     external fun installKeys(path: String, ext: String): Int
+
+    /**
+     * @return Whether this GPU can run the Lossless Scaling frame generation shaders,
+     *         which are built against the Vulkan memory model.
+     */
+    external fun supportsFrameGeneration(): Boolean
+
+    /**
+     * @return Path the user-supplied Lossless Scaling library is expected at.
+     */
+    external fun getLosslessDllPath(): String
+
+    /**
+     * Parses the installed Lossless Scaling library and checks that every shader the
+     * frame generation chain needs is present.
+     *
+     * @return The result code, matching the losslessDllResults array.
+     */
+    external fun validateLosslessDll(): Int
+
+    /**
+     * Translates the frame generation shaders out of the installed Lossless Scaling library
+     * and writes them to the SPIR-V cache. Slow, so call it off the main thread.
+     *
+     * @return The result code, matching the losslessDllResults array.
+     */
+    external fun prepareLosslessDll(): Int
+
+    /**
+     * Deletes the installed Lossless Scaling library.
+     *
+     * @return Whether the library is gone after the call.
+     */
+    external fun removeLosslessDll(): Boolean
 
     /**
      * Checks the PatchManager for any addons that are available

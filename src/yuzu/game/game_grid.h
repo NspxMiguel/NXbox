@@ -6,8 +6,6 @@
 #include <QListView>
 #include <QString>
 
-#include "common/common_types.h"
-
 class GameCard;
 class GameListModel;
 
@@ -20,6 +18,8 @@ public:
     void SetModel(GameListModel* model);
     void ApplyFilter(const QString& edit_filter_text, GameListModel* model);
     void UpdateIconSize();
+
+    QModelIndex indexAt(const QPoint& point) const override;
 
 private:
     GameCard* m_gameCard = nullptr;

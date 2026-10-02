@@ -88,11 +88,12 @@ static const constexpr std::array blockedDomains = {
     "sun.hac.lp1.d4c.nintendo.net",
     "phoenix-api.wbagora.com", //hogwarts legacy
     "battle.net",
-    "microsoft.com", //minecraft dungeons + other games
+    "microsoft.com", // Minecraft dungeons + other games
     "mojang.com",
     "xboxlive.com",
     "api.epicgames.dev", // marvel cosmic invasion +?
-    "minecraftservices.com"
+    "minecraftservices.com",
+    "508223012e5a5ff19f30a391b2bdadc0.my.2k.com", // Civilization 5
 };
 
 static bool IsBlockedHost(const std::string& host) {
@@ -207,16 +208,15 @@ static std::pair<u32, GetAddrInfoError> GetHostByNameRequestImpl(HLERequestConte
         return {0, GetAddrInfoError::AGAIN};
     }
 
-    auto res = Network::GetAddressInfo(host, /*service*/ std::nullopt);
-    if (!res.has_value()) {
-        return {0, Translate(res.error())};
+    auto res_v = Network::GetAddressInfo(host, /*service*/ std::nullopt);
+    if (auto* res = std::get_if<std::vector<Network::AddrInfo>>(&res_v)) {
+        const std::vector<u8> data = SerializeAddrInfoAsHostEnt(*res, host);
+        const u32 data_size = u32(data.size());
+        ctx.WriteBuffer(data, 0);
+        return {data_size, GetAddrInfoError::SUCCESS};
     }
-
-    const std::vector<u8> data = SerializeAddrInfoAsHostEnt(res.value(), host);
-    const u32 data_size = static_cast<u32>(data.size());
-    ctx.WriteBuffer(data, 0);
-
-    return {data_size, GetAddrInfoError::SUCCESS};
+    auto* err = std::get_if<Network::GetAddrInfoError>(&res_v);
+    return {0, Translate(*err)};
 }
 
 void SFDNSRES::GetHostByNameRequest(HLERequestContext& ctx) {
@@ -332,16 +332,15 @@ static std::pair<u32, GetAddrInfoError> GetAddrInfoRequestImpl(HLERequestContext
 
     // Serialized hints are also passed in a buffer, but are ignored for now.
 
-    auto res = Network::GetAddressInfo(host, service);
-    if (!res.has_value()) {
-        return {0, Translate(res.error())};
+    auto res_v = Network::GetAddressInfo(host, service);
+    if (auto* res = std::get_if<std::vector<Network::AddrInfo>>(&res_v)) {
+        const std::vector<u8> data = SerializeAddrInfo(*res, host);
+        const u32 data_size = u32(data.size());
+        ctx.WriteBuffer(data, 0);
+        return {data_size, GetAddrInfoError::SUCCESS};
     }
-
-    const std::vector<u8> data = SerializeAddrInfo(res.value(), host);
-    const u32 data_size = static_cast<u32>(data.size());
-    ctx.WriteBuffer(data, 0);
-
-    return {data_size, GetAddrInfoError::SUCCESS};
+    auto* err = std::get_if<Network::GetAddrInfoError>(&res_v);
+    return {0, Translate(*err)};
 }
 
 void SFDNSRES::GetAddrInfoRequest(HLERequestContext& ctx) {
@@ -407,4 +406,21 @@ void SFDNSRES::ResolverSetOptionRequest(HLERequestContext& ctx) {
     rb.Push(ResultSuccess);
     rb.Push<s32>(0); // bsd errno
 }
+
+
+DNS_PRIV::DNS_PRIV(Core::System& system_)
+    : ServiceFramework{system_, "dns:priv"} {
+    // clang-format off
+    static const FunctionInfo functions[] = {
+        {0, nullptr, "Cmd0"},
+        {1, nullptr, "Cmd1"},
+        {2, nullptr, "Cmd2"},
+    };
+    // clang-format on
+    RegisterHandlers(functions);
+}
+
+DNS_PRIV::~DNS_PRIV() = default;
+
+
 } // namespace Service::Sockets

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Ce logiciel permet de jouer à des jeux de la console Nintendo Switch. Aucun titre ni clé de jeu n\'est inclus.<br /><br />Avant de commencer, veuillez localiser votre fichier <![CDATA[<b> prod.keys </b>]]> sur le stockage de votre appareil.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">En savoir plus</a>]]></string>
     <string name="notice_notification_channel_name">Avis et erreurs</string>
     <string name="notice_notification_channel_description">Affiche des notifications en cas de problème.</string>
     <string name="notification_permission_not_granted">Permission de notification non accordée !</string>
@@ -104,7 +103,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Émulation NVDEC</string>
-    <string name="nvdec_emulation_description">Sélectionnez la manière dont le décodage vidéo (NVDEC) est géré pendant les cinématiques et les intros.</string>
     <string name="nvdec_emulation_none">Aucun</string>
 
     <!-- Optimize SPIRV output -->
@@ -432,9 +430,6 @@
     <string name="use_custom_rtc_description">Vous permet de définir une horloge en temps réel personnalisée distincte de l\'heure actuelle de votre système.</string>
     <string name="set_custom_rtc">Définir l\'horloge RTC personnalisée</string>
 
-    <!-- CPU -->
-    <string name="fast_cpu_time">Overclock du CPU</string>
-    <string name="fast_cpu_time_description">Force le CPU émulé à fonctionner à une fréquence plus élevée, en contournant certaines limitations de FPS. Utilisez Boost (1700 MHz) pour atteindre la fréquence native maximale de la Nintendo Switch, ou Fast (2000 MHz) pour doubler la fréquence. C’est un “hack”. Certains chipsets moins puissants peuvent voir leurs performances réduites et les jeux peuvent se comporter différemment.</string>
     <string name="custom_cpu_ticks">Ticks CPU personnalisés</string>
     <string name="custom_cpu_ticks_description">Définissez une valeur personnalisée de ticks CPU. Des valeurs plus élevées peuvent améliorer les performances, mais peuvent aussi provoquer des gels du jeu. Une plage de 77 à 21000 est recommandée.</string>
     <string name="cpu_ticks">Ticks</string>
@@ -482,7 +477,6 @@
     <string name="enable_buffer_history">Activer l\'historique du tampon</string>
     <string name="hacks">Contournements</string>
 
-    <string name="fast_gpu_time">Temps GPU rapide</string>
     <string name="skip_cpu_inner_invalidation">Ignorer l\'invalidation interne du CPU</string>
     <string name="skip_cpu_inner_invalidation_description">Ignore certaines invalidations de cache côté CPU lors des mises à jour mémoire, réduisant l\'utilisation du CPU et améliorant ses performances. Peut causer des bugs ou plantages sur certains jeux.</string>
     <string name="emulate_bgr565">Emuler BGR565</string>
@@ -522,14 +516,10 @@
     <string name="log">Journalisation</string>
     <string name="flush_by_line">Vider les journaux de débogage ligne par ligne</string>
     <string name="flush_by_line_description">Vide les journaux de débogage à chaque ligne écrite, facilitant le débogage en cas de plantage ou de gel.</string>
-
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">Journalisation GPU</string>
-    <string name="gpu_logging_enabled">Activer la journalisation GPU</string>
     <string name="gpu_log_level">Niveau de journalisation</string>
     <string name="gpu_log_vulkan_calls">Journaliser les appels API Vulkan</string>
-    <string name="gpu_log_shader_dumps">Extraire les shaders</string>
-    <string name="gpu_log_shader_dumps_description">Sauvegarder le shader SPIR-V complié dans les fichiers</string>
     <string name="gpu_log_memory_tracking">Monitorer la mémoire GPU</string>
     <string name="gpu_log_memory_tracking_description">Monitorer les allocations et désallocations de la mémoire GPU</string>
     <string name="gpu_log_driver_debug">Informations de débogage du pilote</string>
@@ -794,8 +784,6 @@
     <string name="loader_error_file_not_found">Le fichier ROM n\'existe pas</string>
 
     <string name="loader_requires_firmware">Jeu nécessite un firmware</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Ce jeu nécessite un firmware pour démarrer ou passer le menu d\'accueil. Veuillez <a href=\"https://yuzu-mirror.github.io/help/quickstart\">dumper et installer le firmware</a> ou appuyez sur \"OK\" pour continuer quand même.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Recherche du jeu...</string>
     <string name="game_not_found_for_title_id">Jeu non trouvé pour l\'ID de titre : %1$s</string>
@@ -895,15 +883,6 @@
     <string name="memory_6gb">6 Go (Dangereux)</string>
     <string name="memory_8gb">8 Go (Dangereux)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Boost (1700MHz)</string>
-    <string name="clock_fast">Rapide (2000MHz)</string>
-
-    <!-- GPU overclock factors -->
-    <string name="off">Désactivé</string>
-    <string name="fast_gpu_medium">Moyen (256)</string>
-    <string name="fast_gpu_high">Élevé (512)</string>
-
     <!-- GPU swizzle texture size -->
     <string name="gpu_texturesizeswizzle_verysmall">Très petit (16 Mo)</string>
     <string name="gpu_texturesizeswizzle_small">Petit (32 Mo)</string>
@@ -942,7 +921,6 @@
 
     <!-- Renderer Accuracy -->
     <string name="renderer_accuracy_low">Rapide</string>
-    <string name="renderer_accuracy_medium">Moyen</string>
     <string name="renderer_accuracy_high">Précis</string>
 
     <!-- DMA Accuracy -->
@@ -1020,8 +998,6 @@
     <string name="theme_mode_follow_system">Automatique</string>
     <string name="theme_mode_light">Lumineux</string>
     <string name="theme_mode_dark">Sombre</string>
-
-    <string name="multiplier_none">Aucun</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Arrière-plan noir</string>

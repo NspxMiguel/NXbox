@@ -7,6 +7,7 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 
 #include <boost/container/small_vector.hpp>
 
@@ -15,6 +16,7 @@
 #include "shader_recompiler/shader_info.h"
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
 #include "video_core/renderer_vulkan/vk_update_descriptor.h"
+#include "video_core/surface.h"
 #include "video_core/texture_cache/types.h"
 #include "video_core/vulkan_common/vulkan_device.h"
 
@@ -22,25 +24,194 @@ namespace Vulkan {
 
 using Shader::Backend::SPIRV::NUM_TEXTURE_AND_IMAGE_SCALING_WORDS;
 
+[[nodiscard]] inline std::optional<PixelFormat> PixelFormatFromImageFormat(
+    Shader::ImageFormat format) {
+    switch (format) {
+    case Shader::ImageFormat::Typeless:
+        return std::nullopt;
+    case Shader::ImageFormat::R8_UINT:
+        return PixelFormat::R8_UINT;
+    case Shader::ImageFormat::R8_SINT:
+        return PixelFormat::R8_SINT;
+    case Shader::ImageFormat::R16_UINT:
+        return PixelFormat::R16_UINT;
+    case Shader::ImageFormat::R16_SINT:
+        return PixelFormat::R16_SINT;
+    case Shader::ImageFormat::R32_UINT:
+        return PixelFormat::R32_UINT;
+    case Shader::ImageFormat::R32G32_UINT:
+        return PixelFormat::R32G32_UINT;
+    case Shader::ImageFormat::R32G32B32A32_UINT:
+        return PixelFormat::R32G32B32A32_UINT;
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] inline VkDeviceSize DescriptorSizeForType(const Device& device,
+                                                        VkDescriptorType type) {
+    const auto& props = device.DescriptorBufferProperties();
+    const bool robust = device.IsRobustBufferAccessEnabled();
+    switch (type) {
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+        return robust ? props.robustUniformBufferDescriptorSize : props.uniformBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+        return robust ? props.robustStorageBufferDescriptorSize : props.storageBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+        return robust ? props.robustUniformTexelBufferDescriptorSize
+                      : props.uniformTexelBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        return robust ? props.robustStorageTexelBufferDescriptorSize
+                      : props.storageTexelBufferDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+        return props.combinedImageSamplerDescriptorSize;
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+        return props.storageImageDescriptorSize;
+    default:
+        return 0;
+    }
+}
+
+struct DescriptorBufferBinding {
+    VkDescriptorType type;
+    u32 count;
+    VkDeviceSize offset;
+    VkDeviceSize stride;
+};
+
+struct DescriptorBufferLayout {
+    VkDeviceSize size{};
+    boost::container::small_vector<DescriptorBufferBinding, 32> bindings;
+
+    [[nodiscard]] bool Empty() const noexcept {
+        return bindings.empty();
+    }
+};
+
+inline void WriteDescriptorBuffer(const Device& device, const DescriptorBufferLayout& layout,
+                                  const DescriptorUpdateEntry* payload, u8* host) {
+    const vk::Device& dev = device.GetLogical();
+    for (const DescriptorBufferBinding& binding : layout.bindings) {
+        for (u32 index = 0; index < binding.count; ++index) {
+            const DescriptorUpdateEntry& entry = *(payload++);
+            const VkDescriptorAddressInfoEXT address_info{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_ADDRESS_INFO_EXT,
+                .pNext = nullptr,
+                .address = entry.address.address,
+                .range = entry.address.range,
+                .format = entry.address.format,
+            };
+            VkDescriptorGetInfoEXT get_info{
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_GET_INFO_EXT,
+                .pNext = nullptr,
+                .type = binding.type,
+                .data{},
+            };
+            switch (binding.type) {
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+                get_info.data.pUniformBuffer = &address_info;
+                break;
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+                get_info.data.pStorageBuffer = &address_info;
+                break;
+            case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+                get_info.data.pUniformTexelBuffer = &address_info;
+                break;
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+                get_info.data.pStorageTexelBuffer = &address_info;
+                break;
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+                get_info.data.pCombinedImageSampler = &entry.image;
+                break;
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                get_info.data.pStorageImage = &entry.image;
+                break;
+            default:
+                continue;
+            }
+            dev.GetDescriptorEXT(get_info, binding.stride,
+                                 host + binding.offset + index * binding.stride);
+        }
+    }
+}
+
+[[nodiscard]] inline u32 NumDescriptorEntries(const Shader::Info& info) {
+    return Shader::NumDescriptors(info.constant_buffer_descriptors) +
+           Shader::NumDescriptors(info.storage_buffers_descriptors) +
+           Shader::NumDescriptors(info.texture_buffer_descriptors) +
+           Shader::NumDescriptors(info.image_buffer_descriptors) +
+           Shader::NumDescriptors(info.texture_descriptors) +
+           Shader::NumDescriptors(info.image_descriptors);
+}
+
 class DescriptorLayoutBuilder {
 public:
     DescriptorLayoutBuilder(const Device& device_) : device{&device_} {}
 
     bool CanUsePushDescriptor() const noexcept {
-        return device->IsKhrPushDescriptorSupported() &&
-               num_descriptors <= device->MaxPushDescriptors();
+        if (!device->IsKhrPushDescriptorSupported() ||
+            num_descriptors > device->MaxPushDescriptors()) {
+            return false;
+        }
+        return !device->IsExtDescriptorBufferSupported() ||
+               device->DescriptorBufferProperties().bufferlessPushDescriptors;
     }
 
-    // TODO(crueter): utilize layout binding flags
-    vk::DescriptorSetLayout CreateDescriptorSetLayout(bool use_push_descriptor) const {
+    bool CanUseDescriptorBuffer() const noexcept {
+        const auto& props = device->DescriptorBufferProperties();
+        if (!device->IsExtDescriptorBufferSupported() || bindings.empty() ||
+            !props.combinedImageSamplerDescriptorSingleArray) {
+            return false;
+        }
+        return !props.bufferlessPushDescriptors || !CanUsePushDescriptor();
+    }
+
+    DescriptorBufferLayout MakeDescriptorBufferLayout(VkDescriptorSetLayout layout) const {
+        DescriptorBufferLayout result;
+        if (!layout) {
+            return result;
+        }
+        const vk::Device& dev = device->GetLogical();
+        result.size = dev.GetDescriptorSetLayoutSizeEXT(layout);
+        result.bindings.reserve(bindings.size());
+        for (const VkDescriptorSetLayoutBinding& entry : bindings) {
+            result.bindings.push_back(DescriptorBufferBinding{
+                .type = entry.descriptorType,
+                .count = entry.descriptorCount,
+                .offset = dev.GetDescriptorSetLayoutBindingOffsetEXT(layout, entry.binding),
+                .stride = DescriptorSizeForType(*device, entry.descriptorType),
+            });
+        }
+        return result;
+    }
+
+    vk::DescriptorSetLayout CreateDescriptorSetLayout(bool use_push_descriptor,
+                                                      bool use_descriptor_buffer = false) const {
         if (bindings.empty()) {
             return nullptr;
         }
-        const VkDescriptorSetLayoutCreateFlags flags =
-            use_push_descriptor ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR : 0;
+        VkDescriptorSetLayoutCreateFlags flags = 0;
+        if (use_push_descriptor) {
+            flags |= VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR;
+        }
+        if (use_descriptor_buffer) {
+            flags |= VK_DESCRIPTOR_SET_LAYOUT_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+        }
+        boost::container::small_vector<VkDescriptorBindingFlags, 32> binding_flags;
+        VkDescriptorSetLayoutBindingFlagsCreateInfo binding_flags_ci{};
+        const void* pnext = nullptr;
+        if (!use_push_descriptor && device->IsDescriptorBindingPartiallyBoundSupported()) {
+            binding_flags.assign(bindings.size(), VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT);
+            binding_flags_ci = {
+                .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+                .pNext = nullptr,
+                .bindingCount = static_cast<u32>(binding_flags.size()),
+                .pBindingFlags = binding_flags.data(),
+            };
+            pnext = &binding_flags_ci;
+        }
         return device->GetLogical().CreateDescriptorSetLayout({
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-            .pNext = nullptr,
+            .pNext = pnext,
             .flags = flags,
             .bindingCount = static_cast<u32>(bindings.size()),
             .pBindings = bindings.data(),
@@ -194,13 +365,14 @@ inline void PushImageDescriptors(TextureCache& texture_cache,
             const VideoCommon::ImageViewId image_view_id{(views++)->id};
             const VideoCommon::SamplerId sampler_id{*(samplers++)};
             ImageView& image_view{texture_cache.GetImageView(image_view_id)};
-            const VkImageView vk_image_view{image_view.Handle(desc.type)};
-            const Sampler& sampler{texture_cache.GetSampler(sampler_id)};
-            const bool use_fallback_sampler{sampler.HasAddedAnisotropy() &&
-                                            !image_view.SupportsAnisotropy()};
-            const VkSampler vk_sampler{use_fallback_sampler ? sampler.HandleWithDefaultAnisotropy()
-                                                            : sampler.Handle()};
-            guest_descriptor_queue.AddSampledImage(vk_image_view, vk_sampler);
+            VkImageView vk_image_view{image_view.Handle(desc.type)};
+            if (vk_image_view == VK_NULL_HANDLE) {
+                const VkImageView null_image_view{texture_cache.GetImageView(VideoCommon::NULL_IMAGE_VIEW_ID).Handle(desc.type)};
+                if (null_image_view != VK_NULL_HANDLE) vk_image_view = null_image_view;
+            }
+            Sampler& sampler{texture_cache.GetSampler(sampler_id)};
+            guest_descriptor_queue.AddSampledImage(vk_image_view,
+                                                   sampler.HandleFor(image_view, desc.is_depth));
             const bool element_rescaled{texture_cache.IsRescaling(image_view)};
             is_rescaled |= element_rescaled;
         }

@@ -175,19 +175,10 @@ Result AlbumManager::LoadAlbumScreenShotImage(LoadAlbumScreenShotImageOutput& ou
         return ResultIsNotMounted;
     }
 
-    out_image_output = {
-        .width = 1280,
-        .height = 720,
-        .attribute =
-            {
-                .unknown_0{},
-                .orientation = AlbumImageOrientation::None,
-                .unknown_1{},
-                .unknown_2{},
-                .pad163{},
-            },
-        .pad179{},
-    };
+    out_image_output = {};
+    out_image_output.width = 1280;
+    out_image_output.height = 720;
+    out_image_output.attribute.orientation = AlbumImageOrientation::None;
 
     std::filesystem::path path;
     const auto result = GetFile(path, file_id);
@@ -211,19 +202,10 @@ Result AlbumManager::LoadAlbumScreenShotThumbnail(
         return ResultIsNotMounted;
     }
 
-    out_image_output = {
-        .width = 320,
-        .height = 180,
-        .attribute =
-            {
-                .unknown_0{},
-                .orientation = AlbumImageOrientation::None,
-                .unknown_1{},
-                .unknown_2{},
-                .pad163{},
-            },
-        .pad179{},
-    };
+    out_image_output = {};
+    out_image_output.width = 320;
+    out_image_output.height = 180;
+    out_image_output.attribute.orientation = AlbumImageOrientation::None;
 
     std::filesystem::path path;
     const auto result = GetFile(path, file_id);
@@ -248,7 +230,9 @@ Result AlbumManager::SaveScreenShot(ApplicationAlbumEntry& out_entry,
                                     AlbumReportOption report_option,
                                     const ApplicationData& app_data, std::span<const u8> image_data,
                                     u64 aruid) {
-    const u64 title_id = system.GetApplicationProcessProgramID();
+    R_UNLESS(!image_data.empty(), ResultUnknown); //TODO: ???
+
+    const u64 title_id = system.ResolveCallerProgramId(aruid);
 
     auto static_service =
         system.ServiceManager().GetService<Service::Glue::Time::StaticService>("time:u", true);
@@ -264,14 +248,12 @@ Result AlbumManager::SaveScreenShot(ApplicationAlbumEntry& out_entry,
     }
 
     const auto date = ConvertToAlbumDateTime(posix_time);
-
     return SaveImage(out_entry, image_data, title_id, date);
 }
 
-Result AlbumManager::SaveEditedScreenShot(ApplicationAlbumEntry& out_entry,
-                                          const ScreenShotAttribute& attribute,
-                                          const AlbumFileId& file_id,
-                                          std::span<const u8> image_data) {
+Result AlbumManager::SaveEditedScreenShot(ApplicationAlbumEntry& out_entry, const ScreenShotAttribute& attribute, const AlbumFileId& file_id, std::span<const u8> image_data) {
+    R_UNLESS(!image_data.empty(), ResultUnknown); //TODO: ???
+
     auto static_service =
         system.ServiceManager().GetService<Service::Glue::Time::StaticService>("time:u", true);
 
@@ -286,7 +268,6 @@ Result AlbumManager::SaveEditedScreenShot(ApplicationAlbumEntry& out_entry,
     }
 
     const auto date = ConvertToAlbumDateTime(posix_time);
-
     return SaveImage(out_entry, image_data, file_id.application_id, date);
 }
 

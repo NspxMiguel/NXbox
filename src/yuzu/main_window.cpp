@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// Qt on macOS doesn't define VMA shit
+// Static Qt on macOS doesn't use Vulkan
+// Other platforms do, and thus have conflicting VulkanMemoryAllocator symbols
+#include "core/launch_params.h"
 #if defined(QT_STATICPLUGIN) && !defined(__APPLE__)
 #undef VMA_IMPLEMENTATION
 #endif
@@ -12,6 +14,10 @@
 #include "common/settings_enums.h"
 #include "frontend_common/settings_generator.h"
 #include "render/performance_overlay.h"
+#ifdef HAS_RESHADE
+#include "configuration/configure_post_processing.h"
+#include "video_core/post_processing/fx_preset.h"
+#endif
 #include "updater/update_dialog.h"
 
 #include "common/fs/ryujinx_compat.h"
@@ -138,6 +144,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "core/hle/service/am/frontend/applet_web_browser_types.h"
 
 #include "core/file_sys/card_image.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/file_sys/romfs.h"
 #include "core/file_sys/savedata_factory.h"
 
@@ -357,6 +364,10 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     Common::FS::CreateEdenPaths();
     this->config = std::make_unique<QtConfig>();
 
+    Common::Log::Filter filter;
+    filter.ParseFilterString(Settings::values.log_filter.GetValue());
+    Common::Log::SetGlobalFilter(filter);
+
     if (user_data_migrator.migrated) {
         // Sort-of hack whereby we only move the old dir if it's a subfolder of the user dir
 
@@ -447,7 +458,6 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     if (Settings::values.use_dev_keys.GetValue()) {
         Core::Crypto::KeyManager::Instance().ReloadKeys();
     }
-    game_list->LoadCompatibilityList();
     game_list->PopulateAsync(UISettings::values.game_dirs);
 
     // Set up game list mode checkboxes.
@@ -506,82 +516,34 @@ MainWindow::MainWindow(bool has_broken_vulkan)
     // to prevent the UI from blowing up.
     UpdateUITheme();
 
-    QStringList args = QApplication::arguments();
+    if (QStringList args = QApplication::arguments(); args.size() >= 2) {
+        QList<QByteArray> qba{};
+        for (auto const& e : args)
+            qba.push_back(e.toUtf8());
+        std::vector<char*> args_cstr{};
+        for (auto& e : qba)
+            args_cstr.push_back(e.data());
 
-    if (args.size() < 2) {
-        return;
-    }
+        auto const lp = Core::ParseLaunchParams(*QtCommon::system, args_cstr.size(), args_cstr.data(), nullptr);
 
-    QString game_path;
-    bool should_launch_qlaunch = false;
-    bool should_launch_hlaunch = false;
-    bool should_launch_setup = false;
-    bool has_gamepath = false;
-    bool is_fullscreen = false;
-
-    // Preserves drag/drop functionality
-    for (int i = 1; i < args.size(); ++i) {
-        if (args[i] == QStringLiteral("-f")) {
-            // Launch game in fullscreen mode
-            is_fullscreen = true;
-        } else if (args[i] == QStringLiteral("-u") && i < args.size() - 1) {
-            // Launch game with a specific user
-            int user_arg_idx = ++i;
-            bool argument_ok;
-            std::size_t selected_user = args[user_arg_idx].toUInt(&argument_ok);
-            if (!argument_ok) {
-                // try to look it up by username, only finds the first username that matches.
-                std::string const user_arg_str = args[user_arg_idx].toStdString();
-                auto const user_idx =
-                    QtCommon::system->GetProfileManager().GetUserIndex(user_arg_str);
-                if (user_idx != std::nullopt) {
-                    selected_user = user_idx.value();
-                } else {
-                    LOG_ERROR(Frontend, "Invalid user argument '{}'", user_arg_str);
-                    continue;
-                }
-            }
-            if (QtCommon::system->GetProfileManager().UserExistsIndex(selected_user)) {
-                Settings::values.current_user = s32(selected_user);
-                user_flag_cmd_line = true;
-            } else {
-                LOG_ERROR(Frontend, "Selected user {} doesn't exist", selected_user);
-            }
-        } else if (args[i] == QStringLiteral("-g") && i < args.size() - 1) {
-            // Launch game at path
-            game_path = args[++i];
-            has_gamepath = true;
-        } else if (args[i] == QStringLiteral("-input-profile") && i < args.size() - 1) {
-            auto& players = Settings::values.players.GetValue();
-            players[0].profile_name = args[++i].toStdString();
-        } else if (args[i] == QStringLiteral("-qlaunch")) {
-            should_launch_qlaunch = true;
-        } else if (args[i] == QStringLiteral("-hlaunch")) {
-            should_launch_hlaunch = true;
-        } else if (args[i] == QStringLiteral("-setup")) {
-            should_launch_setup = true;
-        } else {
-            game_path = args[i];
-            has_gamepath = true;
+        // Override fullscreen setting if gamepath or argument is provided
+        if (!lp.filepath.empty() || lp.fullscreen) {
+            ui->action_Fullscreen->setChecked(lp.fullscreen);
         }
-    }
 
-    // Override fullscreen setting if gamepath or argument is provided
-    if (has_gamepath || is_fullscreen) {
-        ui->action_Fullscreen->setChecked(is_fullscreen);
-    }
-
-    if (should_launch_setup) {
-        LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::Starter), std::nullopt);
-    } else {
-        if (!game_path.isEmpty()) {
-            BootGame(game_path, ApplicationAppletParameters());
-        } else if (should_launch_qlaunch) {
+        if (!lp.filepath.empty()) {
+            BootGame(QString::fromStdString(lp.filepath), ApplicationAppletParameters());
+        } else if (lp.launch_setup) {
+            LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::Starter), std::nullopt);
+        } else if (lp.launch_qlaunch) {
             LaunchFirmwareApplet(u64(Service::AM::AppletProgramId::QLaunch), std::nullopt);
-        } else if (should_launch_hlaunch) {
-            std::filesystem::path const sd_dir = Common::FS::GetEdenPathString(Common::FS::EdenPath::SDMCDir);
+        } else if (lp.launch_hlaunch) {
+            std::filesystem::path const sd_dir =
+                Common::FS::GetEdenPathString(Common::FS::EdenPath::SDMCDir);
             auto const hbl_path = (sd_dir / "atmosphere" / "hbl.nsp").string();
-            BootGame(QString::fromStdString(hbl_path), ApplicationAppletParameters());
+            BootGame(
+                QString::fromStdString(hbl_path),
+                LibraryAppletParameters(0x010000000000100Dull, Service::AM::AppletId::QLaunch));
         }
     }
 }
@@ -954,9 +916,6 @@ void MainWindow::WebBrowserRequestExit() {
 }
 
 void MainWindow::InitializeWidgets() {
-#ifdef YUZU_ENABLE_COMPATIBILITY_REPORTING
-    ui->action_Report_Compatibility->setVisible(true);
-#endif
     render_window = new GRenderWindow(this, input_subsystem);
     render_window->hide();
 
@@ -1082,16 +1041,50 @@ void MainWindow::InitializeWidgets() {
 
     statusBar()->insertPermanentWidget(0, volume_button);
 
+#ifdef HAS_RESHADE
+    post_shader_status_button = new QPushButton();
+    post_shader_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
+    post_shader_status_button->setFocusPolicy(Qt::NoFocus);
+    post_shader_status_button->setCheckable(true);
+    connect(post_shader_status_button, &QPushButton::clicked, this, [this] {
+        const bool enabled = Settings::values.post_shader_enabled.GetValue();
+        Settings::values.post_shader_enabled.SetValue(!enabled);
+        UpdatePostShaderText();
+    });
+    UpdatePostShaderText();
+    post_shader_status_button->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(post_shader_status_button, &QPushButton::customContextMenuRequested,
+            [this](const QPoint& menu_location) {
+                QMenu context_menu;
+
+                for (auto const& preset : VideoCore::GetFxPresetCatalog()) {
+                    context_menu.addAction(QString::fromStdString(preset.name),
+                                           [this, name = preset.name] {
+                                               VideoCore::ApplyFxPreset(name);
+                                               Settings::values.post_shader_enabled.SetValue(true);
+                                               UpdatePostShaderText();
+                                           });
+                }
+
+                context_menu.addSeparator();
+                context_menu.addAction(tr("Configure Effects..."), this,
+                                       &MainWindow::OnPostProcessingShaders);
+
+                context_menu.exec(post_shader_status_button->mapToGlobal(menu_location));
+                post_shader_status_button->repaint();
+            });
+    statusBar()->insertPermanentWidget(0, post_shader_status_button);
+#endif
+
     // setup AA button
     aa_status_button = new QPushButton();
     aa_status_button->setObjectName(QStringLiteral("TogglableStatusBarButton"));
     aa_status_button->setFocusPolicy(Qt::NoFocus);
     connect(aa_status_button, &QPushButton::clicked, [&] {
         auto aa_mode = Settings::values.anti_aliasing.GetValue();
-        aa_mode = static_cast<Settings::AntiAliasing>(static_cast<u32>(aa_mode) + 1);
-        if (aa_mode == Settings::AntiAliasing::MaxEnum) {
-            aa_mode = Settings::AntiAliasing::None;
-        }
+        aa_mode = Settings::AntiAliasing(u32(aa_mode) + 1);
+        if (u32(aa_mode) > u32(Settings::EnumMetadata<Settings::AntiAliasing>::GetLast()))
+            aa_mode = Settings::EnumMetadata<Settings::AntiAliasing>::GetFirst();
         Settings::values.anti_aliasing.SetValue(aa_mode);
         aa_status_button->setChecked(true);
         UpdateAAText();
@@ -1457,8 +1450,6 @@ void MainWindow::ConnectWidgetEvents() {
     connect(game_list, &GameList::VerifyIntegrityRequested, this,
             &MainWindow::OnGameListVerifyIntegrity);
     connect(game_list, &GameList::CopyTIDRequested, this, &MainWindow::OnGameListCopyTID);
-    connect(game_list, &GameList::NavigateToGamedbEntryRequested, this,
-            &MainWindow::OnGameListNavigateToGamedbEntry);
     connect(game_list, &GameList::CreateShortcut, this, &MainWindow::OnGameListCreateShortcut);
     connect(game_list, &GameList::AddDirectory, this, &MainWindow::OnGameListAddDirectory);
     connect(game_list_placeholder, &GameListPlaceholder::AddDirectory, this,
@@ -1503,10 +1494,8 @@ void MainWindow::ConnectMenuEvents() {
     // Emulation
     connect_menu(ui->action_Pause, &MainWindow::OnPauseContinueGame);
     connect_menu(ui->action_Stop, &MainWindow::OnStopGame);
-    connect_menu(ui->action_Report_Compatibility, &MainWindow::OnMenuReportCompatibility);
     connect_menu(ui->action_Open_Mods_Page, &MainWindow::OnOpenModsPage);
-    connect_menu(ui->action_Open_Quickstart_Guide, &MainWindow::OnOpenQuickstartGuide);
-    connect_menu(ui->action_Open_FAQ, &MainWindow::OnOpenFAQ);
+    connect_menu(ui->action_Open_UserHandbook, &MainWindow::OnOpenUserHandbook);
     connect_menu(ui->action_Restart, &MainWindow::OnRestartGame);
     connect_menu(ui->action_Configure, &MainWindow::OnConfigure);
     connect_menu(ui->action_Configure_Current_Game, &MainWindow::OnConfigurePerGame);
@@ -1517,6 +1506,11 @@ void MainWindow::ConnectMenuEvents() {
     connect_menu(ui->action_Show_Filter_Bar, &MainWindow::OnToggleFilterBar);
     connect_menu(ui->action_Show_Status_Bar, &MainWindow::OnToggleStatusBar);
     connect_menu(ui->action_Show_Performance_Overlay, &MainWindow::OnTogglePerfOverlay);
+#ifdef HAS_RESHADE
+    connect_menu(ui->action_Post_Processing_Shaders, &MainWindow::OnPostProcessingShaders);
+#else
+    ui->action_Post_Processing_Shaders->setVisible(false);
+#endif
 
     connect_menu(ui->action_Reset_Window_Size_720, &MainWindow::ResetWindowSize720);
     connect_menu(ui->action_Reset_Window_Size_900, &MainWindow::ResetWindowSize900);
@@ -1527,6 +1521,7 @@ void MainWindow::ConnectMenuEvents() {
 
     connect_menu(ui->action_Grid_View, &MainWindow::SetGridView);
     connect_menu(ui->action_Tree_View, &MainWindow::SetTreeView);
+    connect_menu(ui->action_Carousel_View, &MainWindow::SetCarouselView);
 
     game_size_actions = new QActionGroup(this);
     game_size_actions->setExclusive(true);
@@ -1546,6 +1541,8 @@ void MainWindow::ConnectMenuEvents() {
             if (checked) {
                 UISettings::values.game_icon_size.SetValue(size);
                 CheckIconSize();
+
+                game_list->UpdateIconSizes();
                 game_list->RefreshGameDirectory();
             }
         });
@@ -1634,7 +1631,6 @@ void MainWindow::UpdateMenuState() {
         ui->action_Stop,
         ui->action_Restart,
         ui->action_Configure_Current_Game,
-        ui->action_Report_Compatibility,
         ui->action_Load_Amiibo,
         ui->action_Pause,
     };
@@ -1790,7 +1786,7 @@ bool MainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPar
 
     QtCommon::system->SetFrontendAppletSet({
         std::make_unique<QtAmiiboSettings>(*this), // Amiibo Settings
-        (UISettings::values.controller_applet_disabled.GetValue() == true)
+        (Settings::values.controller_applet_mode.GetValue() == Settings::AppletMode::Disabled)
             ? nullptr
             : std::make_unique<QtControllerSelector>(*this), // Controller Selector
         std::make_unique<QtErrorDisplay>(*this),             // Error Display
@@ -1840,12 +1836,10 @@ bool MainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPar
         case Core::SystemResultStatus::ErrorVideoCore:
             QMessageBox::critical(
                 this, tr("An error occurred initializing the video core."),
-                tr("Eden has encountered an error while running the video core. "
-                   "This is usually caused by outdated GPU drivers, including integrated ones. "
-                   "Please see the log for more details. "
-                   "For more information on accessing the log, please see the following page: "
-                   "<a href='https://yuzu-mirror.github.io/help/reference/log-files/'>"
-                   "How to Upload the Log File</a>. "));
+                tr("This is usually caused by outdated GPU drivers. "
+                   "Please see the log for more details. See: "
+                   "<a href='https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/HowToAccessLogs.md'>"
+                   "How to access log files</a>."));
             break;
         default:
             if (result > Core::SystemResultStatus::ErrorLoader) {
@@ -1969,11 +1963,36 @@ void MainWindow::BootGame(const QString& filename, Service::AM::FrontendAppletPa
         render_window->Exit();
     });
 
+    QtCommon::system->RegisterApplicationChangedCallback([this](u64 changed_program_id) {
+        if (QtCommon::emu_thread)
+            QtCommon::emu_thread->RequestDiskShaderCacheReload(changed_program_id);
+
+        QMetaObject::invokeMethod(
+            this, [this, changed_program_id] { this->OnApplicationChanged(changed_program_id); },
+            Qt::QueuedConnection);
+    });
+
     connect(render_window, &GRenderWindow::Closed, this, &MainWindow::OnStopGame);
     connect(render_window, &GRenderWindow::MouseActivity, this, &MainWindow::OnMouseActivity);
 
     connect(QtCommon::emu_thread.get(), &EmuThread::LoadProgress, loading_screen,
             &LoadingScreen::OnLoadProgress, Qt::QueuedConnection);
+
+    connect(
+        QtCommon::emu_thread.get(), &EmuThread::ShaderCacheReloadStarted, this,
+        [this] {
+            loading_screen->Prepare(QtCommon::system->GetAppLoader());
+            loading_screen->show();
+            render_window->hide();
+        },
+        Qt::QueuedConnection);
+
+    connect(
+        QtCommon::emu_thread.get(), &EmuThread::ShaderCacheReloadFinished, this,
+        [this] {
+            loading_screen->OnLoadComplete();
+        },
+        Qt::QueuedConnection);
 
     // Update the GUI
     UpdateStatusButtons();
@@ -2611,21 +2630,6 @@ void MainWindow::OnGameListCopyTID(u64 program_id) {
     clipboard->setText(QString::fromStdString(fmt::format("{:016X}", program_id)));
 }
 
-void MainWindow::OnGameListNavigateToGamedbEntry(u64 program_id,
-                                                 const CompatibilityList& compatibility_list) {
-    const auto it = FindMatchingCompatibilityEntry(compatibility_list, program_id);
-
-    QString directory;
-    if (it != compatibility_list.end()) {
-        directory = it->second.second;
-    }
-
-    QDesktopServices::openUrl(QUrl(
-        QStringLiteral(
-            "https://www.emuready.com/listings?emulatorIds=43bfc023-ec22-422d-8324-048a8ec9f28f") +
-        directory));
-}
-
 void MainWindow::OnGameListCreateShortcut(u64 program_id, const std::string& game_path,
                                           const QtCommon::Game::ShortcutTarget target) {
     // Create shortcu
@@ -3078,12 +3082,31 @@ void MainWindow::OnLoadComplete() {
 }
 
 void MainWindow::OnExecuteProgram(std::size_t program_index) {
+    const u64 previous_program_id = QtCommon::system->GetApplicationProcessProgramID();
+
+    const auto current_path =
+        QString::fromStdString(QtCommon::system->GetCurrentApplicationFilePath());
+
+    LOG_INFO(Frontend, "ExecuteProgram requested, program_index={} previous_program_id={:016X}",
+             program_index, previous_program_id);
+
     ShutdownGame();
 
     auto params = ApplicationAppletParameters();
     params.program_index = static_cast<s32>(program_index);
     params.launch_type = Service::AM::LaunchType::ApplicationInitiated;
-    BootGame(last_filename_booted, params);
+
+    if (previous_program_id > static_cast<u64>(Service::AM::AppletProgramId::MaxProgramId)) {
+        params.previous_program_index =
+            static_cast<s32>(previous_program_id - FileSys::GetBaseTitleID(previous_program_id));
+        params.program_id = previous_program_id;
+    }
+
+    const auto filename = current_path.isEmpty() ? last_filename_booted : current_path;
+
+    LOG_DEBUG(Frontend, "ExecuteProgram booting from path: {}", filename.toStdString());
+
+    BootGame(filename, params);
 }
 
 void MainWindow::OnExit() {
@@ -3167,12 +3190,8 @@ void MainWindow::OnOpenModsPage() {
     OpenURL(QUrl(QStringLiteral("https://github.com/eden-emulator/yuzu-mod-archive")));
 }
 
-void MainWindow::OnOpenQuickstartGuide() {
-    OpenURL(QUrl(QStringLiteral("https://yuzu-mirror.github.io/help/quickstart/")));
-}
-
-void MainWindow::OnOpenFAQ() {
-    OpenURL(QUrl(QStringLiteral("https://yuzu-mirror.github.io/help")));
+void MainWindow::OnOpenUserHandbook() {
+    OpenURL(QUrl(QStringLiteral("https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/README.md")));
 }
 
 void MainWindow::ToggleFullscreen() {
@@ -3313,9 +3332,10 @@ void MainWindow::ResetWindowSize1080() {
 void MainWindow::SetGameListMode(Settings::GameListMode mode) {
     ui->action_Grid_View->setChecked(mode == Settings::GameListMode::GridView);
     ui->action_Tree_View->setChecked(mode == Settings::GameListMode::TreeView);
+    ui->action_Carousel_View->setChecked(mode == Settings::GameListMode::CarouselView);
 
     UISettings::values.game_list_mode = mode;
-    ui->action_Show_Game_Name->setEnabled(mode == Settings::GameListMode::GridView);
+    ui->action_Show_Game_Name->setEnabled(mode != Settings::GameListMode::TreeView);
 
     CheckIconSize();
     game_list->ResetViewMode();
@@ -3329,11 +3349,15 @@ void MainWindow::SetTreeView() {
     SetGameListMode(Settings::GameListMode::TreeView);
 }
 
+void MainWindow::SetCarouselView() {
+    SetGameListMode(Settings::GameListMode::CarouselView);
+}
+
 void MainWindow::CheckIconSize() {
-    // When in grid view mode, with text off
-    // there is no point in having icons turned off..
+    // When in grid/carousel view mode, with text off
+    // there is no point in having icons turned off
     auto actions = game_size_actions->actions();
-    if (UISettings::values.game_list_mode.GetValue() == Settings::GameListMode::GridView &&
+    if (UISettings::values.game_list_mode.GetValue() != Settings::GameListMode::TreeView &&
         !UISettings::values.show_game_name.GetValue()) {
         u32 newSize = UISettings::values.game_icon_size.GetValue();
         if (newSize == 0) {
@@ -3364,6 +3388,7 @@ void MainWindow::ToggleShowGameName() {
 
     CheckIconSize();
 
+    game_list->UpdateIconSizes();
     game_list->RefreshGameDirectory();
 }
 
@@ -3574,9 +3599,6 @@ void MainWindow::OnToggleDockedMode() {
 void MainWindow::OnToggleGpuAccuracy() {
     switch (Settings::values.gpu_accuracy.GetValue()) {
     case Settings::GpuAccuracy::Low:
-        Settings::values.gpu_accuracy.SetValue(Settings::GpuAccuracy::Medium);
-        break;
-    case Settings::GpuAccuracy::Medium:
         Settings::values.gpu_accuracy.SetValue(Settings::GpuAccuracy::High);
         break;
     case Settings::GpuAccuracy::High:
@@ -3623,10 +3645,9 @@ void MainWindow::OnIncreaseVolume() {
 
 void MainWindow::OnToggleAdaptingFilter() {
     auto filter = Settings::values.scaling_filter.GetValue();
-    filter = static_cast<Settings::ScalingFilter>(static_cast<u32>(filter) + 1);
-    if (filter == Settings::ScalingFilter::MaxEnum) {
-        filter = Settings::ScalingFilter::NearestNeighbor;
-    }
+    filter = Settings::ScalingFilter(u32(filter) + 1);
+    if (u32(filter) > u32(Settings::EnumMetadata<Settings::ScalingFilter>::GetLast()))
+        filter = Settings::EnumMetadata<Settings::ScalingFilter>::GetFirst();
     Settings::values.scaling_filter.SetValue(filter);
     filter_status_button->setChecked(true);
     UpdateFilterText();
@@ -3866,10 +3887,28 @@ void MainWindow::OnTogglePerfOverlay() {
         perf_overlay->setVisible(ui->action_Show_Performance_Overlay->isChecked());
 }
 
+#ifdef HAS_RESHADE
+void MainWindow::OnPostProcessingShaders() {
+    if (post_processing_dialog == nullptr) {
+        post_processing_dialog = new ConfigurePostProcessing(this);
+        connect(post_processing_dialog, &QDialog::finished, post_processing_dialog, [this]() {
+            post_processing_dialog->deleteLater();
+            post_processing_dialog = nullptr;
+            UpdatePostShaderText();
+        });
+    }
+
+    post_processing_dialog->show();
+    post_processing_dialog->raise();
+    post_processing_dialog->activateWindow();
+}
+#endif
+
 void MainWindow::OnGameListRefresh() {
     // Resets metadata cache and reloads
     QtCommon::Game::ResetMetadata(false);
     game_list->RefreshGameDirectory();
+    game_list->RefreshExternalContent();
     SetFirmwareVersion();
 }
 
@@ -4008,6 +4047,41 @@ void MainWindow::OnEmulatorUpdateAvailable() {
     dialog.exec();
 }
 #endif
+
+void MainWindow::OnApplicationChanged(u64 program_id) {
+    if (!emulation_running || program_id == 0)
+        return;
+
+    std::string title_name;
+    std::string title_version;
+
+    const FileSys::PatchManager pm(program_id, QtCommon::system->GetFileSystemController(),
+                                   QtCommon::system->GetContentProvider());
+    if (const auto metadata = pm.GetControlMetadata(); metadata.first != nullptr) {
+        title_version = metadata.first->GetVersionString();
+        title_name = metadata.first->GetApplicationName();
+    }
+    if (title_name.empty()) {
+        title_name = fmt::format("{:016X}", program_id);
+    }
+
+    if (const auto* process = QtCommon::system->Kernel().ApplicationProcess(); process != nullptr) {
+        const auto instruction_set_suffix = process->Is64Bit() ? tr("(64-bit)") : tr("(32-bit)");
+        title_name =
+            tr("%1 %2", "%1 is the title name. %2 indicates if the title is 64-bit or 32-bit")
+                .arg(QString::fromStdString(title_name), instruction_set_suffix)
+                .toStdString();
+    }
+
+    LOG_INFO(Frontend, "Now running: {:016X} | {} | {}", program_id, title_name, title_version);
+
+    UpdateWindowTitle(title_name, title_version,
+                      QtCommon::system->GPU().Renderer().GetDeviceVendor());
+
+    // Switch to record playtime for the running program
+    if (play_time_manager)
+        play_time_manager->SetProgramId(program_id);
+}
 
 void MainWindow::UpdateWindowTitle(std::string_view title_name, std::string_view title_version,
                                    std::string_view gpu_vendor) {
@@ -4174,6 +4248,26 @@ void MainWindow::UpdateAAText() {
                                   ? QStringLiteral(QT_TRANSLATE_NOOP("MainWindow", "NO AA"))
                                   : aa_text.toUpper());
 }
+
+#ifdef HAS_RESHADE
+void MainWindow::UpdatePostShaderText() {
+    const bool enabled = Settings::values.post_shader_enabled.GetValue();
+    post_shader_status_button->setChecked(enabled);
+
+    if (!enabled) {
+        post_shader_status_button->setText(tr("NO FX"));
+        return;
+    }
+
+    const std::string preset = VideoCore::GetActiveFxPreset();
+    if (preset.empty()) {
+        post_shader_status_button->setText(tr("FX"));
+        return;
+    }
+
+    post_shader_status_button->setText(QString::fromStdString(preset).toUpper());
+}
+#endif
 
 void MainWindow::UpdateVolumeUI() {
     const auto volume_value = static_cast<int>(Settings::values.volume.GetValue());
@@ -4552,8 +4646,7 @@ static void AdjustLinkColor() {
 }
 
 void MainWindow::UpdateUITheme() {
-    const QString default_theme = QString::fromUtf8(
-        UISettings::themes[static_cast<size_t>(UISettings::default_theme)].second);
+    const QString default_theme = QString::fromUtf8(UISettings::themes[size_t(UISettings::default_theme)].second);
     QString current_theme = QString::fromStdString(UISettings::values.theme);
 
     if (current_theme.isEmpty())
@@ -4564,8 +4657,7 @@ void MainWindow::UpdateUITheme() {
     AdjustLinkColor();
 #else
     if (current_theme == QStringLiteral("default") || current_theme == QStringLiteral("colorful")) {
-        QIcon::setThemeName(current_theme == QStringLiteral("colorful") ? current_theme
-                                                                        : startup_icon_theme);
+        QIcon::setThemeName(current_theme == QStringLiteral("colorful") ? current_theme : startup_icon_theme);
         QIcon::setThemeSearchPaths(QStringList(default_theme_paths));
         if (isDarkMode()) {
             current_theme = QStringLiteral("default_dark");
@@ -4728,6 +4820,6 @@ void VolumeButton::ResetMultiplier() {
 #endif
 
 #if !defined(QT_STATICPLUGIN) || defined(__APPLE__)
-#define VMA_IMPLEMENTATION
+#define VMA_IMPLEMENTATION 1
 #include "video_core/vulkan_common/vma.h"
 #endif

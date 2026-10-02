@@ -9,6 +9,7 @@
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/service/cmif_serialization.h"
 #include "core/hle/service/filesystem/filesystem.h"
+#include "core/hle/service/ipc_helpers.h"
 #include "core/hle/service/ns/application_manager_interface.h"
 
 #include "core/file_sys/content_archive.h"
@@ -19,6 +20,7 @@
 #include "core/launch_timestamp_cache.h"
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 namespace Service::NS {
@@ -36,14 +38,14 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {1, nullptr, "GenerateApplicationRecordCount"},
         {2, D<&IApplicationManagerInterface::GetApplicationRecordUpdateSystemEvent>, "GetApplicationRecordUpdateSystemEvent"},
         {3, nullptr, "GetApplicationViewDeprecated"},
-        {4, nullptr, "DeleteApplicationEntity"},
-        {5, nullptr, "DeleteApplicationCompletely"},
+        {4, D<&IApplicationManagerInterface::DeleteApplicationEntity>, "DeleteApplicationEntity"},
+        {5, D<&IApplicationManagerInterface::DeleteApplicationCompletely>, "DeleteApplicationCompletely"},
         {6, nullptr, "IsAnyApplicationEntityRedundant"},
         {7, nullptr, "DeleteRedundantApplicationEntity"},
         {8, nullptr, "IsApplicationEntityMovable"},
         {9, nullptr, "MoveApplicationEntity"},
         {11, nullptr, "CalculateApplicationOccupiedSize"},
-        {16, nullptr, "PushApplicationRecord"},
+        {16, &IApplicationManagerInterface::PushApplicationRecord, "PushApplicationRecord"},
         {17, nullptr, "ListApplicationRecordContentMeta"},
         {19, nullptr, "LaunchApplicationOld"},
         {21, nullptr, "GetApplicationContentPath"},
@@ -137,7 +139,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {405, nullptr, "ListApplicationControlCacheEntryInfo"},
         {406, nullptr, "GetApplicationControlProperty"},
         {407, &IApplicationManagerInterface::ListApplicationTitle, "ListApplicationTitle"},
-        {408, nullptr, "ListApplicationIcon"},
+        {408, &IApplicationManagerInterface::ListApplicationIcon, "ListApplicationIcon"},
         {411, nullptr, "Unknown411"}, //19.0.0+
         {412, nullptr, "Unknown412"}, //19.0.0+
         {413, nullptr, "Unknown413"}, //19.0.0+
@@ -226,9 +228,9 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {930, nullptr, "Unknown930"}, //20.0.0+
         {931, nullptr, "Unknown931"}, //20.0.0+
         {933, nullptr, "Unknown933"}, //20.0.0+
-        {934, nullptr, "Unknown934"}, //20.0.0+
-        {935, nullptr, "Unknown935"}, //20.0.0+
-        {936, nullptr, "Unknown936"}, //20.0.0+
+        {934, nullptr, "Unknown934"}, //21.0.0+
+        {935, nullptr, "Unknown935"}, //21.0.0+
+        {936, D<&IApplicationManagerInterface::Unknown936>, "Unknown936"}, //21.0.0+
         {1000, nullptr, "RequestVerifyApplicationDeprecated"},
         {1001, nullptr, "CorruptApplicationForDebug"},
         {1002, nullptr, "RequestVerifyAddOnContentsRights"},
@@ -420,7 +422,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {4039, nullptr, "Unknown4039"}, //20.0.0+
         {4040, nullptr, "Unknown4040"}, //20.0.0+
         {4041, nullptr, "Unknown4041"}, //20.0.0+
-        {4042, nullptr, "Unknown4042"}, //20.0.0+
+        {4042, D<&IApplicationManagerInterface::Unknown4042>, "Unknown4042"}, //20.0.0+
         {4043, nullptr, "Unknown4043"}, //20.0.0+
         {4044, nullptr, "Unknown4044"}, //20.0.0+
         {4045, nullptr, "Unknown4045"}, //20.0.0+
@@ -474,6 +476,7 @@ IApplicationManagerInterface::IApplicationManagerInterface(Core::System& system_
         {4096, nullptr, "Unknown4096"}, //20.0.0+
         {4097, nullptr, "Unknown4097"}, //20.0.0+
         {4099, nullptr, "Unknown4099"}, //21.0.0+
+        {4105, D<&IApplicationManagerInterface::Unknown4105>, "Unknown4105"}, //23.0.0+
         {5000, nullptr, "Unknown5000"}, //18.0.0+
         {5001, nullptr, "Unknown5001"}, //18.0.0+
         {9999, nullptr, "GetApplicationCertificate"}, //10.0.0-10.2.0
@@ -610,7 +613,7 @@ Result IApplicationManagerInterface::GetApplicationRecordUpdateSystemEvent(
     OutCopyHandle<Kernel::KReadableEvent> out_event) {
     LOG_WARNING(Service_NS, "(STUBBED) called");
 
-    record_update_system_event.Signal();
+    record_update_system_event.Signal(system.Kernel());
     *out_event = record_update_system_event.GetHandle();
 
     R_SUCCEED();
@@ -636,11 +639,38 @@ Result IApplicationManagerInterface::IsGameCardApplicationRunning(Out<bool> out_
     R_SUCCEED();
 }
 
+Result IApplicationManagerInterface::Unknown936(Out<u64> out_result) {
+    LOG_WARNING(Service_NS, "(STUBBED) called.");
+    *out_result = 0;
+    R_SUCCEED();
+}
+
 Result IApplicationManagerInterface::IsAnyApplicationEntityInstalled(
     Out<bool> out_is_any_application_entity_installed) {
     LOG_WARNING(Service_NS, "(STUBBED) called");
     *out_is_any_application_entity_installed = true;
     R_SUCCEED();
+}
+
+Result IApplicationManagerInterface::DeleteApplicationEntity(u64 application_id) {
+    LOG_DEBUG(Service_NS, "called, application_id={:016X}", application_id);
+
+    auto& fsc = system.GetFileSystemController();
+    if (auto* const user_cache = fsc.GetUserNANDContents(); user_cache != nullptr) {
+        user_cache->RemoveExistingEntry(application_id);
+        user_cache->Refresh();
+    }
+    if (auto* const sdmc_cache = fsc.GetSDMCContents(); sdmc_cache != nullptr) {
+        sdmc_cache->RemoveExistingEntry(application_id);
+        sdmc_cache->Refresh();
+    }
+
+    record_update_system_event.Signal(system.Kernel());
+    R_SUCCEED();
+}
+
+Result IApplicationManagerInterface::DeleteApplicationCompletely(u64 application_id) {
+    R_RETURN(DeleteApplicationEntity(application_id));
 }
 
 Result IApplicationManagerInterface::GetApplicationViewDeprecated(
@@ -820,14 +850,14 @@ Result IApplicationManagerInterface::RequestDownloadApplicationControlDataInBack
     LOG_INFO(Service_NS, "called, control_source={} app={:016X}",
              control_source, application_id);
 
-    unknown_event.Signal();
+    unknown_event.Signal(system.Kernel());
     R_SUCCEED();
 }
 
 Result IApplicationManagerInterface::Unknown4022(
     OutCopyHandle<Kernel::KReadableEvent> out_event) {
     LOG_WARNING(Service_NS, "(STUBBED) called");
-    unknown_event.Signal();
+    unknown_event.Signal(system.Kernel());
     *out_event = unknown_event.GetHandle();
     R_SUCCEED();
 }
@@ -838,14 +868,56 @@ Result IApplicationManagerInterface::Unknown4023(Out<u64> out_result) {
     R_SUCCEED();
 }
 
+Result IApplicationManagerInterface::Unknown4042(OutInterface<IAsyncResult> out_interface,
+                                                 OutCopyHandle<Kernel::KReadableEvent> out_event,
+                                                 u64 arg1, u64 arg2) {
+    LOG_WARNING(Service_NS, "(STUBBED) called, arg1={:016X}, arg2={:016X}", arg1, arg2);
+    *out_event = unknown_event.GetHandle();
+    *out_interface = std::make_shared<IAsyncResult>(system, &unknown_event);
+    R_SUCCEED();
+}
+
 Result IApplicationManagerInterface::Unknown4053() {
     LOG_WARNING(Service_NS, "(STUBBED) called.");
     R_SUCCEED();
 }
 
+Result IApplicationManagerInterface::Unknown4105() {
+    LOG_WARNING(Service_NS, "(STUBBED) called.");
+    R_SUCCEED();
+}
+
+void IApplicationManagerInterface::PushApplicationRecord(HLERequestContext& ctx) {
+    const auto record = ctx.ReadBuffer();
+    u64 application_id{};
+    if (record.size() >= sizeof(application_id)) {
+        std::memcpy(&application_id, record.data(), sizeof(application_id));
+    }
+
+    LOG_DEBUG(Service_NS, "called, application_id={:016X}, size={}", application_id, record.size());
+
+    auto& fsc = system.GetFileSystemController();
+    if (auto* const user_cache = fsc.GetUserNANDContents(); user_cache != nullptr) {
+        user_cache->Refresh();
+    }
+    if (auto* const sdmc_cache = fsc.GetSDMCContents(); sdmc_cache != nullptr) {
+        sdmc_cache->Refresh();
+    }
+
+    record_update_system_event.Signal(system.Kernel());
+
+    IPC::ResponseBuilder rb{ctx, 2};
+    rb.Push(ResultSuccess);
+}
+
 void IApplicationManagerInterface::ListApplicationTitle(HLERequestContext& ctx) {
     LOG_DEBUG(Service_NS, "called");
     IReadOnlyApplicationControlDataInterface(system).ListApplicationTitle(ctx);
+}
+
+void IApplicationManagerInterface::ListApplicationIcon(HLERequestContext& ctx) {
+    LOG_DEBUG(Service_NS, "called");
+    IReadOnlyApplicationControlDataInterface(system).ListApplicationIcon(ctx);
 }
 
 } // namespace Service::NS

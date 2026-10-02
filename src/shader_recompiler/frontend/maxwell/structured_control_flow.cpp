@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <utility>
 #include <vector>
 
@@ -174,7 +174,7 @@ std::string DumpExpr(const Statement* stmt) {
     for (auto stmt = tree.begin(); stmt != tree.end(); ++stmt) {
         switch (stmt->type) {
         case StatementType::Code:
-            ret += fmt::format("{}    Block {:04x} -> {:04x} (0x{:016x});\n", indent,
+            ret += fmt::format("{}    Block {:04x} -> {:04x} ({:#016x});\n", indent,
                                stmt->block->begin.Offset(), stmt->block->end.Offset(),
                                reinterpret_cast<uintptr_t>(stmt->block));
             break;
@@ -390,7 +390,7 @@ private:
                    std::optional<Node> return_label) {
         Statement* const false_stmt{pool.Create(Identity{}, IR::Condition{false}, &root_stmt)};
         Tree& root{root_stmt.children};
-        ankerl::unordered_dense::map<Flow::Block*, Node> local_labels;
+        ::Common::unordered_map<Flow::Block*, Node> local_labels;
         local_labels.reserve(function.blocks.size());
 
         for (Flow::Block& block : function.blocks) {

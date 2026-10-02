@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -60,6 +60,7 @@ private:
     Result ReportUserIsActive();
     Result SetAutoSleepDisabled(bool is_auto_sleep_disabled);
     Result IsAutoSleepDisabled(Out<bool> out_is_auto_sleep_disabled);
+    Result IsIlluminanceAvailable(Out<bool> out_is_illuminance_available);
     Result SetInputDetectionPolicy(InputDetectionPolicy input_detection_policy);
     Result GetAccumulatedSuspendedTickValue(Out<u64> out_accumulated_suspended_tick_value);
     Result GetAccumulatedSuspendedTickChangedEvent(OutCopyHandle<Kernel::KReadableEvent> out_event);
@@ -67,6 +68,7 @@ private:
     Result SaveCurrentScreenshot(Capture::AlbumReportOption album_report_option);
     Result SetRecordVolumeMuted(bool muted);
     Result Unknown230(u32 in_val, Out<u16> out_val);
+    Result Unknown240(u32 in_val);
 
     Kernel::KProcess* const m_process;
     const std::shared_ptr<Applet> m_applet;

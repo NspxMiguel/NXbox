@@ -89,7 +89,7 @@ void FmtLogMessageImpl(Class log_class, Level log_level, const char* filename, u
 
 template <typename... Args>
 void FmtLogMessage(Class log_class, Level log_level, const char* filename, unsigned int line_num, const char* function, fmt::format_string<Args...> format, const Args&... args) {
-    FmtLogMessageImpl(log_class, log_level, filename, line_num, function, format, fmt::make_format_args(args...));
+    FmtLogMessageImpl(log_class, log_level, filename, line_num, function, format.get(), fmt::make_format_args(args...));
 }
 
 /// Implements a log message filter which allows different log classes to have different minimum
@@ -139,26 +139,5 @@ void Stop();
 /// The global filter will prevent any messages from even being processed if they are filtered.
 void SetGlobalFilter(const Filter& filter);
 void SetColorConsoleBackendEnabled(bool enabled);
-
-/// @brief A log entry. Log entries are store in a structured format to permit more varied output
-/// formatting on different frontends, as well as facilitating filtering and aggregation.
-struct Entry {
-    std::string message;
-    std::chrono::microseconds timestamp;
-    Class log_class{};
-    Level log_level{};
-    const char* filename = nullptr;
-    const char* function = nullptr;
-    unsigned int line_num = 0;
-};
-
-/// Formats a log entry into the provided text buffer.
-std::string FormatLogMessage(const Entry& entry) noexcept;
-
-/// Prints the same message as `PrintMessage`, but colored according to the severity level.
-void PrintColoredMessage(const Entry& entry) noexcept;
-
-/// Formats and prints a log entry to the android logcat.
-void PrintMessageToLogcat(const Entry& entry) noexcept;
 
 } // namespace Common::Log

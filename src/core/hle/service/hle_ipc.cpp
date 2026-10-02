@@ -113,7 +113,7 @@ Result SessionRequestManager::HandleDomainSyncRequest(Kernel::KServerSession* se
         }
 
     case IPC::DomainMessageHeader::CommandType::CloseVirtualHandle: {
-        LOG_DEBUG(IPC, "CloseVirtualHandle, object_id=0x{:08X}", object_id);
+        LOG_DEBUG(IPC, "CloseVirtualHandle, object_id={:#08x}", object_id);
 
         this->CloseDomainHandler(object_id - 1);
 
@@ -275,17 +275,17 @@ Result HLERequestContext::WriteToOutgoingCommandBuffer() {
     for (auto& object : outgoing_copy_objects) {
         Handle handle{};
         if (object) {
-            R_TRY(handle_table.Add(&handle, object));
+            R_TRY(handle_table.Add(kernel, &handle, object));
         }
         cmd_buf[current_offset++] = handle;
     }
     for (auto& object : outgoing_move_objects) {
         Handle handle{};
         if (object) {
-            R_TRY(handle_table.Add(&handle, object));
+            R_TRY(handle_table.Add(kernel, &handle, object));
 
             // Close our reference to the object, as it is being moved to the caller.
-            object->Close();
+            object->Close(kernel);
         }
         cmd_buf[current_offset++] = handle;
     }
@@ -503,11 +503,10 @@ bool HLERequestContext::CanWriteBuffer(std::size_t buffer_index) const {
 }
 
 void HLERequestContext::AddMoveInterface(SessionRequestHandlerPtr s) {
-    ASSERT(Kernel::GetCurrentProcess(kernel).GetResourceLimit()->Reserve(
-        Kernel::LimitableResource::SessionCountMax, 1));
+    ASSERT(Kernel::GetCurrentProcess(kernel).GetResourceLimit()->Reserve(kernel, Kernel::LimitableResource::SessionCountMax, 1));
 
     auto* session = Kernel::KSession::Create(kernel);
-    session->Initialize(nullptr, 0);
+    session->Initialize(kernel, nullptr, 0);
     Kernel::KSession::Register(kernel, session);
 
     auto& server = manager.lock()->GetServerManager();

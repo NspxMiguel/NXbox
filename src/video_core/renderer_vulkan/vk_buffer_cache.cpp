@@ -56,7 +56,8 @@ size_t BytesPerIndex(VkIndexType index_type) {
     }
 }
 
-vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allocator, u64 size) {
+vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allocator, u64 size,
+                        VkDeviceSize sparse_alignment) {
     VkBufferUsageFlags flags =
         VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
         VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
@@ -69,6 +70,9 @@ vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allo
     if (device.IsExtConditionalRendering()) {
         flags |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
     }
+    if (device.IsBufferDeviceAddressSupported()) {
+        flags |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    }
     const VkBufferCreateInfo buffer_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .pNext = nullptr,
@@ -79,26 +83,45 @@ vk::Buffer CreateBuffer(const Device& device, const MemoryAllocator& memory_allo
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
     };
+    if (sparse_alignment > 1) {
+        return memory_allocator.CreateBuffer(buffer_ci, MemoryUsage::DeviceLocal, sparse_alignment);
+    }
     return memory_allocator.CreateBuffer(buffer_ci, MemoryUsage::DeviceLocal);
 }
 } // Anonymous namespace
 
 Buffer::Buffer(BufferCacheRuntime& runtime, VideoCommon::NullBufferParams null_params)
-    : VideoCommon::BufferBase(null_params), tracker{4096} {
+    : VideoCommon::BufferBase(null_params), scheduler{&runtime.scheduler}, tracker{4096} {
     if (runtime.device.HasNullDescriptor()) {
         return;
     }
     device = &runtime.device;
     buffer = runtime.CreateNullBuffer();
     is_null = true;
+    if (device->IsBufferDeviceAddressSupported()) {
+        device_address = device->GetLogical().GetBufferDeviceAddress(*buffer);
+    }
 }
 
-Buffer::Buffer(BufferCacheRuntime& runtime, DAddr cpu_addr_, u64 size_bytes_)
+Buffer::Buffer(BufferCacheRuntime& runtime, DAddr cpu_addr_, u64 size_bytes_,
+               bool sparse_compatible_)
     : VideoCommon::BufferBase(cpu_addr_, size_bytes_), device{&runtime.device},
-      buffer{CreateBuffer(*device, runtime.memory_allocator, SizeBytes())}, tracker{SizeBytes()} {
+      scheduler{&runtime.scheduler},
+      buffer{CreateBuffer(*device, runtime.memory_allocator, SizeBytes(),
+                          runtime.SparseAlignmentFor(sparse_compatible_))},
+      tracker{SizeBytes()} {
+    sparse_compatible = sparse_compatible_;
     if (runtime.device.HasDebuggingToolAttached()) {
-        buffer.SetObjectNameEXT(fmt::format("Buffer 0x{:x}", CpuAddr()).c_str());
+        buffer.SetObjectNameEXT(fmt::format("Buffer {:#x}", CpuAddr()).c_str());
     }
+    if (device->IsBufferDeviceAddressSupported()) {
+        device_address = device->GetLogical().GetBufferDeviceAddress(*buffer);
+    }
+}
+
+void Buffer::MarkUsage(u64 offset, u64 size) noexcept {
+    tracker.Track(offset, size);
+    last_usage_tick = scheduler->CurrentTick();
 }
 
 VkBufferView Buffer::View(u32 offset, u32 size, VideoCore::Surface::PixelFormat format) {
@@ -333,7 +356,8 @@ BufferCacheRuntime::BufferCacheRuntime(const Device& device_, MemoryAllocator& m
     : device{device_}, memory_allocator{memory_allocator_}, scheduler{scheduler_},
       staging_pool{staging_pool_}, guest_descriptor_queue{guest_descriptor_queue_},
       quad_index_pass(device, scheduler, descriptor_pool, staging_pool,
-                      compute_pass_descriptor_queue) {
+                      compute_pass_descriptor_queue),
+      multi_range_buffers(device_) {
     const VkDriverIdKHR driver_id = device.GetDriverID();
     limit_dynamic_storage_buffers = driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY ||
                                     driver_id == VK_DRIVER_ID_ARM_PROPRIETARY;
@@ -356,6 +380,10 @@ StagingBufferRef BufferCacheRuntime::UploadStagingBuffer(size_t size) {
 
 StagingBufferRef BufferCacheRuntime::DownloadStagingBuffer(size_t size, bool deferred) {
     return staging_pool.Request(size, MemoryUsage::Download, deferred);
+}
+
+VkFormat BufferCacheRuntime::TexelBufferFormat(VideoCore::Surface::PixelFormat format) const {
+    return MaxwellToVK::SurfaceFormat(device, FormatType::Buffer, false, format).format;
 }
 
 void BufferCacheRuntime::FreeDeferredStagingBuffer(StagingBufferRef& ref) {
@@ -384,8 +412,22 @@ u32 BufferCacheRuntime::GetStorageBufferAlignment() const {
 
 void BufferCacheRuntime::TickFrame(Common::SlotVector<Buffer>& slot_buffers) noexcept {
     for (auto it = slot_buffers.begin(); it != slot_buffers.end(); it++) {
-        it->ResetUsageTracking();
+        if (scheduler.IsFree(it->LastUsageTick())) {
+            it->ResetUsageTracking();
+        }
     }
+}
+
+u64 BufferCacheRuntime::CurrentTick() {
+    return scheduler.CurrentTick();
+}
+
+bool BufferCacheRuntime::IsFree(u64 tick) {
+    return scheduler.IsFree(tick);
+}
+
+void BufferCacheRuntime::Wait(u64 tick) {
+    scheduler.Wait(tick);
 }
 
 void BufferCacheRuntime::Finish() {
@@ -501,6 +543,37 @@ void BufferCacheRuntime::ClearBuffer(VkBuffer dest_buffer, u32 offset, size_t si
         cmdbuf.PipelineBarrier(VK_PIPELINE_STAGE_TRANSFER_BIT, vk::PIPELINE_STAGE_GRAPHICS_COMPUTE,
                                0, WRITE_BARRIER);
     });
+}
+
+bool BufferCacheRuntime::BindMultiRangeStorageBuffer(u64 key, bool is_written) {
+    if (multi_range_sources.empty() || multi_range_total == 0) {
+        return false;
+    }
+    const MultiRangeRef ref = multi_range_buffers.Get(device, scheduler, memory_allocator, key,
+                                                     multi_range_sources, multi_range_total);
+    if (ref.handle == VK_NULL_HANDLE) {
+        return false;
+    }
+    if (is_written && !ref.sparse) {
+        return false;
+    }
+    if (ref.needs_gather) {
+        PreCopyBarrier();
+        VkDeviceSize dst_offset = 0;
+        for (const MultiRangeSource& source : multi_range_sources) {
+            const std::array<VideoCommon::BufferCopy, 1> copy{VideoCommon::BufferCopy{
+                .src_offset = u64(source.offset),
+                .dst_offset = u64(dst_offset),
+                .size = size_t(source.size),
+            }};
+            CopyBuffer(ref.handle, source.handle, copy, false);
+            dst_offset += source.size;
+        }
+        PostCopyBarrier();
+        multi_range_buffers.MarkGathered(key);
+    }
+    guest_descriptor_queue.AddBuffer(ref.handle, ref.address, 0, ref.size);
+    return true;
 }
 
 void BufferCacheRuntime::BindIndexBuffer(PrimitiveTopology topology, IndexFormat index_format,
@@ -669,6 +742,9 @@ vk::Buffer BufferCacheRuntime::CreateNullBuffer() {
     };
     if (device.IsExtTransformFeedbackSupported()) {
         create_info.usage |= VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT;
+    }
+    if (device.IsBufferDeviceAddressSupported()) {
+        create_info.usage |= VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     }
     vk::Buffer ret = memory_allocator.CreateBuffer(create_info, MemoryUsage::DeviceLocal);
     if (device.HasDebuggingToolAttached()) {

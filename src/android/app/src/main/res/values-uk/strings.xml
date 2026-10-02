@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Цей застосунок запускає ігри для ігрової консолі Nintendo Switch. Він не містить ігор чи ключів.<br /><br />Перш ніж почати, укажіть розташування файлу <![CDATA[<b> prod.keys </b>]]> у пам’яті вашого пристрою.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Дізнатися більше</a>]]></string>
     <string name="notice_notification_channel_name">Сповіщення та помилки</string>
     <string name="notice_notification_channel_description">Показує сповіщення у разі виникнення проблем.</string>
     <string name="notification_permission_not_granted">Дозвіл на сповіщення не надано!</string>
@@ -106,7 +105,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Емуляція NVDEC</string>
-    <string name="nvdec_emulation_description">Обробка відео під час катсцен</string>
     <string name="nvdec_emulation_none">Вимкнено</string>
 
     <!-- Optimize SPIRV output -->
@@ -424,6 +422,9 @@
     <string name="cpu_accuracy">Точність CPU</string>
     <string name="value_with_units">%1$s%2$s</string>
 
+    <string name="program_args">Параметри запуску Homebrew</string>
+    <string name="program_args_description">Параметри командного рядка, що передаються Homebrew при запуску (як-от noglsl).</string>
+
     <!-- System settings strings -->
     <string name="device_name">Назва пристрою</string>
     <string name="use_docked_mode">Режим док-станції</string>
@@ -436,9 +437,6 @@
     <string name="use_custom_rtc_description">Дозволяє встановити власний час (Real-time clock, або RTC), відмінний від системного.</string>
     <string name="set_custom_rtc">Встановити RTC</string>
 
-    <!-- CPU -->
-    <string name="fast_cpu_time">Розгін ЦП</string>
-    <string name="fast_cpu_time_description">Примушує емульований ЦП працювати з вищою тактовою частотою, послаблюючи деякі обмежувачі частоти кадрів. Використовуйте «Підвищення (1700 МГц)», щоб емулювати максимальну тактову частоту справжнього Switch, або «Швидко (2000 МГц)», щоб подвоїти частоту.</string>
     <string name="custom_cpu_ticks">Користувацькі такти CPU</string>
     <string name="custom_cpu_ticks_description">Встановіть користувацьке значення тактів CPU. Вищі значення можуть покращити продуктивність, але також можуть спричинити зависання гри. Рекомендується діапазон 77–21000.</string>
     <string name="cpu_ticks">Такти</string>
@@ -466,7 +464,6 @@
     <string name="advanced">Додаткові</string>
 
     <string name="renderer_accuracy">Режим ГП</string>
-    <string name="renderer_accuracy_description">Керує режимом емуляції ГП. Більшість ігор добре візуалізуються з режимами «Швидко» або «Збалансовано», але деякі ігри можуть потребувати режиму «Точно». Частинки зазвичай правильно візуалізуються лише з режимом «Точно».</string>
     <string name="dma_accuracy">Точність DMA</string>
     <string name="dma_accuracy_description">Керує точністю DMA. Безпечна точність може виправити проблеми в деяких іграх, але в деяких випадках також може вплинути на продуктивність. Якщо не впевнені, залиште це значення за замовчуванням.</string>
     <string name="anisotropic_filtering">Анізотропне фільтрування</string>
@@ -495,12 +492,8 @@
 
     <string name="hacks">Обхідні рішення</string>
 
-    <string name="fast_gpu_time">Швидкий час роботи ГП</string>
-    <string name="fast_gpu_time_description">Примушує більшість ігор працювати на їхній максимальній нативній роздільності. Використовуйте 256 для максимальної продуктивності та 512 для найкращої якості.</string>
     <string name="skip_cpu_inner_invalidation">Пропустити внутрішнє інвалідування CPU</string>
     <string name="skip_cpu_inner_invalidation_description">Пропускає деякі інвалідації кешу на стороні CPU під час оновлення пам\'яті, зменшуючи навантаження на процесор і покращуючи продуктивність. Може спричинити збої в деяких іграх.</string>
-    <string name="antiflicker">Антимерехтіння</string>
-    <string name="antiflicker_description">Змушує механізм синхронізації чекати, доки ГП завершить подані завдання. Використовуйте з режимом ГП «Швидко», щоб уникнути мерехтіння з меншими втратами продуктивності.</string>
     <string name="fix_bloom_effects">Виправити ефекти світіння</string>
     <string name="fix_bloom_effects_description">Зменшує розмиття світіння в LA/EOW (Adreno A6XX–A7XX / Turnip), прибирає світіння в Burnout. Увага: може спричинити графічні артефакти в інших іграх.</string>
     <string name="emulate_bgr565">Емулювати BGR565</string>
@@ -559,17 +552,12 @@
     <string name="log">Журналювання</string>
     <string name="flush_by_line">Скидати логи налагодження по рядках</string>
     <string name="flush_by_line_description">Скидає логи налагодження після кожного написаного рядка, полегшуючи налагодження у випадках збоїв або зависань.</string>
-
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">Журналювання ГП</string>
-    <string name="gpu_logging_enabled">Увімкнути журналювання ГП</string>
-    <string name="gpu_logging_enabled_description">Журналювати операції ГП до eden_gpu.log для зневадження драйверів Adreno</string>
     <string name="gpu_log_level">Рівень журналювання</string>
     <string name="gpu_log_level_description">Рівень подробиць у журналі ГП (вищий = більше подробиць, більший вплив на швидкодію)</string>
     <string name="gpu_log_vulkan_calls">Записувати виклики API Vulkan</string>
     <string name="gpu_log_vulkan_calls_description">Відстежувати всі виклики API Vulkan у кільцевому буфері</string>
-    <string name="gpu_log_shader_dumps">Зберігати шейдери</string>
-    <string name="gpu_log_shader_dumps_description">Зберігати до файлів скомпільовані шейдери SPIR-V</string>
     <string name="gpu_log_memory_tracking">Відстежувати пам’ять ГП</string>
     <string name="gpu_log_memory_tracking_description">Відстежувати використання і звільнення пам’яті ГП</string>
     <string name="gpu_log_driver_debug">Зневаджувальна інформація драйверів</string>
@@ -841,8 +829,6 @@
     <string name="loader_error_file_not_found">ROM файлу не існує</string>
 
     <string name="loader_requires_firmware">Гра вимагає прошивки</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Гра, яку ви намагаєтеся запустити, вимагає прошивки для завантаження або пропуску початкового меню. Будь ласка, <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> зробіть дамп і встановіть прошивку</a>, або натисніть \"OK\", щоб продовжити в будь-якому разі.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Пошук гри...</string>
     <string name="game_not_found_for_title_id">Гру не знайдено для ID заголовку: %1$s</string>
@@ -942,15 +928,6 @@
     <string name="memory_6gb">6 ГБ (Небезпечно)</string>
     <string name="memory_8gb">8 ГБ (Небезпечно)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Підвищення (1700 МГц)</string>
-    <string name="clock_fast">Швидко (2000 МГц)</string>
-
-    <!-- GPU overclock factors -->
-    <string name="off">Вимкнено</string>
-    <string name="fast_gpu_medium">Середньо (256)</string>
-    <string name="fast_gpu_high">Високо (512)</string>
-
     <!-- GPU swizzle texture size -->
     <string name="gpu_texturesizeswizzle_verysmall">Дуже малий (16 МБ)</string>
     <string name="gpu_texturesizeswizzle_small">Малий (32 МБ)</string>
@@ -989,7 +966,6 @@
 
     <!-- Renderer Accuracy -->
     <string name="renderer_accuracy_low">Швидко</string>
-    <string name="renderer_accuracy_medium">Збалансовано</string>
     <string name="renderer_accuracy_high">Точно</string>
 
     <!-- DMA Accuracy -->
@@ -1071,8 +1047,6 @@
     <string name="theme_mode_follow_system">Системна</string>
     <string name="theme_mode_light">Світла</string>
     <string name="theme_mode_dark">Темна</string>
-
-    <string name="multiplier_none">Жодного</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Чорний фон</string>

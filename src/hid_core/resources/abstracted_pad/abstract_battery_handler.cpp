@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -16,7 +16,9 @@
 
 namespace Service::HID {
 
-NpadAbstractBatteryHandler::NpadAbstractBatteryHandler() {}
+NpadAbstractBatteryHandler::NpadAbstractBatteryHandler(Kernel::KernelCore& kernel_)
+    : kernel{kernel_}
+{}
 
 NpadAbstractBatteryHandler::~NpadAbstractBatteryHandler() = default;
 
@@ -51,12 +53,11 @@ Result NpadAbstractBatteryHandler::DecrementRefCounter() {
 Result NpadAbstractBatteryHandler::UpdateBatteryState(u64 aruid) {
     const auto npad_index = NpadIdTypeToIndex(properties_handler->GetNpadId());
     AruidData* aruid_data = applet_resource_holder->applet_resource->GetAruidData(aruid);
-    if (aruid_data == nullptr) {
+    if (aruid_data == nullptr || aruid_data->shared_memory_format == nullptr) {
         return ResultSuccess;
     }
 
-    auto& npad_internal_state =
-        aruid_data->shared_memory_format->npad.npad_entry[npad_index].internal_state;
+    auto& npad_internal_state = aruid_data->shared_memory_format->npad.npad_entry[npad_index].internal_state;
     auto& system_properties = npad_internal_state.system_properties;
 
     system_properties.is_charging_joy_dual.Assign(dual_battery.is_charging);

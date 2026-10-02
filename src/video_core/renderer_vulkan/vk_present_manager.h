@@ -28,12 +28,15 @@ class Swapchain;
 struct Frame {
     u32 width;
     u32 height;
+    u32 index;
     vk::Image image;
     vk::ImageView image_view;
+    vk::ImageView storage_view;
     vk::Framebuffer framebuffer;
     vk::CommandBuffer cmdbuf;
     vk::Semaphore render_ready;
     vk::Fence present_done;
+    bool storage_capable{};
 };
 
 class PresentManager {
@@ -55,10 +58,15 @@ public:
 
     /// Recreates the present frame to match the provided parameters
     void RecreateFrame(Frame* frame, u32 width, u32 height, VkFormat image_view_format,
-                       VkRenderPass rd);
+                       VkRenderPass rd, bool storage);
+
+    [[nodiscard]] bool NeedsStorage(const Frame* frame, bool required) const;
 
     /// Waits for the present thread to finish presenting all queued frames.
     void WaitPresent();
+
+    /// How many additional frames can be queued without stalling the render thread
+    [[nodiscard]] size_t MaxExtraFrames() const;
 
 private:
     void PresentThread(std::stop_token token);
@@ -90,6 +98,7 @@ private:
     std::mutex free_mutex;
     std::jthread present_thread;
     bool blit_supported;
+    bool storage_supported;
     bool use_present_thread;
     std::size_t image_count{};
 };

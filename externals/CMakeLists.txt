@@ -6,8 +6,7 @@
 
 # TODO(crueter): A lot of this should be moved to the root.
 # otherwise we have to do weird shenanigans with library linking and stuff
-
-include(CPMUtil)
+# Or just add a CPMUtil thing to propagate packages
 
 # Explicitly declare this option here to propagate to the oaknut CPM call
 option(DYNARMIC_TESTS "Build tests" ${BUILD_TESTING})
@@ -49,6 +48,11 @@ if (NOT TARGET stb::headers)
     add_library(stb::headers ALIAS stb)
 endif()
 
+AddJsonPackage(NAME zbic DOWNLOAD_ONLY)
+set(ZBIC_INCLUDE_DIR
+    "${zbic_SOURCE_DIR}/src"
+    PARENT_SCOPE)
+
 # ItaniumDemangle (Windows only)
 if (WIN32 AND NOT TARGET LLVM::Demangle)
     add_library(demangle demangle/ItaniumDemangle.cpp)
@@ -58,9 +62,6 @@ if (WIN32 AND NOT TARGET LLVM::Demangle)
     endif()
     add_library(LLVM::Demangle ALIAS demangle)
 endif()
-
-# unordered_dense
-AddJsonPackage(unordered-dense)
 
 # httplib
 if (IOS)
@@ -140,51 +141,49 @@ if(ENABLE_CUBEB)
     endif()
 endif()
 
-if (NOT ANDROID)
-    if (NOT YUZU_USE_BUNDLED_SDL3)
-        if (NOT WIN32)
-            # Yuzu itself needs: Atomic Audio Events Joystick Haptic Sensor Threads Timers
-            # Since 2.0.18 Atomic+Threads required for HIDAPI/libusb (see https://github.com/libsdl-org/SDL/issues/5095)
-            # Yuzu-cmd also needs: Video (depends on Loadso/Dlopen)
-            # CPUinfo also required for SDL Audio, at least until 2.28.0 (see https://github.com/libsdl-org/SDL/issues/7809)
-            set(SDL_UNUSED_SUBSYSTEMS
-                File Filesystem
-                Locale Power Render)
-            foreach(_SUB ${SDL_UNUSED_SUBSYSTEMS})
-              string(TOUPPER ${_SUB} _OPT)
-              set(SDL_${_OPT} OFF)
-            endforeach()
+if (NOT YUZU_USE_BUNDLED_SDL3)
+    if (NOT WIN32)
+        # Yuzu itself needs: Atomic Audio Events Joystick Haptic Sensor Threads Timers
+        # Since 2.0.18 Atomic+Threads required for HIDAPI/libusb (see https://github.com/libsdl-org/SDL/issues/5095)
+        # Yuzu-cmd also needs: Video (depends on Loadso/Dlopen)
+        # CPUinfo also required for SDL Audio, at least until 2.28.0 (see https://github.com/libsdl-org/SDL/issues/7809)
+        set(SDL_UNUSED_SUBSYSTEMS
+            File Filesystem
+            Locale Power Render)
+        foreach(_SUB ${SDL_UNUSED_SUBSYSTEMS})
+          string(TOUPPER ${_SUB} _OPT)
+          set(SDL_${_OPT} OFF)
+        endforeach()
 
-            set(HIDAPI ON)
-        endif()
-
-        if (APPLE)
-            set(SDL_FILE ON)
-        endif()
-
-        AddJsonPackage(sdl3)
-    else()
-        message(STATUS "Using bundled SDL3")
-        if (PLATFORM_FREEBSD)
-            set(BUILD_SHARED_LIBS ON)
-        endif()
-        AddJsonPackage(sdl3-ci)
+        set(HIDAPI ON)
     endif()
 
-    # Normalize SDL3 link target across package variants.
-    # Some SDL3 packages export only SDL3::SDL3-shared or SDL3::SDL3-static.
-    if (NOT TARGET SDL3::SDL3)
-        if (TARGET SDL3::SDL3-shared)
-            add_library(SDL3::SDL3 ALIAS SDL3::SDL3-shared)
-        elseif (TARGET SDL3::SDL3-static)
-            add_library(SDL3::SDL3 ALIAS SDL3::SDL3-static)
-        else()
-            message(FATAL_ERROR "SDL3 package found, but no usable SDL3 target was exported")
-        endif()
+    if (APPLE)
+        set(SDL_FILE ON)
+    endif()
+
+    AddJsonPackage(sdl3)
+else()
+    message(STATUS "Using bundled SDL3")
+    AddJsonPackage(sdl3-ci)
+
+    # copy sdl java sources for consumption by Gradle
+    if (ANDROID)
+        file(COPY ${SDL3_SOURCE_DIR}/java DESTINATION ${CMAKE_CURRENT_SOURCE_DIR}/generated/sdl)
     endif()
 endif()
 
-set(BUILD_SHARED_LIBS OFF)
+# Normalize SDL3 link target across package variants.
+# Some SDL3 packages export only SDL3::SDL3-shared or SDL3::SDL3-static.
+if (NOT TARGET SDL3::SDL3)
+    if (TARGET SDL3::SDL3-shared)
+        add_library(SDL3::SDL3 ALIAS SDL3::SDL3-shared)
+    elseif (TARGET SDL3::SDL3-static)
+        add_library(SDL3::SDL3 ALIAS SDL3::SDL3-static)
+    else()
+        message(FATAL_ERROR "SDL3 package found, but no usable SDL3 target was exported")
+    endif()
+endif()
 
 # SPIRV Headers
 AddJsonPackage(spirv-headers)
@@ -208,6 +207,50 @@ else()
             list(FILTER _sirit_options EXCLUDE REGEX "^$")
             set_target_properties(siritobj PROPERTIES COMPILE_OPTIONS "${_sirit_options}")
         endif()
+    endif()
+endif()
+
+# reshadefx
+if (ENABLE_RESHADE)
+    AddJsonPackage(NAME reshade DOWNLOAD_ONLY)
+
+    set(RESHADEFX_SHIM_DIR ${CMAKE_CURRENT_BINARY_DIR}/reshadefx_shim)
+    file(WRITE ${RESHADEFX_SHIM_DIR}/spirv.hpp "#include <spirv/unified1/spirv.hpp>\n")
+    file(WRITE ${RESHADEFX_SHIM_DIR}/GLSL.std.450.h "#include <spirv/unified1/GLSL.std.450.h>\n")
+    if (APPLE)
+        file(WRITE ${RESHADEFX_SHIM_DIR}/malloc.h "#include <stdlib.h>\n#include <alloca.h>\n")
+    endif()
+
+    add_library(reshadefx STATIC
+        ${reshade_SOURCE_DIR}/source/effect_codegen_spirv.cpp
+        ${reshade_SOURCE_DIR}/source/effect_expression.cpp
+        ${reshade_SOURCE_DIR}/source/effect_lexer.cpp
+        ${reshade_SOURCE_DIR}/source/effect_parser_exp.cpp
+        ${reshade_SOURCE_DIR}/source/effect_parser_stmt.cpp
+        ${reshade_SOURCE_DIR}/source/effect_preprocessor.cpp
+        ${reshade_SOURCE_DIR}/source/effect_symbol_table.cpp
+    )
+
+    target_include_directories(reshadefx SYSTEM PUBLIC ${reshade_SOURCE_DIR}/source)
+    target_include_directories(reshadefx PRIVATE ${RESHADEFX_SHIM_DIR})
+    target_link_libraries(reshadefx PUBLIC SPIRV-Headers::SPIRV-Headers)
+
+    if (NOT MSVC)
+        target_compile_options(reshadefx PRIVATE -w -fno-char8_t)
+    else()
+        target_compile_options(reshadefx PRIVATE /w /Zc:char8_t-)
+    endif()
+
+    if (WIN32)
+        if (NOT MSVC)
+            target_compile_options(reshadefx PRIVATE -include share.h)
+        else()
+            target_compile_options(reshadefx PRIVATE /FIshare.h)
+        endif()
+    endif()
+
+    if (NOT TARGET reshadefx::reshadefx)
+        add_library(reshadefx::reshadefx ALIAS reshadefx)
     endif()
 endif()
 
@@ -400,13 +443,6 @@ if (YUZU_CRASH_DUMPS AND NOT TARGET libbreakpad_client)
             ${breakpad_SOURCE_DIR}/src/tools/linux/dump_syms/dump_syms.cc)
         target_link_libraries(dump_syms PRIVATE libbreakpad_client)
     endif()
-endif()
-
-# oboe
-if (ANDROID)
-    AddJsonPackage(oboe)
-
-    add_library(oboe::oboe ALIAS oboe)
 endif()
 
 if (APPLE)

@@ -93,23 +93,23 @@ ILibraryAppletSelfAccessor::~ILibraryAppletSelfAccessor() = default;
 
 Result ILibraryAppletSelfAccessor::PopInData(Out<SharedPointer<IStorage>> out_storage) {
     LOG_INFO(Service_AM, "called");
-    R_RETURN(m_broker->GetInData().Pop(out_storage));
+    R_RETURN(m_broker->GetInData().Pop(system.Kernel(), out_storage));
 }
 
 Result ILibraryAppletSelfAccessor::PushOutData(SharedPointer<IStorage> storage) {
     LOG_INFO(Service_AM, "called");
-    m_broker->GetOutData().Push(storage);
+    m_broker->GetOutData().Push(system.Kernel(), storage);
     R_SUCCEED();
 }
 
 Result ILibraryAppletSelfAccessor::PopInteractiveInData(Out<SharedPointer<IStorage>> out_storage) {
     LOG_INFO(Service_AM, "called");
-    R_RETURN(m_broker->GetInteractiveInData().Pop(out_storage));
+    R_RETURN(m_broker->GetInteractiveInData().Pop(system.Kernel(), out_storage));
 }
 
 Result ILibraryAppletSelfAccessor::PushInteractiveOutData(SharedPointer<IStorage> storage) {
     LOG_INFO(Service_AM, "called");
-    m_broker->GetInteractiveOutData().Push(storage);
+    m_broker->GetInteractiveOutData().Push(system.Kernel(), storage);
     R_SUCCEED();
 }
 
@@ -233,8 +233,9 @@ Result ILibraryAppletSelfAccessor::ReportVisibleErrorWithErrorContext(
     R_SUCCEED();
 }
 
-Result ILibraryAppletSelfAccessor::UnpopInData() {
-    LOG_WARNING(Service_AM, "(STUBBED) called");
+Result ILibraryAppletSelfAccessor::UnpopInData(SharedPointer<IStorage> storage) {
+    LOG_INFO(Service_AM, "called");
+    m_broker->GetInData().Unpop(system.Kernel(), storage);
     R_SUCCEED();
 }
 
@@ -251,19 +252,7 @@ Result ILibraryAppletSelfAccessor::GetMainAppletApplicationDesiredLanguage(
     // Default to 0 (all languages supported)
     u32 supported_languages = 0;
 
-    const auto res = [this, identity] {
-        const FileSys::PatchManager pm{identity.application_id, system.GetFileSystemController(),
-                                       system.GetContentProvider()};
-        auto metadata = pm.GetControlMetadata();
-        if (metadata.first != nullptr) {
-            return metadata;
-        }
-
-        const FileSys::PatchManager pm_update{FileSys::GetUpdateTitleID(identity.application_id),
-                                              system.GetFileSystemController(),
-                                              system.GetContentProvider()};
-        return pm_update.GetControlMetadata();
-    }();
+    const auto res = FileSys::PatchManager::GetMetadataFromBaseOrUpdate(system, identity.application_id);
 
     if (res.first != nullptr) {
         supported_languages = res.first->GetSupportedLanguages();

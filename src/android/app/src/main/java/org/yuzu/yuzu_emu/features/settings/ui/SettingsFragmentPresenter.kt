@@ -18,6 +18,7 @@ import org.yuzu.yuzu_emu.features.input.model.NpadStyleIndex
 import org.yuzu.yuzu_emu.features.settings.model.AbstractBooleanSetting
 import org.yuzu.yuzu_emu.features.settings.model.AbstractIntSetting
 import org.yuzu.yuzu_emu.features.settings.model.BooleanSetting
+import org.yuzu.yuzu_emu.features.settings.model.FxPresetNameSetting
 import org.yuzu.yuzu_emu.features.settings.model.ByteSetting
 import org.yuzu.yuzu_emu.features.settings.model.IntSetting
 import org.yuzu.yuzu_emu.features.settings.model.LongSetting
@@ -25,9 +26,12 @@ import org.yuzu.yuzu_emu.features.settings.model.Settings
 import org.yuzu.yuzu_emu.features.settings.model.Settings.MenuTag
 import org.yuzu.yuzu_emu.features.settings.model.ShortSetting
 import org.yuzu.yuzu_emu.features.settings.model.StringSetting
+import org.yuzu.yuzu_emu.features.settings.model.UShortSetting
 import org.yuzu.yuzu_emu.features.settings.model.view.*
 import org.yuzu.yuzu_emu.utils.InputHandler
+import org.yuzu.yuzu_emu.utils.LosslessScalingHelper
 import org.yuzu.yuzu_emu.utils.NativeConfig
+import org.yuzu.yuzu_emu.utils.NativePostProcessing
 import org.yuzu.yuzu_emu.utils.DirectoryInitialization
 import org.yuzu.yuzu_emu.utils.FullscreenHelper
 import androidx.core.content.edit
@@ -41,6 +45,14 @@ class SettingsFragmentPresenter(
     private var activity: FragmentActivity?
 ) {
     private var settingsList = ArrayList<SettingsItem>()
+
+    private val expandedShaderSlots = mutableSetOf<Int>()
+
+    private var shaderPickerOpen = false
+
+    private var presetPickerOpen = false
+
+    private var postProcessingSynced = false
 
     private val context get() = YuzuApplication.appContext
 
@@ -73,6 +85,45 @@ class SettingsFragmentPresenter(
             !NativeConfig.usingGlobal(key)
         } else {
             NativeConfig.usingGlobal(key)
+        }
+    }
+
+    private fun addFrameGenSettings(sl: ArrayList<SettingsItem>) {
+        sl.apply {
+            if (!LosslessScalingHelper.isSupportedByGpu()) {
+                add(
+                    RunnableSetting(
+                        titleId = R.string.frame_gen_unsupported,
+                        descriptionId = R.string.frame_gen_unsupported_description,
+                        isRunnable = false
+                    ) {}
+                )
+            } else if (!LosslessScalingHelper.isInstalled()) {
+                add(
+                    RunnableSetting(
+                        titleId = R.string.lossless_scaling_missing,
+                        descriptionId = R.string.lossless_scaling_missing_description,
+                        isRunnable = false
+                    ) {}
+                )
+            }
+
+            add(BooleanSetting.RENDERER_FRAME_GEN.key)
+            add(IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key)
+            if (IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.getInt(
+                    getNeedsGlobalForKey(IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key)
+                ) == 0
+            ) {
+                add(IntSetting.RENDERER_FRAME_GEN_MULTIPLIER.key)
+            }
+            add(IntSetting.RENDERER_FRAME_GEN_QUEUE_TARGET.key)
+            add(BooleanSetting.RENDERER_FRAME_GEN_FLOW_SCALE_AUTO.key)
+            if (!BooleanSetting.RENDERER_FRAME_GEN_FLOW_SCALE_AUTO.getBoolean(
+                    getNeedsGlobalForKey(BooleanSetting.RENDERER_FRAME_GEN_FLOW_SCALE_AUTO.key)
+                )
+            ) {
+                add(IntSetting.RENDERER_FRAME_GEN_FLOW_SCALE.key)
+            }
         }
     }
 
@@ -120,6 +171,8 @@ class SettingsFragmentPresenter(
             MenuTag.SECTION_ROOT -> addConfigSettings(sl)
             MenuTag.SECTION_SYSTEM -> addSystemSettings(sl)
             MenuTag.SECTION_RENDERER -> addGraphicsSettings(sl)
+            MenuTag.SECTION_FRAME_GEN -> addFrameGenSettings(sl)
+            MenuTag.SECTION_POST_PROCESSING -> addPostProcessingSettings(sl)
             MenuTag.SECTION_PERFORMANCE_STATS -> addPerformanceOverlaySettings(sl)
             MenuTag.SECTION_SOC_OVERLAY -> addSocOverlaySettings(sl)
             MenuTag.SECTION_INPUT_OVERLAY -> addInputOverlaySettings(sl)
@@ -143,6 +196,209 @@ class SettingsFragmentPresenter(
         adapter.submitList(settingsList) {
             if (notifyDataSetChanged) {
                 adapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    private fun addPostProcessingSettings(sl: ArrayList<SettingsItem>) {
+        if (!postProcessingSynced) {
+            postProcessingSynced = true
+            NativePostProcessing.reload()
+        }
+
+        val usable = NativePostProcessing.catalog().filter { it.valid }
+
+        sl.apply {
+            if (usable.isEmpty()) {
+                add(
+                    RunnableSetting(
+                        titleId = R.string.post_processing_empty,
+                        descriptionString = NativePostProcessing.getShaderDirectory(),
+                        isRunnable = false
+                    ) {}
+                )
+                return@apply
+            }
+
+            val labels = mutableListOf<String>()
+            val summaries = mutableListOf<String>()
+            val files = mutableListOf<String>()
+            val techniques = mutableListOf<String>()
+            for (effect in usable) {
+                for (technique in effect.techniques) {
+                    if (effect.techniques.size == 1) {
+                        labels.add(effect.label)
+                    } else {
+                        labels.add(effect.label + " \u00b7 " + technique)
+                    }
+                    summaries.add(effect.description)
+                    files.add(effect.file)
+                    techniques.add(technique)
+                }
+            }
+
+            val chain = NativePostProcessing.chain()
+            val active = NativePostProcessing.getActivePreset()
+
+            var addLabel = R.string.post_processing_add
+            if (chain.isNotEmpty()) {
+                addLabel = R.string.post_processing_open_list
+            }
+            if (shaderPickerOpen) {
+                addLabel = R.string.post_processing_close_list
+            }
+
+            var presetLabel = context.getString(R.string.post_processing_presets)
+            if (active.isNotEmpty()) {
+                presetLabel = active
+            }
+
+            val createPreset = StringInputSetting(
+                setting = FxPresetNameSetting { name ->
+                    NativePostProcessing.savePreset(name, "")
+                    settingsViewModel.setReloadListAndNotifyDataset(true)
+                },
+                titleId = R.string.post_processing_preset_new,
+                descriptionId = R.string.post_processing_preset_new_description,
+                validator = { it != null && it.isNotBlank() && !it.contains('=') },
+                errorId = R.string.post_processing_preset_name_invalid
+            )
+
+            add(
+                FxToolbarSetting(
+                    addLabelId = addLabel,
+                    listOpen = shaderPickerOpen,
+                    presetLabel = presetLabel,
+                    hasEffects = chain.isNotEmpty(),
+                    createPreset = createPreset,
+                    onAdd = {
+                        shaderPickerOpen = !shaderPickerOpen
+                        presetPickerOpen = false
+                        settingsViewModel.setReloadListAndNotifyDataset(true)
+                    },
+                    onPresets = {
+                        presetPickerOpen = !presetPickerOpen
+                        shaderPickerOpen = false
+                        settingsViewModel.setReloadListAndNotifyDataset(true)
+                    },
+                    onRemoveAll = {
+                        NativePostProcessing.clearChain()
+                        NativePostProcessing.clearPreset()
+                        NativePostProcessing.store()
+                        expandedShaderSlots.clear()
+                        shaderPickerOpen = false
+                        settingsViewModel.setReloadListAndNotifyDataset(true)
+                    }
+                )
+            )
+
+            if (shaderPickerOpen) {
+                for (choice in labels.indices) {
+                    add(
+                        RunnableSetting(
+                            titleString = labels[choice],
+                            descriptionString = summaries[choice],
+                            isRunnable = true
+                        ) {
+                            NativePostProcessing.append(files[choice], techniques[choice])
+                            NativePostProcessing.store()
+                            shaderPickerOpen = false
+                            settingsViewModel.setReloadListAndNotifyDataset(true)
+                        }
+                    )
+                }
+            }
+
+            if (presetPickerOpen) {
+                add(
+                    FxPresetSetting(
+                        titleString = context.getString(R.string.post_processing_preset_none),
+                        onApply = {
+                            NativePostProcessing.clearPreset()
+                            presetPickerOpen = false
+                            settingsViewModel.setReloadListAndNotifyDataset(true)
+                        }
+                    )
+                )
+                for (preset in NativePostProcessing.presets()) {
+                    add(
+                        FxPresetSetting(
+                            titleString = preset.name,
+                            descriptionString = preset.description,
+                            deletable = !preset.bundled,
+                            onApply = {
+                                NativePostProcessing.applyPreset(preset.name)
+                                NativePostProcessing.store()
+                                presetPickerOpen = false
+                                expandedShaderSlots.clear()
+                                settingsViewModel.setReloadListAndNotifyDataset(true)
+                            },
+                            onDelete = {
+                                NativePostProcessing.deletePreset(preset.name)
+                                settingsViewModel.setReloadListAndNotifyDataset(true)
+                            }
+                        )
+                    )
+                }
+            }
+
+            if (active.isNotEmpty()) {
+                add(
+                    FxButtonSetting(titleId = R.string.post_processing_preset_reset) {
+                        NativePostProcessing.applyPreset(active)
+                        NativePostProcessing.store()
+                        expandedShaderSlots.clear()
+                        settingsViewModel.setReloadListAndNotifyDataset(true)
+                    }
+                )
+            }
+
+            for (index in chain.indices) {
+                val entry = chain[index]
+                val effect = usable.firstOrNull { it.file == entry.file }
+
+                var header = entry.file
+                var summary = ""
+                var uniforms = emptyList<NativePostProcessing.Uniform>()
+                if (effect != null) {
+                    header = effect.label
+                    if (effect.techniques.size > 1) {
+                        header = effect.label + " \u00b7 " + entry.technique
+                    }
+                    summary = effect.description
+                    uniforms = effect.uniforms
+                }
+
+                val isOpen = expandedShaderSlots.contains(index)
+
+                add(
+                    FxShaderCardSetting(
+                        titleString = header,
+                        descriptionString = summary,
+                        index = index,
+                        expanded = isOpen,
+                        uniforms = uniforms,
+                        onToggle = {
+                            if (isOpen) {
+                                expandedShaderSlots.remove(index)
+                            } else {
+                                expandedShaderSlots.add(index)
+                            }
+                            settingsViewModel.setReloadListAndNotifyDataset(true)
+                        },
+                        onRemove = {
+                            NativePostProcessing.remove(index)
+                            NativePostProcessing.store()
+                            expandedShaderSlots.clear()
+                            settingsViewModel.setReloadListAndNotifyDataset(true)
+                        },
+                        onReset = {
+                            NativePostProcessing.resetValues(index)
+                            NativePostProcessing.store()
+                            settingsViewModel.setReloadListAndNotifyDataset(true)
+                        }
+                    )
+                )
             }
         }
     }
@@ -250,8 +506,9 @@ class SettingsFragmentPresenter(
             add(BooleanSetting.USE_CUSTOM_RTC.key)
             add(LongSetting.CUSTOM_RTC.key)
 
-            add(HeaderSetting(R.string.cpu))
+            add(HeaderSetting(R.string.clocks))
             add(IntSetting.FAST_CPU_TIME.key)
+            add(IntSetting.FAST_GPU_TIME.key)
             add(BooleanSetting.CORE_SYNC_CORE_SPEED.key)
 
             add(IntSetting.MEMORY_LAYOUT.key)
@@ -269,8 +526,6 @@ class SettingsFragmentPresenter(
     // TODO(crueter): sub-submenus?
     private fun addGraphicsSettings(sl: ArrayList<SettingsItem>) {
         sl.apply {
-            // add(IntSetting.RENDERER_NVDEC_EMULATION.key)
-
             add(IntSetting.RENDERER_RESOLUTION.key)
             add(IntSetting.RENDERER_VSYNC.key)
             add(IntSetting.RENDERER_SCALING_FILTER.key)
@@ -283,9 +538,11 @@ class SettingsFragmentPresenter(
 
             add(IntSetting.RENDERER_ACCURACY.key)
             add(IntSetting.DMA_ACCURACY.key)
+            add(IntSetting.GPU_FENCE_BEHAVIOR.key)
             add(IntSetting.MAX_ANISOTROPY.key)
             add(IntSetting.RENDERER_VRAM_USAGE_MODE.key)
             add(IntSetting.RENDERER_ASTC_DECODE_METHOD.key)
+            add(IntSetting.RENDERER_NVDEC_EMULATION.key)
 
             add(BooleanSetting.SYNC_MEMORY_OPERATIONS.key)
             add(BooleanSetting.RENDERER_USE_DISK_SHADER_CACHE.key)
@@ -296,12 +553,9 @@ class SettingsFragmentPresenter(
 
             add(HeaderSetting(R.string.hacks))
 
-            add(IntSetting.FAST_GPU_TIME.key)
             add(BooleanSetting.SKIP_CPU_INNER_INVALIDATION.key)
-            add(BooleanSetting.ANTIFLICKER.key)
             add(BooleanSetting.FIX_BLOOM_EFFECTS.key)
             add(BooleanSetting.EMULATE_BGR565.key)
-            add(BooleanSetting.RESCALE_HACK.key)
             add(BooleanSetting.RENDERER_ASYNCHRONOUS_SHADERS.key)
             add(IntSetting.ANDROID_PIPELINE_WORKERS.key)
             add(BooleanSetting.RENDERER_ASYNCHRONOUS_GPU_EMULATION.key)
@@ -1281,20 +1535,26 @@ class SettingsFragmentPresenter(
                 add(HeaderSetting(R.string.log))
 
                 add(BooleanSetting.DEBUG_FLUSH_BY_LINE.key)
+                add(BooleanSetting.EXTENDED_LOGGING.key)
+                add(StringSetting.LOG_FILTER.key)
             }
 
             add(HeaderSetting(R.string.general))
 
-            add(ShortSetting.DEBUG_KNOBS.key)
+            add(UShortSetting.DEBUG_KNOBS.key)
+            add(StringSetting.PROGRAM_ARGS.key)
 
-            add(HeaderSetting(R.string.gpu_logging_header))
-            add(BooleanSetting.GPU_LOGGING_ENABLED.key)
-            add(ByteSetting.GPU_LOG_LEVEL.key)
-            add(BooleanSetting.GPU_LOG_VULKAN_CALLS.key)
-            add(BooleanSetting.GPU_LOG_SHADER_DUMPS.key)
-            add(BooleanSetting.GPU_LOG_MEMORY_TRACKING.key)
-            add(BooleanSetting.GPU_LOG_DRIVER_DEBUG.key)
-            add(IntSetting.GPU_LOG_RING_BUFFER_SIZE.key)
+            if (!NativeConfig.isPerGameConfigLoaded()) {
+                add(HeaderSetting(R.string.gpu_logging_header))
+                add(ByteSetting.GPU_LOG_LEVEL.key)
+                add(BooleanSetting.GPU_LOG_VULKAN_CALLS.key)
+                add(BooleanSetting.DUMP_GUEST_SHADERS.key)
+                add(BooleanSetting.GPU_LOG_SHADER_DUMPS.key)
+                add(BooleanSetting.DUMP_MACROS.key)
+                add(BooleanSetting.GPU_LOG_MEMORY_TRACKING.key)
+                add(BooleanSetting.GPU_LOG_DRIVER_DEBUG.key)
+                add(IntSetting.GPU_LOG_RING_BUFFER_SIZE.key)
+            }
         }
     }
 
