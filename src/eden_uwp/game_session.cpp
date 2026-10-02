@@ -495,6 +495,17 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                    stats.emulation_speed * 100.0,
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage(),
                                    worst_gap_ms, hitches));
+            // The patched Mesa publishes pipeline state creation counters (created, failed,
+            // last HRESULT); a failed PSO drops its draws, so log them whenever they change.
+            {
+                static std::string last_pso;
+                char pso[96] = "";
+                if (GetEnvironmentVariableA("NXBOX_D3D12_PSO", pso, sizeof(pso)) != 0 &&
+                    last_pso != pso) {
+                    last_pso = pso;
+                    Diagnostic(std::string("D3D12_PSO ") + pso);
+                }
+            }
             // Host work in the window, as total/longest milliseconds and call count, so each
             // hitch can be traced to shader builds, texture uploads, decoding or cache eviction.
             std::string stall_line = "GAME_STALL";

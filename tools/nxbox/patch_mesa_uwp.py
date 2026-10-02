@@ -66,11 +66,43 @@ def patch(root: Path) -> None:
     patch_shader_model(root)
     patch_format_cast_report(root)
     patch_draw(root)
+    patch_null_pso(root)
     patch_batch(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
         patch_fence(root)
+
+
+def patch_null_pso(root: Path) -> None:
+    # When CreatePipelineState fails (counted in NXBOX_D3D12_PSO), d3d12_get_*_pipeline_state
+    # returns NULL and the draw goes on with only an assert, disabled in release: the batch then
+    # AddRef()s a null object. Breath of the Wild died that way about 80 s in (access violation
+    # reading 0x0 in d3d12_batch_reference_object). Drop the draw or dispatch instead.
+    path = root / "src/gallium/drivers/d3d12/d3d12_draw.cpp"
+    source = path.read_text()
+    gfx_old = (
+        "      ctx->current_gfx_pso = d3d12_get_gfx_pipeline_state(ctx);\n"
+        "      assert(ctx->current_gfx_pso);\n"
+        "   }\n"
+    )
+    gfx_new = gfx_old + (
+        "   if (!ctx->current_gfx_pso) {\n"
+        "      if (index_buffer && dinfo->has_user_indices)\n"
+        "         pipe_resource_reference(&index_buffer, NULL);\n"
+        "      return;\n"
+        "   }\n"
+    )
+    compute_old = (
+        "      ctx->current_compute_pso = d3d12_get_compute_pipeline_state(ctx);\n"
+        "      assert(ctx->current_compute_pso);\n"
+        "   }\n"
+    )
+    compute_new = compute_old + "   if (!ctx->current_compute_pso)\n      return;\n"
+    for old in (gfx_old, compute_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the null PSO patch")
+    path.write_text(source.replace(gfx_old, gfx_new).replace(compute_old, compute_new))
 
 
 def patch_query(root: Path) -> None:
