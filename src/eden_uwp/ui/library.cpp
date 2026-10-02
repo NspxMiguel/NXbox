@@ -457,23 +457,35 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
                        Utf8(existing.wstring()) + " already exists");
             continue;
         }
-        // The .nsp is larger than the .nsz (twice is a safe bound). The console's internal storage
-        // holds only a few GB, so a big game is converted onto a removable drive with room.
-        const std::uint64_t needed = Common::FS::GetSize(nsz) * 2;
-        std::error_code space_error;
-        const auto here = fs::space(nsz.parent_path(), space_error);
-        const std::optional<std::uint64_t> free_here =
-            space_error ? StorageFreeSpace(nsz.parent_path())
-                        : std::optional<std::uint64_t>{here.available};
+        // The .nsp runs about 1.4 times its .nsz; 1.5 leaves a margin. The console's internal
+        // storage holds only a few GB, so a big game is converted onto a removable drive with
+        // room, and when no place has room the conversion is not attempted at all: a doomed
+        // attempt ran for minutes on every library open and failed with "disk full" each time.
+        const std::uint64_t needed = Common::FS::GetSize(nsz) * 3 / 2;
+        const auto free_in = [](const fs::path& folder) -> std::optional<std::uint64_t> {
+            std::error_code space_error;
+            const auto space = fs::space(folder, space_error);
+            return space_error ? StorageFreeSpace(folder)
+                               : std::optional<std::uint64_t>{space.available};
+        };
+        const auto free_here = free_in(nsz.parent_path());
         if (!free_here || *free_here < needed) {
+            bool placed = false;
             for (const fs::path& folder : *external) {
-                const auto free_there = StorageFreeSpace(folder);
+                const auto free_there = free_in(folder);
                 if (folder != nsz.parent_path() && free_there && *free_there >= needed) {
                     nsp = folder / nsp.filename();
+                    placed = true;
                     Diagnostic("UI nsz convert " + Utf8(nsz.filename().wstring()) +
                                " to removable drive " + Utf8(folder.wstring()));
                     break;
                 }
+            }
+            if (!placed) {
+                Diagnostic(fmt::format("UI nsz convert {} skip: needs {} MiB free, has {} MiB",
+                                       Utf8(nsz.filename().wstring()), needed >> 20,
+                                       free_here.value_or(0) >> 20));
+                continue;
             }
         }
         pending.emplace_back(nsz, nsp);
