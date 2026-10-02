@@ -659,6 +659,77 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
 }
 } // namespace
 
+// LocalState\move.txt: one "source|destination" pair per line, moved in order before the library
+// opens. The console's internal storage and the removable drive are both small, so making room
+// for one game means moving another. Each file is copied in 4 MiB chunks through IOFile (the
+// CreateFileFromAppW path reaches removable drives), checked by size, and only then deleted at
+// its source. Lines that fail stay in move.txt for the next launch.
+void ProcessMoves(const std::filesystem::path& local_state) {
+    namespace fs = std::filesystem;
+    const fs::path list = local_state / "move.txt";
+    std::ifstream in(list);
+    if (!in) {
+        return;
+    }
+    std::vector<std::string> remaining;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        const auto bar = line.find('|');
+        if (bar == std::string::npos) {
+            continue;
+        }
+        const std::string from = line.substr(0, bar);
+        const std::string to = line.substr(bar + 1);
+        const u64 size = Common::FS::GetSize(from);
+        Common::FS::IOFile src(from, Common::FS::FileAccessMode::Read,
+                               Common::FS::FileType::BinaryFile);
+        const std::string partial = to + ".partial";
+        bool ok = src.IsOpen() && size != 0 &&
+                  Common::FS::CreateDirs(fs::path{Common::FS::ToU8String(to)}.parent_path());
+        if (ok) {
+            Common::FS::IOFile dst(partial, Common::FS::FileAccessMode::Write,
+                                   Common::FS::FileType::BinaryFile);
+            std::vector<u8> chunk(4u << 20);
+            u64 done = 0;
+            auto sample = std::chrono::steady_clock::now();
+            ok = dst.IsOpen();
+            while (ok && done < size) {
+                const std::size_t want =
+                    static_cast<std::size_t>(std::min<u64>(chunk.size(), size - done));
+                ok = src.ReadSpan(std::span<u8>(chunk.data(), want)) == want &&
+                     dst.WriteSpan(std::span<const u8>(chunk.data(), want)) == want;
+                done += want;
+                if (std::chrono::steady_clock::now() - sample > std::chrono::seconds(10)) {
+                    sample = std::chrono::steady_clock::now();
+                    Diagnostic(fmt::format("MOVE {} {}/{} MiB", to, done >> 20, size >> 20));
+                }
+            }
+            ok = ok && dst.Commit();
+        }
+        src.Close();
+        ok = ok && Common::FS::GetSize(partial) == size && Common::FS::RenameFile(partial, to) &&
+             Common::FS::RemoveFile(from);
+        if (!ok) {
+            void(Common::FS::RemoveFile(partial));
+            remaining.push_back(line);
+        }
+        Diagnostic(fmt::format("MOVE {} {} -> {} ({} MiB)", ok ? "ok" : "failed", from, to,
+                               size >> 20));
+    }
+    in.close();
+    if (remaining.empty()) {
+        void(Common::FS::RemoveFile(list));
+    } else {
+        std::ofstream out(list, std::ios::trunc);
+        for (const auto& pending : remaining) {
+            out << pending << '\n';
+        }
+    }
+}
+
 void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::string& path) {
     using namespace winrt::Windows::UI::Core;
     // LocalState\usb_scan_test.txt: a one-off trigger to test the setup screen's render pipeline
@@ -702,6 +773,19 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
     Ui::SyncGame sync_game;
     const std::filesystem::path local_state(
         winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+    if (std::filesystem::exists(local_state / "move.txt")) {
+        // A worker does the copying; the window keeps pumping so the system sees a live app.
+        auto mover = std::async(std::launch::async, [&local_state] {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            SCOPE_EXIT { winrt::uninit_apartment(); };
+            ProcessMoves(local_state);
+        });
+        while (mover.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+            window.Dispatcher().ProcessEvents(
+                winrt::Windows::UI::Core::CoreProcessEventsOption::ProcessAllIfPresent);
+            Sleep(16);
+        }
+    }
     if (!std::filesystem::exists(local_state / "skip_library.txt")) {
         if (Ui::HasPendingSync(local_state)) {
             ApplyEdenSettingsFile(); // the active profile decides which save folder is synced
