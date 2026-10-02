@@ -83,24 +83,15 @@ public:
         const auto devices = Gamepad::Gamepads();
         GamepadReading reading{};
         const auto keys = key_state.load(std::memory_order_acquire);
-        const bool keys_seen = key_seen.load(std::memory_order_acquire);
         if (devices.Size() != 0) {
             reading = devices.GetAt(0).GetCurrentReading();
         }
-        if (devices.Size() != 0 || keys_seen) {
-            empty_polls = 0;
-            if (!controller.IsConnected())
-                controller.Connect();
-        } else if (controller.IsConnected()) {
-            // A single poll with no WGI gamepad and no remote input yet does not mean the player
-            // disconnected: WGI enumeration can have a transient gap, and the very first remote
-            // input arrives a poll or two after boot. Disconnecting immediately made the guest's
-            // own controller-support applet see a connect-then-instant-disconnect and loop
-            // forever re-showing it (measured on Persona 5 Royal: every ~5 s, indefinitely).
-            // Half a second of empty polls is a real disconnect.
-            if (++empty_polls > 60) {
-                controller.Disconnect();
-            }
+        // Player 1 stays connected, as the keyboard keeps it on desktop Eden. Disconnecting when
+        // no Xbox pad was visible made games re-open the controller-support applet in a loop:
+        // Persona 5 Royal every ~5 s, and Breath of the Wild 43 times in 13 s, leaking each
+        // applet's events until CreateEvent hit the resource limit and the game stopped.
+        if (!controller.IsConnected()) {
+            controller.Connect();
         }
         // Preserve button labels initially; a positional mapping can be selected by the launcher.
         constexpr std::array mappings{GamepadButtons::A,
@@ -212,6 +203,5 @@ private:
     const PadIdentifier pad{};
     std::atomic<std::uint32_t> key_state{0};
     std::atomic<bool> key_seen{false};
-    int empty_polls = 0;
 };
 } // namespace EdenXbox
