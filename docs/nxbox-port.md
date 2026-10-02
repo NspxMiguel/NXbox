@@ -701,3 +701,9 @@ No Xbox run or complete UWP compilation was performed for this change on the mac
   average 26.1 FPS, 21 windows with a gap of 200 ms or more, worst 5.3 s. The worst window is a
   single 4.9 s GPU-thread job; shader builds (0.95 s) and query waits (0.55 s) explain only part
   of it. The cache was cold because the precompile guard discarded it after the 0.3.183 crashes.
+- **Large games on the removable drive (02/10/2026).** Downloads land on `E:\NXbox\games` when
+  LocalState is short (`DOWNLOAD_TARGET E:\...`). The drive writes at about 2-5 MiB/s through
+  the `...FromApp` path (internal storage took about 100 MiB/s), so it is slow but works. A
+  remote `.nsz` named by `game.url` is converted straight into an `.nsp` over HTTP range
+  requests (`NSZ_STREAM ...`), because a 9.6 GB NSZ and its 13.5 GB NSP did not fit side by
+  side; a partial `.nsz` of the same game counts as reclaimable space.
