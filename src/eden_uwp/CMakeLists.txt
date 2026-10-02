@@ -47,6 +47,8 @@ add_executable(eden-uwp WIN32
     ui/updater.cpp
     ui/updater.h
     ui/update_version.h
+    ui/usb_import_screen.cpp
+    ui/usb_import_screen.h
     ui/theme.h
     ui/widgets.cpp
     ui/widgets.h

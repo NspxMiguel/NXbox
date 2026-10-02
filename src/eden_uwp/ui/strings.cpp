@@ -41,17 +41,17 @@ constexpr Entry kTable[] = {
     {L"Sua biblioteca", L"Your library"},           // RailTitle
     {L"Adicionar\njogos", L"Add\ngames"},           // AddGamesTile, two lines inside the tile
     {L"Adicionar jogos", L"Add games"},             // AddGamesTitle
-    {L"Copie arquivos .nsp ou .xci para a pasta games do console pelo Device Portal e "
-     L"pressione A para procurar de novo.",
-     L"Copy .nsp or .xci files into the console's games folder with Device Portal, then "
-     L"press A to scan again."},                           // AddGamesBody
+    {L"Pressione A para importar de um pendrive, ou copie arquivos .nsp ou .xci para a pasta "
+     L"games do console pelo Device Portal.",
+     L"Press A to import from a USB drive, or copy .nsp or .xci files into the console's "
+     L"games folder with Device Portal."},                           // AddGamesBody
     {L"Nenhum jogo ainda", L"No games yet"},               // EmptyTitle
     {L"Faltam as chaves", L"Keys are missing"},            // MissingKeysTitle
     {L"Os jogos estão na pasta games, mas faltam as chaves para abri-los. Copie o prod.keys "
-     L"para a pasta eden\\keys do app pelo Device Portal e pressione A para procurar de novo.",
+     L"para a pasta eden\\keys do app pelo Device Portal, ou pressione A para importar de um pendrive.",
      L"The games are in the games folder, but the keys to open them are missing. Copy "
-     L"prod.keys into the app's eden\\keys folder with Device Portal, then press A to scan "
-     L"again."}, // MissingKeysBody
+     L"prod.keys into the app's eden\\keys folder with Device Portal, or press A to import "
+     L"from a USB drive."}, // MissingKeysBody
     {L"Procurando jogos", L"Looking for games"},           // ScanningTitle
     {L"Convertendo NSZ para NSP", L"Converting NSZ to NSP"}, // ConvertingTitle
     {L"Configurações", L"Settings"},                       // SettingsTitle
@@ -161,6 +161,29 @@ constexpr Entry kTable[] = {
          L"portal.json is missing from LocalState, with the Device Portal host, port, user and "
          L"pass. Add the file and press A to retry."}, // UpdateMissingPortal
         {L"Atualizar", L"Update"},                     // UpdateAction
+        {L"Importar do pendrive", L"Import from USB drive"}, // UsbTitle
+        {L"Procurando nos drives...", L"Looking through your drives..."}, // UsbScanning
+        {L"Nenhum drive removível encontrado. Conecte um pendrive ou HD formatado em exFAT ou NTFS com seus dumps e pressione A para procurar de novo.", L"No removable drive found. Plug in a USB drive formatted exFAT or NTFS with your dumps, then press A to scan again."}, // UsbNoDrive
+        {L"Nenhum jogo ou chave nos drives conectados. Coloque arquivos .nsp, .nsz, .xci, .xcz ou prod.keys no drive e pressione A para procurar de novo.", L"No games or keys on the connected drives. Put .nsp, .nsz, .xci, .xcz or prod.keys files on the drive, then press A to scan again."}, // UsbEmpty
+        {L"Xbox", L"Xbox"}, // UsbXbox
+        {L"livres", L"free"}, // UsbFree
+        {L"Copiar tudo", L"Copy all"}, // UsbCopyAll
+        {L"Copiar para o Xbox", L"Copy to the Xbox"}, // UsbCopyToXbox
+        {L"Jogar do pendrive", L"Play from the drive"}, // UsbPlayFromDrive
+        {L"Copiar usa o espaço do Xbox. Jogar do pendrive move o arquivo para NXbox\\games no próprio drive, sem usar espaço do console.", L"Copying uses the Xbox's storage. Playing from the drive moves the file into NXbox\\games on the same drive and uses none of the console's space."}, // UsbChoiceBody
+        {L"Chaves", L"Keys"}, // UsbKeysTag
+        {L"Sem espaço no Xbox para este arquivo.", L"Not enough space on the Xbox for this file."}, // UsbNoSpace
+        {L"Precisa de", L"Needs"}, // UsbNeeds
+        {L"Copiando", L"Copying"}, // UsbCopying
+        {L"Movendo", L"Moving"}, // UsbMoving
+        {L"Cópia cancelada", L"Copy cancelled"}, // UsbCancelled
+        {L"ok", L"done"}, // UsbSummaryOk
+        {L"falharam", L"failed"}, // UsbSummaryFailed
+        {L"sem espaço", L"no space"}, // UsbSummaryNoSpace
+        {L"Movido. O jogo já aparece na biblioteca.", L"Moved. The game now shows up in the library."}, // UsbMoved
+        {L"Não foi possível mover o arquivo.", L"Could not move the file."}, // UsbMoveFailed
+        {L"Nada cabe no Xbox. Use Jogar do pendrive.", L"Nothing fits on the Xbox. Use Play from the drive."}, // UsbNothingFits
+        {L"Importar", L"Import"}, // HintImport
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

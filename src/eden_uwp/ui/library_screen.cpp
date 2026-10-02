@@ -35,6 +35,7 @@
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/theme.h"
 #include "eden_uwp/ui/updater.h"
+#include "eden_uwp/ui/usb_import_screen.h"
 #include "eden_uwp/ui/widgets.h"
 
 namespace EdenXbox::Ui {
@@ -618,7 +619,7 @@ private:
             } else if (HasGame()) {
                 Launch(now);
             } else if (OnAddTile()) {
-                StartScan();
+                OpenUsbImport();
             }
             break;
         case Layer::Actions:
@@ -660,6 +661,17 @@ private:
         if (RunModsScreen(renderer_, window_, input_, mods, local_state_)) {
             closed_ = true;
         }
+    }
+
+    // The USB import screen, on this window and this renderer. It runs its own loop and returns
+    // when the player leaves with B; whatever it copied or moved is picked up by a new scan.
+    void OpenUsbImport() {
+        Diagnostic("UI library open usb import");
+        if (RunUsbImportScreen(renderer_, window_, input_, local_state_)) {
+            closed_ = true;
+            return;
+        }
+        StartScan();
     }
 
     // A on a settings row.
@@ -1213,7 +1225,7 @@ private:
             hints.push_back({Theme::kButtonX, L"X", Tr(Text::ActionMods)});
             hints.push_back({Theme::kButtonY, L"Y", Tr(Text::ActionDetails)});
         } else if (OnAddTile() && layer_ == Layer::Rail) {
-            hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintScan)});
+            hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintImport)});
         }
         hints.push_back({Theme::kButtonB, L"B", Tr(Text::HintQuit)});
         return hints;
