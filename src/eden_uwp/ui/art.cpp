@@ -82,11 +82,29 @@ bool ReadText(const fs::path& file, std::string& text) {
     return !text.empty();
 }
 
+// Written under a temporary name and renamed: a full disk used to leave an empty or truncated
+// file that later runs trusted (the error only shows when the stream is closed).
 bool WriteBytes(const fs::path& file, const std::vector<std::uint8_t>& bytes) {
-    std::ofstream out(file, std::ios::binary | std::ios::trunc);
-    out.write(reinterpret_cast<const char*>(bytes.data()),
-              static_cast<std::streamsize>(bytes.size()));
-    return static_cast<bool>(out);
+    fs::path partial = file;
+    partial += ".partial";
+    {
+        std::ofstream out(partial, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        if (!out) {
+            std::error_code ec;
+            fs::remove(partial, ec);
+            return false;
+        }
+    }
+    std::error_code ec;
+    fs::rename(partial, file, ec);
+    if (ec) {
+        fs::remove(partial, ec);
+        return false;
+    }
+    return true;
 }
 
 // The text of the JSON string that follows `"key"` and a colon, starting the search at `from`.
@@ -159,7 +177,8 @@ struct BannerSource::Impl : std::enable_shared_from_this<BannerSource::Impl> {
         bool fresh = false;
         if (fs::exists(file, ec)) {
             const auto stamp = fs::last_write_time(file, ec);
-            if (!ec) {
+            // An empty file is what a full disk left behind; it is never fresh.
+            if (!ec && fs::file_size(file, ec) > 0 && !ec) {
                 fresh = fs::file_time_type::clock::now() - stamp < kIndexMaxAge;
             }
         }
