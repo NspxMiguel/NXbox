@@ -436,13 +436,45 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
     // An .nsz with an .nsp next to it has been converted before (or the player copied both): the
     // .nsp is the package, and nothing is deleted.
     std::vector<std::pair<fs::path, fs::path>> pending; // .nsz and the .nsp it becomes
+    std::optional<std::vector<fs::path>> external; // removable NXbox\games folders, looked up once
     for (const fs::path& nsz : compressed) {
         fs::path nsp = nsz;
         nsp.replace_extension(L".nsp");
+        if (!external) {
+            external = ExternalGameFolders();
+        }
+        fs::path existing;
         if (Common::FS::Exists(nsp)) {
+            existing = nsp;
+        }
+        for (const fs::path& folder : *external) {
+            if (existing.empty() && Common::FS::Exists(folder / nsp.filename())) {
+                existing = folder / nsp.filename();
+            }
+        }
+        if (!existing.empty()) {
             Diagnostic("UI nsz convert " + Utf8(nsz.filename().wstring()) + " skip " +
-                       Utf8(nsp.filename().wstring()) + " already exists");
+                       Utf8(existing.wstring()) + " already exists");
             continue;
+        }
+        // The .nsp is larger than the .nsz (twice is a safe bound). The console's internal storage
+        // holds only a few GB, so a big game is converted onto a removable drive with room.
+        const std::uint64_t needed = Common::FS::GetSize(nsz) * 2;
+        std::error_code space_error;
+        const auto here = fs::space(nsz.parent_path(), space_error);
+        const std::optional<std::uint64_t> free_here =
+            space_error ? StorageFreeSpace(nsz.parent_path())
+                        : std::optional<std::uint64_t>{here.available};
+        if (!free_here || *free_here < needed) {
+            for (const fs::path& folder : *external) {
+                const auto free_there = StorageFreeSpace(folder);
+                if (folder != nsz.parent_path() && free_there && *free_there >= needed) {
+                    nsp = folder / nsp.filename();
+                    Diagnostic("UI nsz convert " + Utf8(nsz.filename().wstring()) +
+                               " to removable drive " + Utf8(folder.wstring()));
+                    break;
+                }
+            }
         }
         pending.emplace_back(nsz, nsp);
     }
