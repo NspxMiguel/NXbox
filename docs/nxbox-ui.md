@@ -333,3 +333,40 @@ error. The worker cannot launch an install from the background check, and the
 modal blocks game launches while a deployment is pending. PT and EN strings live
 in the existing table. See [NXbox updates](nxbox-updates.md) for the release/tag
 contract, portal.json schema, CSRF protocol and real-console validation limits.
+
+### Install as game: one dashboard tile per game
+
+A game of the library can become its own tile on the Xbox dashboard, with its own name and art,
+that opens NXbox straight into that game.
+
+How it works:
+
+- NXbox registers the `nxbox` protocol (`dist/nxbox/AppxManifest.xml`). On activation,
+  `uwp_boot.cpp` (`OnActivated`) parses `nxbox://play?title=<16 hex digits>`
+  (`eden_uwp/protocol_uri.h`, unit-tested in `tests/port/protocol_uri.cpp`) and hands the title ID
+  to `SetProtocolPlayTitle`. `Run()` pumps the dispatcher for up to 2 s so the activation is known
+  before anything is shown.
+- `RunGameView` (`game_session.cpp`) then scans the library (`LibraryScan`, cached, so quick),
+  and for the game with that title ID takes the same path as a library choice
+  (`RememberChosenGame`, `chosen_in_library`, SwitchSaveSync before and after), skipping the
+  library screen. Log lines: `PROTOCOL_LAUNCH <id>`; when no game matches, the library opens
+  normally and `PROTOCOL_GAME_NOT_FOUND <id>` is logged. A launch while NXbox already runs only
+  logs the activation; the running session is not replaced.
+- The tile is a separate package, `NSPX.NXbox.Game.<TITLEID>`: `src/nxbox_launcher` is a tiny UWP
+  app that reads `title.txt` from its package, calls `Launcher.LaunchUriAsync` with the URI above
+  and exits. One binary serves every game. `tools/nxbox/package_launcher.py` bundles it with
+  `title.txt`, the display name and Square44/150, Wide310x150, StoreLogo and SplashScreen PNGs
+  generated from the eShop art (`dist/art/eshop-art.json`: icon for the square tiles, banner for the
+  wide ones; NXbox's own logo when the title has no art), and signs it with the NXbox certificate.
+
+Adding a tile:
+
+1. NXbox itself must be installed in a version that has the protocol (this one or later).
+2. Run the workflow **Package NXbox game tile** (Actions, Run workflow) with `title_id` (the 16
+   digits the library shows / `LocalState\library\<TITLEID>.json`) and `name`; `icon_url` and
+   `banner_url` are optional overrides.
+3. Download the `nxbox-game-tile-<TITLEID>` artifact and install the `.appx` through the Device
+   Portal like NXbox itself. Repeat per game.
+
+Locally: `python tools/nxbox/package_launcher.py --exe nxbox-launcher.exe --title-id <ID> --name
+"<Name>" --stage-only` stages the package without the Windows SDK (needs Pillow).

@@ -13,6 +13,7 @@ add_executable(eden-uwp WIN32
     mesa_window.h
     game_session.cpp
     game_session.h
+    protocol_uri.h
     game_download.cpp
     shader_share.cpp
     shader_share.h

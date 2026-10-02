@@ -59,6 +59,8 @@ def stage(executable: Path, destination: Path, version: str, kind: str = "cpu"):
     manifest = (ROOT / "dist/nxbox/AppxManifest.xml").read_text()
     manifest = manifest.replace('Version="0.1.0.0"', f'Version="{version}"')
     if kind == "graphics":
+        # Only the real app owns the nxbox:// protocol.
+        manifest = re.sub(r"\s*<Extensions>.*?</Extensions>", "", manifest, flags=re.S)
         manifest = manifest.replace("NSPX.NXbox", "NSPX.NXbox.GraphicsProbe")
         manifest = manifest.replace("NXbox.App", "NXbox.GraphicsProbe")
         manifest = manifest.replace(">NXbox<", ">NXbox Graphics Probe<")

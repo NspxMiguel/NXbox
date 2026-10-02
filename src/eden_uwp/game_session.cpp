@@ -49,7 +49,9 @@
 #include "eden_uwp/http_vfs_file.h"
 #include "eden_uwp/gamepad.h"
 #include "eden_uwp/mesa_window.h"
+#include "eden_uwp/save_sync.h"
 #include "eden_uwp/setup_ui.h"
+#include "eden_uwp/ui/library.h"
 #include "eden_uwp/ui/library_screen.h"
 #include "eden_uwp/ui/mods.h"
 #include "eden_uwp/ui/savesync_ui.h"
@@ -657,6 +659,45 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }
+
+// Title ID from an nxbox://play?title=<ID> activation; empty when the app was launched normally.
+std::mutex g_protocol_mutex;
+std::string g_protocol_title;
+bool g_protocol_set = false;
+
+std::string TakeProtocolPlayTitle() {
+    const std::lock_guard lock(g_protocol_mutex);
+    return g_protocol_title;
+}
+
+// Looks `title_id` up in the library (scans LocalState\games on a worker thread while this thread
+// keeps pumping the window, the same way the library screen does). Returns true and fills
+// `choice` with what the library screen would have returned for that game.
+bool FindLibraryGame(const winrt::Windows::UI::Core::CoreWindow& window,
+                     const std::filesystem::path& local_state, const std::string& title_id,
+                     Ui::ChosenGame& choice) {
+    using namespace winrt::Windows::UI::Core;
+    Ui::LibraryScan scan(local_state);
+    while (!scan.Finished()) {
+        window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+        Sleep(1);
+    }
+    for (const Ui::GameEntry& game : scan.Take()) {
+        if (_stricmp(game.title_id.c_str(), title_id.c_str()) != 0) {
+            continue;
+        }
+        choice.path = winrt::to_string(game.path.wstring());
+        choice.title_id = game.title_id;
+        choice.sync_name = SaveSync::GameNameFromNames(game.nacp_names);
+        if (choice.sync_name.empty()) {
+            choice.sync_name = winrt::to_string(winrt::hstring(game.name));
+        }
+        choice.display_name = game.name;
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 // LocalState\move.txt: one "source|destination" pair per line, moved in order before the library
@@ -730,6 +771,14 @@ void ProcessMoves(const std::filesystem::path& local_state) {
     }
 }
 
+void SetProtocolPlayTitle(std::string title_id) {
+    const std::lock_guard lock(g_protocol_mutex);
+    if (!g_protocol_set) {
+        g_protocol_set = true;
+        g_protocol_title = std::move(title_id);
+    }
+}
+
 void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::string& path) {
     using namespace winrt::Windows::UI::Core;
     // LocalState\usb_scan_test.txt: a one-off trigger to test the setup screen's render pipeline
@@ -794,7 +843,22 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             }
         }
         Ui::ChosenGame choice;
-        const std::string chosen = Ui::RunLibrary(window, &choice);
+        std::string chosen;
+        // A per-game tile ("Install as game") starts NXbox with nxbox://play?title=<ID>: boot that
+        // game through the same path as a library choice, without showing the library. When no
+        // game matches, fall through to the library.
+        const std::string protocol_title = TakeProtocolPlayTitle();
+        if (!protocol_title.empty()) {
+            if (FindLibraryGame(window, local_state, protocol_title, choice)) {
+                Diagnostic("PROTOCOL_LAUNCH " + protocol_title);
+                chosen = choice.path;
+            } else {
+                Diagnostic("PROTOCOL_GAME_NOT_FOUND " + protocol_title);
+            }
+        }
+        if (chosen.empty()) {
+            chosen = Ui::RunLibrary(window, &choice);
+        }
         if (!chosen.empty()) {
             RememberChosenGame(local_state, chosen);
             chosen_in_library = true;

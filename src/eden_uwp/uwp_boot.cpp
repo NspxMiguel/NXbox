@@ -38,6 +38,7 @@
 
 #include "eden_uwp/headless_emu_window.h"
 #include "eden_uwp/game_session.h"
+#include "eden_uwp/protocol_uri.h"
 
 namespace EdenXbox {
 
@@ -142,6 +143,7 @@ int RunHeadlessBoot(const std::string& nro_path) {
 
 #include <windows.h> // OutputDebugStringA/W + ::Sleep (sets the target-arch macros winnt.h needs)
 
+#include <winrt/Windows.ApplicationModel.Activation.h>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.ApplicationModel.h>
 #include <winrt/Windows.Foundation.h>
@@ -171,11 +173,41 @@ void WriteDiag(const std::string& msg) {
     }
 }
 
+// Set by the first activation of the process (normal launch or protocol), so Run() knows the
+// activation arguments were delivered before it boots anything.
+std::atomic<bool> g_activation_seen{false};
+
+// A protocol activation "nxbox://play?title=<ID>" comes from a per-game launcher tile (see
+// docs/nxbox-ui.md). The title ID goes to the game session, which boots that game directly.
+void OnActivated(CoreApplicationView const&,
+                 Windows::ApplicationModel::Activation::IActivatedEventArgs const& args) {
+    try {
+        if (args.Kind() == Windows::ApplicationModel::Activation::ActivationKind::Protocol) {
+            const auto protocol =
+                args.as<Windows::ApplicationModel::Activation::ProtocolActivatedEventArgs>();
+            const std::string uri = winrt::to_string(protocol.Uri().AbsoluteUri());
+            const std::string title = EdenXbox::ParsePlayTitleUri(uri);
+            WriteDiag("protocol activation: " + uri);
+            if (!title.empty()) {
+                EdenXbox::SetProtocolPlayTitle(title);
+            }
+        }
+    } catch (winrt::hresult_error const& e) {
+        WriteDiag("protocol activation failed: " + winrt::to_string(e.message()));
+    }
+    g_activation_seen.store(true);
+}
+
 struct BootView : implements<BootView, IFrameworkViewSource, IFrameworkView> {
     IFrameworkView CreateView() {
         return *this;
     }
-    void Initialize(CoreApplicationView const&) {}
+    void Initialize(CoreApplicationView const& view) {
+        view.Activated([](CoreApplicationView const& sender,
+                          Windows::ApplicationModel::Activation::IActivatedEventArgs const& args) {
+            OnActivated(sender, args);
+        });
+    }
     void SetWindow(CoreWindow const&) {}
     void Load(hstring const&) {}
     void Uninitialize() {}
@@ -191,6 +223,19 @@ struct BootView : implements<BootView, IFrameworkViewSource, IFrameworkView> {
         // activated, responsive app.
         CoreWindow window = CoreWindow::GetForCurrentThread();
         window.Activate();
+
+        // The activation event is queued on this dispatcher; deliver it now (bounded) so a
+        // protocol launch is known before the library would be shown.
+        {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (!g_activation_seen.load() && std::chrono::steady_clock::now() < deadline) {
+                window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+                ::Sleep(10);
+            }
+            if (!g_activation_seen.load()) {
+                WriteDiag("no activation event within 2 s, booting as a normal launch");
+            }
+        }
 
         const auto install_path =
             Windows::ApplicationModel::Package::Current().InstalledLocation().Path();

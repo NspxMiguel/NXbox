@@ -22,6 +22,15 @@
       <uap:VisualElements DisplayName="NXbox" Description="NXbox"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
+      <Extensions>
+        <!-- nxbox://play?title=<16 hex digits> boots that library game; the per-game dashboard
+             tiles (tools/nxbox/package_launcher.py) open it. -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="nxbox">
+            <uap:DisplayName>NXbox</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+      </Extensions>
     </Application>
   </Applications>
   <Capabilities>

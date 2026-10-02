@@ -1,0 +1,82 @@
+name: Package NXbox game tile
+# Builds a per-game dashboard tile ("Install as game", docs/nxbox-ui.md): a tiny launcher app with
+# the game's name and art that opens NXbox straight into that game. The .appx is signed with the
+# same NXbox certificate as the main package.
+on:
+  workflow_dispatch:
+    inputs:
+      title_id:
+        description: Title ID of the game (16 hex digits, as shown in the NXbox library)
+        required: true
+        type: string
+      name:
+        description: Name shown on the tile
+        required: true
+        type: string
+      icon_url:
+        description: Square art URL (optional; default is the eShop art index)
+        required: false
+        type: string
+      banner_url:
+        description: Wide art URL (optional; default is the eShop art index)
+        required: false
+        type: string
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate inputs
+        env:
+          TITLE_ID: ${{ inputs.title_id }}
+        shell: pwsh
+        run: |
+          if ($env:TITLE_ID -notmatch '^[0-9A-Fa-f]{16}$') { throw 'Title ID must be 16 hex digits' }
+      - name: Install Pillow
+        run: python -m pip install pillow
+      - name: Test launcher packaging
+        run: python -m unittest discover -s tests/port -p test_package_launcher.py -v
+      - name: Build the launcher
+        shell: cmd
+        run: |
+          set "PATH=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer;%PATH%"
+          for /f "usebackq delims=" %%i in (`vswhere -latest -products * -property installationPath`) do set "NXBOX_VSROOT=%%i"
+          if not defined NXBOX_VSROOT exit /b 1
+          call "%NXBOX_VSROOT%\VC\Auxiliary\Build\vcvarsall.bat" x64 uwp
+          if errorlevel 1 exit /b 1
+          set "PATH=%NXBOX_VSROOT%\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja;%PATH%"
+          cmake -S src/nxbox_launcher -B build-launcher -G Ninja -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 -DCMAKE_BUILD_TYPE=Release
+          if errorlevel 1 exit /b 1
+          cmake --build build-launcher
+          if errorlevel 1 exit /b 1
+      - name: Package and sign the tile
+        env:
+          NXBOX_PFX_BASE64: ${{ secrets.NXBOX_PFX_BASE64 }}
+          NXBOX_PFX_PASSWORD: ${{ secrets.NXBOX_PFX_PASSWORD }}
+          TITLE_ID: ${{ inputs.title_id }}
+          TILE_NAME: ${{ inputs.name }}
+          ICON_URL: ${{ inputs.icon_url }}
+          BANNER_URL: ${{ inputs.banner_url }}
+        shell: pwsh
+        run: |
+          $arguments = @(
+            'tools/nxbox/package_launcher.py',
+            '--exe', 'build-launcher/nxbox-launcher.exe',
+            '--title-id', $env:TITLE_ID,
+            '--name', $env:TILE_NAME,
+            '--version', "1.0.$env:GITHUB_RUN_NUMBER.0",
+            '--output', 'out'
+          )
+          if ($env:ICON_URL) { $arguments += @('--icon-url', $env:ICON_URL) }
+          if ($env:BANNER_URL) { $arguments += @('--banner-url', $env:BANNER_URL) }
+          python @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'Game tile packaging failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nxbox-game-tile-${{ inputs.title_id }}
+          retention-days: 14
+          if-no-files-found: error
+          path: out/*.appx

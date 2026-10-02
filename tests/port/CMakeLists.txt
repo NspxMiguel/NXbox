@@ -26,3 +26,8 @@ add_executable(update-version-tests update_version.cpp)
 target_compile_features(update-version-tests PRIVATE cxx_std_20)
 target_include_directories(update-version-tests PRIVATE ../../src)
 add_test(NAME update-version-policy COMMAND update-version-tests)
+
+add_executable(protocol-uri-tests protocol_uri.cpp)
+target_compile_features(protocol-uri-tests PRIVATE cxx_std_20)
+target_include_directories(protocol-uri-tests PRIVATE ../../src)
+add_test(NAME protocol-uri-parse COMMAND protocol-uri-tests)
