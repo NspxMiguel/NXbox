@@ -720,3 +720,16 @@ No Xbox run or complete UWP compilation was performed for this change on the mac
     player 1 now stays connected.
   - *Mario Kart 8 Deluxe* has no room to convert: about 10 GB of NSP for the base game and
     update, with the internal storage and the removable drive both full.
+- **Breath of the Wild, deeper (02/10/2026).**
+  - On 1.0 the D3D12 device is removed about 80 s in, with reason `DXGI_ERROR_INVALID_CALL`
+    (`0x887A0001`). Every later root signature creation fails with
+    `DXGI_ERROR_DEVICE_REMOVED`, hence the null root signature and the rejected PSOs. The
+    patches now log `D3D12_ROOTSIG`, `D3D12_REMOVED` and the rejected PSO fields. Finding the
+    invalid call needs the D3D12 debug layer.
+  - Updates and DLC are now read from the game folders (Eden's external content directories),
+    and the 1.6 update applies. With it (and also with DLC disabled through
+    `NXBOX_DISABLE_DLC`), the guest starts reading and writing unmapped memory around
+    0x21C6xxxxxx at 16 s and stops. The next step is comparing with desktop Eden on the same
+    files.
+  - Super Mario 3D World + Bowser's Fury ran over 5 minutes at a steady 60 FPS with no driver
+    failures.
