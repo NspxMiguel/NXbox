@@ -305,8 +305,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     // Inline builds report a running count with no total; the final call
                     // reports the total with a count of zero.
                     if (stage == VideoCore::LoadCallbackStage::Build && value % 32 == 0) {
-                        Diagnostic(total == 0 ? fmt::format("SHADER_CACHE built {}", value)
-                                              : fmt::format("SHADER_CACHE total {}", total));
+                        // The commit shows whether a hang while loading is memory pressure.
+                        const auto commit =
+                            winrt::Windows::System::MemoryManager::AppMemoryUsage() >> 20;
+                        Diagnostic(total == 0
+                                       ? fmt::format("SHADER_CACHE built {} commit={} MiB", value,
+                                                     commit)
+                                       : fmt::format("SHADER_CACHE total {}", total));
                     }
                 });
             render_context.DoneCurrent();
