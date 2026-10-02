@@ -67,6 +67,7 @@ def patch(root: Path) -> None:
     patch_format_cast_report(root)
     patch_draw(root)
     patch_null_pso(root)
+    patch_root_signature_report(root)
     patch_batch(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
@@ -103,6 +104,64 @@ def patch_null_pso(root: Path) -> None:
         if source.count(old) != 1:
             raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the null PSO patch")
     path.write_text(source.replace(gfx_old, gfx_new).replace(compute_old, compute_new))
+
+
+def patch_root_signature_report(root: Path) -> None:
+    # A null root signature made Breath of the Wild's pipeline states fail (E_INVALIDARG, rs=0
+    # in the rejected description). Its creation only reaches debug_printf; publish the
+    # serializer's own error text, or the CreateRootSignature HRESULT, and the parameter count.
+    path = root / "src/gallium/drivers/d3d12/d3d12_root_signature.cpp"
+    source = path.read_text()
+    helper = (
+        "#include <stdio.h>\n#include <string.h>\n\n"
+        "static void\n"
+        "nxbox_report_root_signature(const char *what, HRESULT hr, ID3DBlob *error, unsigned params)\n"
+        "{\n"
+        "   char text[400];\n"
+        "   int n = snprintf(text, sizeof(text), \"rootsig %s hr=0x%08lx params=%u \", what,\n"
+        "                    (unsigned long)hr, params);\n"
+        "   if (error && n > 0 && n < (int)sizeof(text)) {\n"
+        "      size_t room = sizeof(text) - (size_t)n - 1;\n"
+        "      size_t size = error->GetBufferSize();\n"
+        "      memcpy(text + n, error->GetBufferPointer(), size < room ? size : room);\n"
+        "      text[n + (size < room ? size : room)] = 0;\n"
+        "   }\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", text);\n"
+        "}\n\n"
+    )
+    anchor = "static ID3D12RootSignature *\ncreate_root_signature(struct d3d12_context *ctx, struct d3d12_root_signature_key *key)\n"
+    ser_old = (
+        "      if (FAILED(ctx->D3D12SerializeVersionedRootSignature(&root_sig_desc,\n"
+        "                                                           &sig, &error))) {\n"
+        "         debug_printf(\"D3D12SerializeRootSignature failed\\n\");\n"
+        "         return NULL;\n"
+        "      }\n"
+    )
+    ser_new = (
+        "      HRESULT nxbox_hr = ctx->D3D12SerializeVersionedRootSignature(&root_sig_desc,\n"
+        "                                                                   &sig, &error);\n"
+        "      if (FAILED(nxbox_hr)) {\n"
+        "         nxbox_report_root_signature(\"serialize\", nxbox_hr, error.Get(), num_params);\n"
+        "         return NULL;\n"
+        "      }\n"
+    )
+    create_old = (
+        "                                               IID_PPV_ARGS(&ret)))) {\n"
+        "      debug_printf(\"CreateRootSignature failed\\n\");\n"
+        "      return NULL;\n"
+        "   }\n"
+    )
+    create_new = (
+        "                                               IID_PPV_ARGS(&ret)))) {\n"
+        "      nxbox_report_root_signature(\"create\", E_FAIL, NULL, num_params);\n"
+        "      return NULL;\n"
+        "   }\n"
+    )
+    for old in (anchor, ser_old, create_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_root_signature.cpp does not match the report patch")
+    source = source.replace(anchor, helper + anchor).replace(ser_old, ser_new)
+    path.write_text(source.replace(create_old, create_new))
 
 
 def patch_query(root: Path) -> None:
