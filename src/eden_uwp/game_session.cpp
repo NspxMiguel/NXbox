@@ -368,6 +368,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         for (const auto& dir : dirs) {
             Diagnostic("CONTENT_DIR " + dir);
         }
+        // NXBOX_DISABLE_DLC=<title id in hex> (LocalState\nxbox_env.txt) runs a game without its
+        // DLC, to tell a DLC problem from an update problem.
+        if (const char* no_dlc = std::getenv("NXBOX_DISABLE_DLC"); no_dlc != nullptr) {
+            const u64 title = std::strtoull(no_dlc, nullptr, 16);
+            Settings::values.disabled_addons[title].push_back("DLC");
+            Diagnostic(fmt::format("CONTENT_DLC_DISABLED {:016X}", title));
+        }
     }
     system.GetFileSystemController().CreateFactories(*system.GetFilesystem());
     system.GetUserChannel().clear();
