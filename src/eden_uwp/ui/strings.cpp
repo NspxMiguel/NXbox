@@ -116,8 +116,8 @@ constexpr Entry kTable[] = {
     {L"Os saves sincronizam ao abrir e fechar um jogo. Pressione A para sair da conta.", L"Saves sync when a game opens and closes. Press A to sign out."}, // SyncRowOnHint
     {L"Falta o arquivo savesync.json na pasta do app.", L"The savesync.json file is missing from the app folder."}, // SyncRowMissingHint
     {L"Fontes", L"Sources"}, // SourcesRowTitle
-    {L"em breve", L"coming soon"}, // SourcesRowState
-    {L"Fontes de jogos, mods e arte entram aqui.", L"Sources for games, mods and art will live here."}, // SourcesRowHint
+    {L"nenhuma", L"none"}, // SourcesRowState
+    {L"Suas listas de jogos no formato Tinfoil. Pressione A para gerenciar.", L"Your own game lists in the Tinfoil format. Press A to manage them."}, // SourcesRowHint
     {L"Entrar", L"Sign in"}, // HintSignIn
     {L"Sair da conta", L"Sign out"}, // HintSignOut
     {L"Cancelar", L"Cancel"}, // HintCancel
@@ -184,6 +184,44 @@ constexpr Entry kTable[] = {
         {L"Não foi possível mover o arquivo.", L"Could not move the file."}, // UsbMoveFailed
         {L"Nada cabe no Xbox. Use Jogar do pendrive.", L"Nothing fits on the Xbox. Use Play from the drive."}, // UsbNothingFits
         {L"Importar", L"Import"}, // HintImport
+        {L"fonte", L"source"}, // SourcesUnitOne
+        {L"fontes", L"sources"}, // SourcesUnitMany
+        {L"Endereços de listas no formato da loja Tinfoil, escolhidos por você.", L"Addresses of lists in the Tinfoil shop format, chosen by you."}, // SrcSubtitle
+        {L"Adicionar fonte", L"Add a source"}, // SrcAdd
+        {L"Digite o endereço da lista com o teclado na tela.", L"Type the list address with the on-screen keyboard."}, // SrcAddHint
+        {L"Importar sources.txt do USB", L"Import sources.txt from USB"}, // SrcImportUsb
+        {L"Um endereço por linha, ou nome|endereço. Na raiz do pendrive ou em switch\\.", L"One address per line, or name|address. At the drive root or in switch\\."}, // SrcImportHint
+        {L"Nenhuma fonte ainda. Adicione o endereço de uma fonte sua.", L"No sources yet. Add the address of a source of your own."}, // SrcEmpty
+        {L"Endereço da fonte (http ou https)", L"Source address (http or https)"}, // SrcEnterUrl
+        {L"O endereço precisa começar com http:// ou https://.", L"The address must start with http:// or https://."}, // SrcInvalidUrl
+        {L"Essa fonte já está na lista.", L"That source is already in the list."}, // SrcDuplicate
+        {L"Fonte adicionada.", L"Source added."}, // SrcAdded
+        {L"importada(s)", L"imported"}, // SrcImported
+        {L"Nenhum sources.txt com endereços novos foi achado nos pendrives.", L"No sources.txt with new addresses was found on the drives."}, // SrcImportNone
+        {L"Procurando sources.txt nos pendrives…", L"Looking for sources.txt on the drives…"}, // SrcImporting
+        {L"Remover esta fonte?", L"Remove this source?"}, // SrcRemoveTitle
+        {L"O endereço sai da lista. O que já foi baixado não é apagado.", L"The address leaves the list. Anything already downloaded stays."}, // SrcRemoveBody
+        {L"Remover", L"Remove"}, // SrcRemove
+        {L"Fonte removida.", L"Source removed."}, // SrcRemoved
+        {L"Carregando a lista…", L"Loading the list…"}, // SrcLoading
+        {L"Esse formato de fonte não é suportado. A lista precisa ser um JSON da loja Tinfoil, sem criptografia.", L"This source format is not supported. The list must be an unencrypted Tinfoil shop JSON."}, // SrcUnsupported
+        {L"Não deu para abrir a fonte. Confira o endereço e a rede.", L"Could not open the source. Check the address and the network."}, // SrcUnreachable
+        {L"Essa fonte não lista nenhum arquivo.", L"This source lists no files."}, // SrcNoFiles
+        {L"Jogo", L"Game"}, // SrcTypeGame
+        {L"Atualização", L"Update"}, // SrcTypeUpdate
+        {L"DLC", L"DLC"}, // SrcTypeDlc
+        {L"itens", L"items"}, // SrcItems
+        {L"Baixando", L"Downloading"}, // SrcDownloading
+        {L"Baixado. Ele aparece na biblioteca.", L"Downloaded. It shows up in the library."}, // SrcDownloadDone
+        {L"O download falhou. Sem espaço ou sem conexão; tente de novo.", L"The download failed. No space or no connection; try again."}, // SrcDownloadFailed
+        {L"Download cancelado. O que já veio fica para continuar depois.", L"Download cancelled. What arrived is kept to resume later."}, // SrcDownloadCancelled
+        {L"Baixar", L"Download"}, // HintDownload
+        {L"Remover", L"Remove"}, // HintRemove
+        {L"Digitar", L"Type"}, // HintType
+        {L"Maiús", L"Shift"}, // KeyShift
+        {L"Apagar", L"Delete"}, // KeyBackspace
+        {L"OK", L"OK"}, // KeyOk
+        {L"Recarregar", L"Reload"}, // HintReload
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

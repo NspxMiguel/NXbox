@@ -32,6 +32,7 @@
 #include "eden_uwp/ui/mods_screen.h"
 #include "eden_uwp/ui/renderer.h"
 #include "eden_uwp/ui/savesync_ui.h"
+#include "eden_uwp/ui/sources_screen.h"
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/theme.h"
 #include "eden_uwp/ui/updater.h"
@@ -274,6 +275,7 @@ public:
         : renderer_(renderer), window_(window), input_(window), local_state_(local_state),
           banners_(local_state) {
         sync_account_ = GetSyncAccount();
+        sources_count_ = CountSources(local_state_);
         StartScan();
     }
 
@@ -674,10 +676,22 @@ private:
         StartScan();
     }
 
+    // The sources screen, on this window and this renderer. It runs its own loop and returns when
+    // the player leaves with B; a download it finished is picked up by a new scan.
+    void OpenSources() {
+        Diagnostic("UI library open sources");
+        if (RunSourcesScreen(renderer_, window_, input_, local_state_)) {
+            closed_ = true;
+            return;
+        }
+        sources_count_ = CountSources(local_state_);
+        StartScan();
+    }
+
     // A on a settings row.
     void ActivateSetting(Clock::time_point now) {
         if (settings_row_ == kSettingSources) {
-            Toast(Tr(Text::SourcesRowState), now); // Sources: Increment 3 fills it in
+            OpenSources();
             return;
         }
         switch (sync_account_) {
@@ -1216,6 +1230,9 @@ private:
                     hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSignIn)});
                 }
             }
+            if (layer_ == Layer::Rail && settings_row_ == kSettingSources) {
+                hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSelect)});
+            }
         } else if (HasGame()) {
             if (layer_ == Layer::Rail) {
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::ActionPlay)});
@@ -1256,10 +1273,16 @@ private:
         case SyncAccount::SignedOut:
             break;
         }
-        const std::array<Row, kSettingsRowCount> rows = {
-            {sync_row,
-             {Tr(Text::SourcesRowTitle), Tr(Text::SourcesRowState), Theme::kTextTertiary,
-              Tr(Text::SourcesRowHint)}}};
+        Row sources_row = {Tr(Text::SourcesRowTitle), Tr(Text::SourcesRowState),
+                           Theme::kTextTertiary, Tr(Text::SourcesRowHint)};
+        std::wstring sources_state;
+        if (sources_count_ > 0) {
+            sources_state = std::to_wstring(sources_count_) + L" " +
+                            Tr(sources_count_ == 1 ? Text::SourcesUnitOne : Text::SourcesUnitMany);
+            sources_row.state = sources_state.c_str();
+            sources_row.state_color = Theme::kSuccessText;
+        }
+        const std::array<Row, kSettingsRowCount> rows = {{sync_row, sources_row}};
         constexpr float kRowTop = 580.0f;
         constexpr float kRowHeight = 88.0f;
         constexpr float kRowPitch = 98.0f;
@@ -1336,6 +1359,7 @@ private:
     CoreWindow window_;
     Input input_;
     std::filesystem::path local_state_;
+    int sources_count_ = 0; // sources saved by the Sources screen, shown on its Settings row
     Updater updater_;
     bool update_focused_ = false;
     bool update_open_ = false;

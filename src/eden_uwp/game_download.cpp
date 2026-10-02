@@ -29,6 +29,13 @@ constexpr int MaxAttempts = 20;
 constexpr uint32_t ChunkSize = 4u << 20;
 namespace FS = Common::FS;
 
+// Thrown by Transfer when the caller asked to stop; the partial file stays on disk.
+struct DownloadCancelled {};
+
+bool IsCancelled(const std::atomic<bool>* cancel) {
+    return cancel != nullptr && cancel->load();
+}
+
 // HTTP operations also run off the UI thread, with a timeout per request/read.
 template <typename Operation>
 auto WaitForDownload(Operation operation) {
@@ -64,7 +71,9 @@ std::uint64_t RemoteSize(HttpClient& client, const Uri& uri) {
 // One connection's worth of work: appends from the current file size until the server ends the
 // stream. Returns the number of bytes written; a dropped connection throws.
 void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& destination,
-              std::uint64_t total) {
+              std::uint64_t total,
+              const std::function<void(std::uint64_t, std::uint64_t)>& progress,
+              const std::atomic<bool>* cancel) {
     std::uint64_t have = DownloadedSize(destination);
     HttpRequestMessage request{HttpMethod::Get(), uri};
     if (have != 0) {
@@ -91,7 +100,15 @@ void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& d
     Buffer buffer{ChunkSize};
     auto sample_at = std::chrono::steady_clock::now();
     std::uint64_t sample_bytes = have;
+    if (progress) {
+        progress(have, total);
+    }
     while (have < total) {
+        if (IsCancelled(cancel)) {
+            // Persist what was written so far; the next call resumes from the file size.
+            out.Commit();
+            throw DownloadCancelled{};
+        }
         const auto read = WaitForDownload(stream.ReadAsync(buffer, ChunkSize, InputStreamOptions::Partial));
         if (read.Length() == 0) {
             throw std::runtime_error("connection closed early");
@@ -103,6 +120,9 @@ void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& d
             throw std::runtime_error("write failed (disk full?)");
         }
         have += read.Length();
+        if (progress) {
+            progress(have, total);
+        }
         const auto now = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration<double>(now - sample_at).count();
         if (elapsed >= 5.0) {
@@ -119,10 +139,16 @@ void Transfer(HttpClient& client, const Uri& uri, const std::filesystem::path& d
 } // namespace
 
 bool DownloadFile(const std::string& url, std::filesystem::path& destination,
-                  const std::function<void(const std::filesystem::path&)>& remember_target) {
+                  const std::function<void(const std::filesystem::path&)>& remember_target,
+                  const std::function<void(std::uint64_t, std::uint64_t)>& progress,
+                  const std::atomic<bool>* cancel) {
     HttpClient client;
     const Uri uri{winrt::to_hstring(url)};
     for (int attempt = 1; attempt <= MaxAttempts; ++attempt) {
+        if (IsCancelled(cancel)) {
+            Diagnostic("DOWNLOAD_CANCELLED");
+            return false;
+        }
         try {
             if (!FS::CreateDirs(destination.parent_path())) {
                 throw std::runtime_error("cannot create the download folder");
@@ -170,21 +196,29 @@ bool DownloadFile(const std::string& url, std::filesystem::path& destination,
                                    FS::PathToUTF8String(destination), free.value_or(0) >> 20));
             if (have == total) {
                 Diagnostic(fmt::format("DOWNLOAD_COMPLETE {} MiB", total >> 20));
+                if (progress) {
+                    progress(total, total);
+                }
                 return true;
             }
             Diagnostic(fmt::format("DOWNLOAD_START attempt={} have={} MiB total={} MiB free={} MiB",
                                    attempt, have >> 20, total >> 20, *free >> 20));
-            Transfer(client, uri, destination, total);
+            Transfer(client, uri, destination, total, progress, cancel);
             if (DownloadedSize(destination) == total) {
                 Diagnostic(fmt::format("DOWNLOAD_COMPLETE {} MiB", total >> 20));
                 return true;
             }
+        } catch (const DownloadCancelled&) {
+            Diagnostic("DOWNLOAD_CANCELLED");
+            return false;
         } catch (const winrt::hresult_error& error) {
             Diagnostic("DOWNLOAD_RETRY " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {
             Diagnostic(std::string("DOWNLOAD_RETRY ") + error.what());
         }
-        std::this_thread::sleep_for(std::chrono::seconds(2));
+        for (int tick = 0; tick < 20 && !IsCancelled(cancel); ++tick) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
     }
     Diagnostic("DOWNLOAD_FAILED");
     return false;

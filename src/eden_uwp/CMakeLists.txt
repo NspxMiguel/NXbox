@@ -40,10 +40,14 @@ add_executable(eden-uwp WIN32
     ui/mods_screen.h
     ui/renderer.cpp
     ui/renderer.h
+    ui/sources_screen.cpp
+    ui/sources_screen.h
     ui/savesync_ui.cpp
     ui/savesync_ui.h
     ui/strings.cpp
     ui/strings.h
+    ui/text_entry.cpp
+    ui/text_entry.h
     ui/updater.cpp
     ui/updater.h
     ui/update_version.h
