@@ -7,6 +7,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cctype>
+#include <vector>
+#include <functional>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -28,6 +31,7 @@
 #include "common/settings.h"
 #include "core/core.h"
 #include "core/cpu_manager.h"
+#include "core/file_sys/nsz.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/hle/kernel/k_process.h"
@@ -38,6 +42,7 @@
 #include "core/perf_stats.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/game_download.h"
+#include "eden_uwp/http_vfs_file.h"
 #include "eden_uwp/gamepad.h"
 #include "eden_uwp/mesa_window.h"
 #include "eden_uwp/setup_ui.h"
@@ -73,6 +78,85 @@ struct Lifecycle {
 // (resuming a partial download), unless the game was just chosen from the library: game.url then
 // belongs to whatever game.txt named before, and downloading it over the chosen file would replace
 // the player's game. Without game.txt the bundled homebrew boots.
+// Converts a remote .nsz straight into an .nsp, reading the source over HTTP: the console's
+// storage cannot hold a large game's .nsz and its .nsp at once (Breath of the Wild: 9.6 + 13.5
+// GB). The .nsp goes where it fits, LocalState first, then a removable drive's NXbox\games.
+// On success `target` names the .nsp; an .nsp already converted in either place is reused.
+bool StreamNszToNsp(const std::string& url, std::filesystem::path& target,
+                    const std::function<void(const std::filesystem::path&)>& remember_target) {
+    namespace fs = std::filesystem;
+    fs::path name = target.filename();
+    name.replace_extension(L".nsp");
+    std::vector<fs::path> places{target.parent_path()};
+    for (const fs::path& folder : ExternalGameFolders()) {
+        places.push_back(folder);
+    }
+    for (const fs::path& place : places) {
+        if (Common::FS::IsFile(place / name) && Common::FS::GetSize(place / name) > 0) {
+            target = place / name;
+            remember_target(target);
+            Diagnostic("NSZ_STREAM_COMPLETE already converted " + target.string());
+            return true;
+        }
+    }
+    const FileSys::VirtualFile source = OpenHttpFile(url);
+    if (!source) {
+        return false;
+    }
+    // An .nsp runs about 1.4 times its .nsz for the games measured; 1.5 leaves a margin. A
+    // conversion that still runs out of space fails cleanly and removes its partial file.
+    const std::uint64_t needed = static_cast<std::uint64_t>(source->GetSize()) * 3 / 2;
+    std::optional<fs::path> folder;
+    for (std::size_t i = 0; i < places.size() && !folder; ++i) {
+        std::error_code ec;
+        const auto space = fs::space(places[i], ec);
+        const auto free = ec ? StorageFreeSpace(places[i])
+                             : std::optional<std::uint64_t>{space.available};
+        if (free && *free >= needed) {
+            folder = places[i];
+        }
+    }
+    if (!folder) {
+        Diagnostic(fmt::format("NSZ_STREAM_NO_SPACE need={} MiB", needed >> 20));
+        return false;
+    }
+    const fs::path out = *folder / name;
+    fs::path partial = out;
+    partial += L".partial";
+    remember_target(out);
+    Diagnostic("NSZ_STREAM_TARGET " + out.string());
+    FileSys::RealVfsFilesystem vfs;
+    FileSys::VirtualFile output =
+        vfs.CreateFile(Common::FS::PathToUTF8String(partial), FileSys::OpenMode::ReadWrite);
+    if (!output) {
+        Diagnostic("NSZ_STREAM_FAILED cannot create " + partial.string());
+        return false;
+    }
+    auto sample_at = std::chrono::steady_clock::now();
+    u64 sample_bytes = 0;
+    const auto progress = [&](u64 done, u64 total) {
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - sample_at).count();
+        if (elapsed >= 5.0) {
+            Diagnostic(fmt::format("NSZ_STREAM {}/{} MiB {:.1f} MiB/s", done >> 20, total >> 20,
+                                   static_cast<double>(done - sample_bytes) / (1 << 20) / elapsed));
+            sample_at = now;
+            sample_bytes = done;
+        }
+    };
+    std::string error;
+    const bool converted = FileSys::ConvertNszToNsp(source, output, progress, &error);
+    output.reset();
+    if (!converted || !Common::FS::RenameFile(partial, out)) {
+        void(Common::FS::RemoveFile(partial));
+        Diagnostic("NSZ_STREAM_FAILED " + (error.empty() ? std::string("rename") : error));
+        return false;
+    }
+    target = out;
+    Diagnostic(fmt::format("NSZ_STREAM_COMPLETE {} MiB", Common::FS::GetSize(out) >> 20));
+    return true;
+}
+
 std::string ResolveGamePath(const std::string& bundled, bool chosen_in_library) {
     namespace fs = std::filesystem;
     const fs::path local(
@@ -109,6 +193,18 @@ std::string ResolveGamePath(const std::string& bundled, bool chosen_in_library) 
     const std::string url = !chosen_in_library && fs::exists(local / "game.url")
                                 ? read_line(local / "game.url")
                                 : std::string{};
+    const auto is_nsz = [](std::string text) {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text.size() > 4 && text.ends_with(".nsz");
+    };
+    if (!url.empty() && is_nsz(url) && is_nsz(target.string())) {
+        if (StreamNszToNsp(url, target, remember_target)) {
+            Diagnostic("GAME_TARGET " + target.string());
+            return Common::FS::PathToUTF8String(target);
+        }
+        Diagnostic("NSZ_STREAM_UNAVAILABLE falling back to downloading the .nsz");
+    }
     if (!url.empty() && !DownloadFile(url, target, remember_target)) {
         // The download source can go away (the LAN host was reinstalled); a copy that is
         // already on the console is still usable.

@@ -19,6 +19,8 @@ add_executable(eden-uwp WIN32
     save_sync.cpp
     save_sync.h
     game_download.h
+    http_vfs_file.cpp
+    http_vfs_file.h
     gamepad.h
     usb_library.cpp
     usb_library.h
