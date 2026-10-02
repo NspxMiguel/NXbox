@@ -707,3 +707,16 @@ No Xbox run or complete UWP compilation was performed for this change on the mac
   remote `.nsz` named by `game.url` is converted straight into an `.nsp` over HTTP range
   requests (`NSZ_STREAM ...`), because a 9.6 GB NSZ and its 13.5 GB NSP did not fit side by
   side; a partial `.nsz` of the same game counts as reclaimable space.
+- **Game boot tests (02/10/2026, 0.3.197-0.3.199).**
+  - *Super Mario 3D World + Bowser's Fury* boots to its title screen at a steady 60 FPS.
+  - *Breath of the Wild* boots from the removable drive and runs at up to 30 FPS for about
+    80 s, then `CreatePipelineState` starts failing with `E_INVALIDARG` (68 created, 80
+    failed). Before the null-PSO patch the driver AddRef()ed the null PSO and crashed;
+    now the process lives but presents no more frames. The reason for the rejection needs the
+    D3D12 debug layer, which the console does not have, so the next step is reproducing it
+    with the same Mesa DLLs in a desktop process.
+  - Both games had looped on the controller-support applet (43 launches, leaking events until
+    `CreateEvent` hit the resource limit) while player 1 was disconnected without an Xbox pad;
+    player 1 now stays connected.
+  - *Mario Kart 8 Deluxe* has no room to convert: about 10 GB of NSP for the base game and
+    update, with the internal storage and the removable drive both full.
