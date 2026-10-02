@@ -47,9 +47,7 @@ auto WaitForDownload(Operation operation) {
 }
 
 std::optional<std::uint64_t> AvailableSpace(const std::filesystem::path& folder) {
-    std::error_code ec;
-    const auto space = std::filesystem::space(folder, ec);
-    return ec ? StorageFreeSpace(folder) : std::optional<std::uint64_t>{space.available};
+    return FreeSpace(folder);
 }
 
 std::uint64_t DownloadedSize(const std::filesystem::path& file) {
@@ -170,7 +168,7 @@ bool DownloadFile(const std::string& url, std::filesystem::path& destination,
                         continue;
                     }
                     const auto candidate_size = DownloadedSize(candidate);
-                    const auto candidate_free = StorageFreeSpace(folder);
+                    const auto candidate_free = FreeSpace(folder);
                     // A partial download on another drive is resumed there. Do not copy the
                     // internal partial file: restarting externally needs the full remaining size.
                     if (candidate_size <= total && candidate_free &&

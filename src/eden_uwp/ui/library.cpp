@@ -462,12 +462,7 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
         // room, and when no place has room the conversion is not attempted at all: a doomed
         // attempt ran for minutes on every library open and failed with "disk full" each time.
         const std::uint64_t needed = Common::FS::GetSize(nsz) * 3 / 2;
-        const auto free_in = [](const fs::path& folder) -> std::optional<std::uint64_t> {
-            std::error_code space_error;
-            const auto space = fs::space(folder, space_error);
-            return space_error ? StorageFreeSpace(folder)
-                               : std::optional<std::uint64_t>{space.available};
-        };
+        const auto free_in = [](const fs::path& folder) { return FreeSpace(folder); };
         const auto free_here = free_in(nsz.parent_path());
         if (!free_here || *free_here < needed) {
             bool placed = false;
@@ -487,6 +482,22 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
                                        free_here.value_or(0) >> 20));
                 continue;
             }
+        }
+        // A conversion that ran out of space is not retried until the target has gained room:
+        // the free-space figures overstate what the console lets an app write.
+        const fs::path marker = local_state_ / "library" / (nsz.stem().wstring() + L".nospace");
+        std::uint64_t free_at_failure = 0;
+        if (std::ifstream in{marker}; in >> free_at_failure) {
+            const auto free_now = free_in(nsp.parent_path()).value_or(0);
+            if (free_now < free_at_failure + (1ull << 30)) {
+                Diagnostic(fmt::format("UI nsz convert {} skip: ran out of space before with {} "
+                                       "MiB free, {} MiB now",
+                                       Utf8(nsz.filename().wstring()), free_at_failure >> 20,
+                                       free_now >> 20));
+                continue;
+            }
+            std::error_code ec;
+            fs::remove(marker, ec);
         }
         pending.emplace_back(nsz, nsp);
     }
@@ -519,6 +530,10 @@ void LibraryScan::ConvertCompressed(const std::vector<fs::path>& compressed,
             cancel_);
         if (!failure.empty()) {
             Diagnostic("UI nsz convert " + file_name + " fail " + failure);
+            if (failure.find("disk full") != std::string::npos) {
+                std::ofstream(local_state_ / "library" / (nsz.stem().wstring() + L".nospace"))
+                    << FreeSpace(nsp.parent_path()).value_or(0) << '\n';
+            }
             continue;
         }
         Diagnostic("UI nsz convert " + file_name + " ok");

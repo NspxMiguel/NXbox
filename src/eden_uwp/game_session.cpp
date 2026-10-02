@@ -110,9 +110,7 @@ bool StreamNszToNsp(const std::string& url, std::filesystem::path& target,
     // counts as free (it held 3.9 GB of the 16.6 GB the removable drive had for BotW).
     std::optional<fs::path> folder;
     for (std::size_t i = 0; i < places.size() && !folder; ++i) {
-        std::error_code ec;
-        const auto space = fs::space(places[i], ec);
-        auto free = ec ? StorageFreeSpace(places[i]) : std::optional<std::uint64_t>{space.available};
+        const auto free = FreeSpace(places[i]);
         const fs::path stale = places[i] / target.filename();
         const std::uint64_t stale_size =
             Common::FS::IsFile(stale) ? Common::FS::GetSize(stale) : 0;

@@ -13,6 +13,10 @@ namespace EdenXbox {
 std::vector<std::filesystem::path> ListExternalGames();
 std::vector<std::filesystem::path> ExternalGameFolders();
 std::optional<std::uint64_t> StorageFreeSpace(const std::filesystem::path& folder);
+// Free bytes for writing into `folder`: the smaller of std::filesystem::space and the
+// StorageFolder System.FreeSpace property. On the console the first overstated the internal
+// storage (a 7.3 GB conversion passed the check and failed after 4.2 GB). Logs both values.
+std::optional<std::uint64_t> FreeSpace(const std::filesystem::path& folder);
 
 struct UsbLibraryScan {
     bool drive_found = false;

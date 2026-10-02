@@ -12,6 +12,8 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.FileProperties.h>
 
+#include <fmt/format.h>
+
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/await_bounded.h"
 
@@ -158,6 +160,25 @@ std::optional<std::uint64_t> StorageFreeSpace(const std::filesystem::path& path)
         }
     } catch (const winrt::hresult_error& error) {
         Diagnostic("USB_SPACE_FAILED " + winrt::to_string(error.message()));
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint64_t> FreeSpace(const std::filesystem::path& folder) {
+    std::error_code ec;
+    const auto space = std::filesystem::space(folder, ec);
+    const auto storage = StorageFreeSpace(folder);
+    Diagnostic(fmt::format("SPACE {} fs={} storage={} MiB", winrt::to_string(folder.native()),
+                           ec ? -1 : static_cast<long long>(space.available >> 20),
+                           storage ? static_cast<long long>(*storage >> 20) : -1));
+    if (!ec && storage) {
+        return std::min<std::uint64_t>(space.available, *storage);
+    }
+    if (storage) {
+        return storage;
+    }
+    if (!ec) {
+        return space.available;
     }
     return std::nullopt;
 }
