@@ -93,9 +93,15 @@ You need an Xbox Series X|S in **Developer Mode** and your own dumps:
    [package workflow](https://github.com/NspxMiguel/NXbox/actions/workflows/package-nxbox.yml)
    through the Device Portal.
 2. Put `prod.keys` and `title.keys` in the app's `LocalState\eden\keys`.
-3. Put your game in `LocalState\games` (`.nsp`; convert `.nsz` with `nsz -D`), and its relative path
-   in `LocalState\game.txt`, for example `games\mygame.nsp`.
-4. Launch NXbox from the dashboard.
+3. Put your games (`.nsp`, `.nsz` or `.xci`) in `LocalState\games`, or on a USB drive in
+   `NXbox\games` (the console's internal developer storage is small, a few GB). `.nsz` files are
+   converted on the console the first time the library sees them.
+4. Launch NXbox from the dashboard and pick the game in the library.
+
+Two newer ways to get games in are built but not yet tested on the console: **Add games** imports
+games and keys from a USB drive (copy to the console, or move into `NXbox\games` to play from the
+drive), and **Settings → Sources** browses and downloads from Tinfoil-format sources you add
+yourself (none are included).
 
 Details and the diagnostic switches are in the [port notes](docs/nxbox-port.md#booting-a-game-from-localstate-2026-09-25).
 NXbox does not bundle games, firmware or decryption keys, and never will.
