@@ -505,6 +505,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     last_pso = pso;
                     Diagnostic(std::string("D3D12_PSO ") + pso);
                 }
+                static std::string last_fail;
+                char fail[320] = "";
+                if (GetEnvironmentVariableA("NXBOX_D3D12_PSO_FAIL", fail, sizeof(fail)) != 0 &&
+                    last_fail != fail) {
+                    last_fail = fail;
+                    Diagnostic(std::string("D3D12_PSO_FAIL ") + fail);
+                }
             }
             // Host work in the window, as total/longest milliseconds and call count, so each
             // hitch can be traced to shader builds, texture uploads, decoding or cache eviction.

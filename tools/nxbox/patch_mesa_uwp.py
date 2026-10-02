@@ -208,6 +208,24 @@ def patch_pso(root: Path) -> None:
         "      SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", text);\n"
         "   }\n"
         "}\n\n"
+        "/* The fields of a rejected graphics PSO, so a pattern shows without the debug layer. */\n"
+        "static void\n"
+        "nxbox_report_pso_desc(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &d)\n"
+        "{\n"
+        "   char text[320];\n"
+        "   snprintf(text, sizeof(text),\n"
+        "            \"rt=%u fmt=%d,%d,%d,%d dsv=%d samples=%u/%u topo=%d vs=%zu hs=%zu ds=%zu gs=%zu \"\n"
+        "            \"ps=%zu inputs=%u so=%u/%u rs=%p depth=%d stencil=%d forced=%u blend_ind=%d\",\n"
+        "            d.NumRenderTargets, d.RTVFormats[0], d.RTVFormats[1], d.RTVFormats[2],\n"
+        "            d.RTVFormats[3], d.DSVFormat, d.SampleDesc.Count, d.SampleDesc.Quality,\n"
+        "            d.PrimitiveTopologyType, d.VS.BytecodeLength, d.HS.BytecodeLength,\n"
+        "            d.DS.BytecodeLength, d.GS.BytecodeLength, d.PS.BytecodeLength,\n"
+        "            d.InputLayout.NumElements, d.StreamOutput.NumEntries,\n"
+        "            d.StreamOutput.NumStrides, (void *)d.pRootSignature,\n"
+        "            d.DepthStencilState.DepthEnable, d.DepthStencilState.StencilEnable,\n"
+        "            d.RasterizerState.ForcedSampleCount, d.BlendState.IndependentBlendEnable);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO_FAIL\", text);\n"
+        "}\n\n"
     )
     stream_old = (
         "      if (FAILED(screen->dev->CreatePipelineState(&pso_stream_desc,\n"
@@ -220,8 +238,10 @@ def patch_pso(root: Path) -> None:
         "      HRESULT nxbox_hr = screen->dev->CreatePipelineState(&pso_stream_desc,\n"
         "                                                          IID_PPV_ARGS(&ret));\n"
         "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
-        "      if (FAILED(nxbox_hr))\n"
+        "      if (FAILED(nxbox_hr)) {\n"
+        "         nxbox_report_pso_desc(pso_desc.GraphicsDescV0());\n"
         "         return NULL;\n"
+        "      }\n"
     )
     v0_old = (
         "      if (FAILED(screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
@@ -234,8 +254,10 @@ def patch_pso(root: Path) -> None:
         "      HRESULT nxbox_hr = screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
         "                                                               IID_PPV_ARGS(&ret));\n"
         "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
-        "      if (FAILED(nxbox_hr))\n"
+        "      if (FAILED(nxbox_hr)) {\n"
+        "         nxbox_report_pso_desc(pso_desc.GraphicsDescV0());\n"
         "         return NULL;\n"
+        "      }\n"
     )
     for old in (anchor, stream_old, v0_old):
         if old not in source:
