@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <cctype>
 #include <vector>
 #include <functional>
@@ -21,6 +22,7 @@
 #include <thread>
 #include <winrt/Windows.ApplicationModel.Core.h>
 #include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.h>
 
 #include <fmt/format.h>
@@ -41,6 +43,8 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/perf_stats.h"
 #include "eden_uwp/diagnostic.h"
+#include "common/fs/file.h"
+#include "eden_uwp/await_bounded.h"
 #include "eden_uwp/game_download.h"
 #include "eden_uwp/http_vfs_file.h"
 #include "eden_uwp/gamepad.h"
@@ -276,6 +280,66 @@ void ApplyEdenSettingsFile() {
     }
 }
 
+// NXBOX_READ_CHECK=1: reads 64 random 1 MiB chunks of the game file through IOFile (the
+// CreateFileFromAppW path used on removable drives) and through a WinRT StorageFile stream, and
+// compares them. A mismatch would mean the emulator was fed wrong bytes from the drive, which
+// would explain guest code writing to unmapped memory.
+void CheckGameReads(const std::string& path) {
+    using namespace winrt::Windows::Storage;
+    using namespace winrt::Windows::Storage::Streams;
+    Common::FS::IOFile file(path, Common::FS::FileAccessMode::Read, Common::FS::FileType::BinaryFile);
+    if (!file.IsOpen()) {
+        Diagnostic("READ_CHECK cannot open " + path);
+        return;
+    }
+    const u64 size = file.GetSize();
+    const auto storage = AwaitBounded(
+        StorageFile::GetFileFromPathAsync(winrt::to_hstring(path)), std::chrono::seconds(10));
+    if (!storage) {
+        Diagnostic("READ_CHECK StorageFile unavailable");
+        return;
+    }
+    const auto stream = AwaitBounded(storage->OpenReadAsync(), std::chrono::seconds(10));
+    if (!stream) {
+        Diagnostic("READ_CHECK stream unavailable");
+        return;
+    }
+    constexpr u32 Chunk = 1u << 20;
+    std::vector<u8> a(Chunk);
+    u64 seed = 0x9E3779B97F4A7C15ull;
+    int mismatches = 0;
+    int compared = 0;
+    for (int i = 0; i < 64 && size > Chunk; ++i) {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        // Half the samples beyond 4 GiB when the file is that large.
+        const u64 base = (i % 2 == 1 && size > (5ull << 30)) ? (4ull << 30) : 0;
+        const u64 offset = (base + seed % (size - base - Chunk)) & ~u64{0xFFF};
+        if (!file.Seek(static_cast<s64>(offset)) || file.ReadSpan(std::span<u8>(a)) != Chunk) {
+            Diagnostic(fmt::format("READ_CHECK ioread failed at {:#x}", offset));
+            ++mismatches;
+            continue;
+        }
+        stream->Seek(offset);
+        Buffer buffer{Chunk};
+        const auto read =
+            AwaitBounded(stream->ReadAsync(buffer, Chunk, InputStreamOptions::None),
+                         std::chrono::seconds(30));
+        if (!read || read->Length() != Chunk) {
+            Diagnostic(fmt::format("READ_CHECK winrt read failed at {:#x}", offset));
+            continue;
+        }
+        ++compared;
+        if (std::memcmp(a.data(), read->data(), Chunk) != 0) {
+            ++mismatches;
+            Diagnostic(fmt::format("READ_CHECK mismatch at {:#x}", offset));
+        }
+    }
+    Diagnostic(fmt::format("READ_CHECK {} size={} compared={} mismatches={}", path, size, compared,
+                           mismatches));
+}
+
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle,
              bool chosen_in_library) {
@@ -287,6 +351,9 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     };
     memory_stage("begin");
     const std::string path = ResolveGamePath(bundled_path, chosen_in_library);
+    if (const char* check = std::getenv("NXBOX_READ_CHECK"); check != nullptr && check[0] == '1') {
+        CheckGameReads(path);
+    }
     {
         // LocalState\\log_filter.txt (for example "*:Debug") raises the Eden log verbosity for a
         // run.
