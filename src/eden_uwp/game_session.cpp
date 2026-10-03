@@ -442,10 +442,10 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             dirs.push_back(Common::FS::PathToUTF8String(local_state / "games"));
             for (const auto& folder : ExternalGameFolders()) {
                 dirs.push_back(Common::FS::PathToUTF8String(folder));
-        }
+            }
             for (const auto& dir : dirs) {
                 Diagnostic("CONTENT_DIR " + dir);
-        }
+            }
         }
         // NXBOX_DISABLE_DLC=<title id in hex> (LocalState\nxbox_env.txt) runs a game without its
         // DLC, to tell a DLC problem from an update problem.
