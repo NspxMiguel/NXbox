@@ -6,12 +6,13 @@
 
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_resource_limit.h"
 #include "core/hle/kernel/svc.h"
 
 namespace Kernel::Svc {
 
 /// Set the process heap to a given Size. It can both extend and shrink the heap.
-Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
+static Result SetHeapSizeImpl(Core::System& system, u64* out_address, u64 size) {
     LOG_TRACE(Kernel_SVC, "called, heap_size={:#x}", size);
 
     // Validate size.
@@ -29,8 +30,26 @@ Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
     R_SUCCEED();
 }
 
+Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
+    const Result result = SetHeapSizeImpl(system, out_address, size);
+#ifdef NXBOX_UWP
+    auto& process = GetCurrentProcess(system.Kernel());
+    auto* limit = process.GetResourceLimit();
+    if (result.IsError()) {
+        LOG_ERROR(Kernel_SVC,
+                  "NXBOX MEM_SVC SetHeapSize size={:#x} result={:#x} used={:#x} limit={:#x}", size,
+                  result.raw, limit->GetCurrentValue(LimitableResource::PhysicalMemoryMax),
+                  limit->GetLimitValue(LimitableResource::PhysicalMemoryMax));
+    } else {
+        LOG_INFO(Kernel_SVC, "NXBOX MEM_SVC SetHeapSize base={:#x} size={:#x} end={:#x} result=0",
+                 *out_address, size, *out_address + size);
+    }
+#endif
+    R_RETURN(result);
+}
+
 /// Maps memory at a desired address
-Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
+static Result MapPhysicalMemoryImpl(Core::System& system, u64 addr, u64 size) {
     LOG_DEBUG(Kernel_SVC, "called, addr={:#016x}, size={:#x}", addr, size);
 
     if (!Common::IsAligned(addr, Core::Memory::YUZU_PAGESIZE)) {
@@ -76,6 +95,24 @@ Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
     }
 
     R_RETURN(page_table.MapPhysicalMemory(addr, size));
+}
+
+Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
+    const Result result = MapPhysicalMemoryImpl(system, addr, size);
+#ifdef NXBOX_UWP
+    if (result.IsError()) {
+        auto& process = GetCurrentProcess(system.Kernel());
+        auto* limit = process.GetResourceLimit();
+        LOG_ERROR(Kernel_SVC,
+                  "NXBOX MEM_SVC MapPhysicalMemory addr={:#x} size={:#x} result={:#x} "
+                  "used={:#x} limit={:#x} system_resource={:#x}",
+                  addr, size, result.raw,
+                  limit->GetCurrentValue(LimitableResource::PhysicalMemoryMax),
+                  limit->GetLimitValue(LimitableResource::PhysicalMemoryMax),
+                  process.GetTotalSystemResourceSize());
+    }
+#endif
+    R_RETURN(result);
 }
 
 /// Unmaps memory previously mapped via MapPhysicalMemory

@@ -6,6 +6,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
 #include <cstring>
 #include <mutex>
 #include <span>
@@ -615,18 +616,77 @@ struct Memory::Impl {
             GetInteger(vaddr), []() {}, []() {});
     }
 
+#ifdef NXBOX_UWP
+    void LogUnmappedAccess(u64 addr) const {
+        if (unmapped_access_logged.exchange(true, std::memory_order_relaxed)) {
+            return;
+        }
+        if (!AddressSpaceContains(*current_page_table, addr, 1)) {
+            LOG_ERROR(HW_Memory, "NXBOX MEM_UNMAPPED addr={:#x} outside {}-bit address space", addr,
+                      current_page_table->GetAddressSpaceBits());
+            return;
+        }
+        const auto index = addr >> YUZU_PAGEBITS;
+        const auto visible = current_page_table->entries[index].Raw();
+        // Compare the bitmap-filtered view with the backing used directly by Dynarmic.
+        const auto backing = current_page_table->entries.GetUnchecked(index).Raw();
+        LOG_ERROR(HW_Memory, "NXBOX MEM_UNMAPPED addr={:#x} visible={:#018x} backing={:#018x}",
+                  addr, std::bit_cast<u64>(visible), std::bit_cast<u64>(backing));
+    }
+
+    void LogSplitAccess(u64 addr, size_t size, bool write) const {
+        if (split_access_logged.load(std::memory_order_relaxed)) {
+            return;
+        }
+        const auto next_page = (addr | YUZU_PAGEMASK) + 1;
+        const auto first = reinterpret_cast<uintptr_t>(GetPointerSilent(addr));
+        const auto second = reinterpret_cast<uintptr_t>(GetPointerSilent(next_page));
+        // Only report a crossing for which the old contiguous memcpy was incorrect.
+        if (first != 0 && second == first + next_page - addr) {
+            return;
+        }
+        if (!split_access_logged.exchange(true, std::memory_order_relaxed)) {
+            LOG_INFO(HW_Memory,
+                     "NXBOX MEM_SPLIT addr={:#x} size={} write={} first_mapped={} next_mapped={}",
+                     addr, size, write, first != 0, second != 0);
+        }
+    }
+#endif
+
     /// @brief Reads a particular data type out of memory at the given virtual address.
     /// @param vaddr The virtual address to read the data type from.
     /// @tparam T The data type to read out of memory.
     /// @returns The instance of T read from the specified virtual address.
     template <typename T>
-    inline T Read(Common::ProcessAddress vaddr) noexcept requires(std::is_trivially_copyable_v<T>) {
+    inline T Read(Common::ProcessAddress vaddr) noexcept
+        requires(std::is_trivially_copyable_v<T>)
+    {
         const u64 addr = GetInteger(vaddr);
-        if (auto const ptr = GetPointerImpl(addr, [addr]() {
-            LOG_ERROR(HW_Memory, "Unmapped Read{} @ {:#016x}", sizeof(T) * 8, addr);
-        }, [&]() {
-            HandleRasterizerDownload(addr, sizeof(T));
-        }); ptr) [[likely]] {
+        // Adjacent guest pages need not have adjacent physical backing. Dynarmic sends
+        // page-crossing accesses here when fastmem is unavailable.
+        if constexpr (sizeof(T) > 1) {
+            if ((addr & YUZU_PAGEMASK) > YUZU_PAGESIZE - sizeof(T)) {
+#ifdef NXBOX_UWP
+                LogSplitAccess(addr, sizeof(T), false);
+#endif
+                T result{};
+                auto* bytes = reinterpret_cast<u8*>(&result);
+                for (size_t i = 0; i < sizeof(T); ++i) {
+                    bytes[i] = Read<u8>(vaddr + i);
+                }
+                return result;
+            }
+        }
+        if (auto const ptr = GetPointerImpl(
+                addr,
+                [this, addr]() {
+#ifdef NXBOX_UWP
+                    LogUnmappedAccess(addr);
+#endif
+                    LOG_ERROR(HW_Memory, "Unmapped Read{} @ {:#016x}", sizeof(T) * 8, addr);
+                },
+                [&]() { HandleRasterizerDownload(addr, sizeof(T)); });
+            ptr) [[likely]] {
             // It may be tempting to rewrite this particular section to use "reinterpret_cast";
             // afterall, it's trivially copyable so surely it can be copied ov- Alignment.
             // Remember, alignment. memcpy() will deal with all the alignment extremely fast.
@@ -641,11 +701,33 @@ struct Memory::Impl {
     /// @param vaddr The virtual address to write the data type to.
     /// @tparam T The data type to write to memory.
     template <typename T>
-    inline void Write(Common::ProcessAddress vaddr, const T data) noexcept requires(std::is_trivially_copyable_v<T>) {
+    inline void Write(Common::ProcessAddress vaddr, const T data) noexcept
+        requires(std::is_trivially_copyable_v<T>)
+    {
         const u64 addr = GetInteger(vaddr);
-        if (auto const ptr = GetPointerImpl(addr, [addr, data]() {
-            LOG_ERROR(HW_Memory, "Unmapped Write{} @ {:#016x} = {:#016x}", sizeof(T) * 8, addr, u64(data));
-        }, [&]() { HandleRasterizerWrite(addr, sizeof(T)); }); ptr) [[likely]]
+        if constexpr (sizeof(T) > 1) {
+            if ((addr & YUZU_PAGEMASK) > YUZU_PAGESIZE - sizeof(T)) {
+#ifdef NXBOX_UWP
+                LogSplitAccess(addr, sizeof(T), true);
+#endif
+                const auto* bytes = reinterpret_cast<const u8*>(&data);
+                for (size_t i = 0; i < sizeof(T); ++i) {
+                    Write<u8>(vaddr + i, bytes[i]);
+                }
+                return;
+            }
+        }
+        if (auto const ptr = GetPointerImpl(
+                addr,
+                [this, addr, data]() {
+#ifdef NXBOX_UWP
+                    LogUnmappedAccess(addr);
+#endif
+                    LOG_ERROR(HW_Memory, "Unmapped Write{} @ {:#016x} = {:#016x}", sizeof(T) * 8,
+                              addr, u64(data));
+                },
+                [&]() { HandleRasterizerWrite(addr, sizeof(T)); });
+            ptr) [[likely]]
             std::memcpy(ptr, &data, sizeof(T));
     }
 
@@ -774,6 +856,10 @@ struct Memory::Impl {
     Common::HeapTracker* host_buffer{};
 #else
     Common::HostMemory* host_buffer{};
+#endif
+#ifdef NXBOX_UWP
+    mutable std::atomic<bool> unmapped_access_logged{false};
+    mutable std::atomic<bool> split_access_logged{false};
 #endif
     std::atomic<u16> block_count = 0;
 };
