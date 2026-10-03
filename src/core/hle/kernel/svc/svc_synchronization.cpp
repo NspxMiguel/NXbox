@@ -84,7 +84,7 @@ Result WaitSynchronization(Core::System& system, int32_t* out_index, u64 user_ha
 
     for (auto i = 0; i < num_handles; ++i) {
         LOG_DEBUG(Kernel_SVC, "WaitSynchronization thread={} handle={:#x} object={} timeout_ns={}",
-                  GetCurrentThread(kernel).GetThreadId(), handles[i],
+                  GetCurrentThread(system.Kernel()).GetThreadId(), handles[i],
                   objs[i]->GetTypeObj().GetName(), timeout_ns);
     }
 
