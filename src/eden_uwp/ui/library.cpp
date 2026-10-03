@@ -394,8 +394,8 @@ std::string ConvertNsz(FileSys::RealVfsFilesystem& vfs, const fs::path& nsz_path
 }
 } // namespace
 
-LibraryScan::LibraryScan(std::filesystem::path local_state)
-    : local_state_(std::move(local_state)) {
+LibraryScan::LibraryScan(std::filesystem::path local_state, bool convert_nsz)
+    : local_state_(std::move(local_state)), convert_nsz_(convert_nsz) {
     worker_ = std::thread([this] { Run(); });
 }
 
@@ -581,7 +581,9 @@ std::vector<GameEntry> LibraryScan::Scan() {
         }
     }
     std::sort(compressed.begin(), compressed.end());
-    ConvertCompressed(compressed, packages);
+    if (convert_nsz_) {
+        ConvertCompressed(compressed, packages);
+    }
     std::sort(packages.begin(), packages.end());
     total_.store(static_cast<int>(packages.size()));
 

@@ -47,7 +47,9 @@ public:
         std::uint64_t total = 0;  // size of the .nsp, 0 until the converter knows it
     };
 
-    explicit LibraryScan(std::filesystem::path local_state);
+    // `convert_nsz` false skips converting .nsz files: a scan that only looks a game up must not wait
+    // behind the long conversions of other games.
+    explicit LibraryScan(std::filesystem::path local_state, bool convert_nsz = true);
     ~LibraryScan(); // cancels the scan and waits for the worker
     LibraryScan(const LibraryScan&) = delete;
     LibraryScan& operator=(const LibraryScan&) = delete;
@@ -72,6 +74,7 @@ private:
                            std::vector<std::filesystem::path>& packages);
 
     std::filesystem::path local_state_;
+    bool convert_nsz_ = true;
     std::atomic<int> done_{0};
     std::atomic<int> total_{0};
     std::atomic<bool> finished_{false};

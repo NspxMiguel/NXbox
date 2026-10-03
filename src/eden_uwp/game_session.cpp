@@ -677,7 +677,7 @@ bool FindLibraryGame(const winrt::Windows::UI::Core::CoreWindow& window,
                      const std::filesystem::path& local_state, const std::string& title_id,
                      Ui::ChosenGame& choice) {
     using namespace winrt::Windows::UI::Core;
-    Ui::LibraryScan scan(local_state);
+    Ui::LibraryScan scan(local_state, /*convert_nsz=*/false);
     while (!scan.Finished()) {
         window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
         Sleep(1);
