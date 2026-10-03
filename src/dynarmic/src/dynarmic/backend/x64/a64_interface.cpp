@@ -20,7 +20,6 @@
 #include "dynarmic/backend/x64/a64_jitstate.h"
 #if __has_include("../../../../../common/nxbox_stall.h")
 #    include "../../../../../common/nxbox_stall.h"
-#    define NXBOX_STALL_PROFILE 1
 #endif
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/devirtualize.h"
@@ -30,6 +29,11 @@
 #include "dynarmic/interface/A64/a64.h"
 #include "dynarmic/ir/basic_block.h"
 #include "dynarmic/ir/opt_passes.h"
+
+#if NXBOX_STALL_PROFILE
+#    include <unordered_map>
+#    include <unordered_set>
+#endif
 
 namespace Dynarmic::A64 {
 
@@ -106,12 +110,19 @@ public:
     }
 
     void ClearCache() {
+#if NXBOX_STALL_PROFILE
+        NxboxStall::AddJit(NxboxStall::JitEvent::ClearRequests);
+#endif
         std::unique_lock lock{invalidation_mutex};
         invalidate_entire_cache = true;
         HaltExecution(HaltReason::CacheInvalidation);
     }
 
     void InvalidateCacheRange(u64 start_address, size_t length) {
+#if NXBOX_STALL_PROFILE
+        NxboxStall::AddJit(NxboxStall::JitEvent::RangeCalls);
+        NxboxStall::AddJit(NxboxStall::JitEvent::RangeBytes, length);
+#endif
         std::unique_lock lock{invalidation_mutex};
         const auto end_address = static_cast<u64>(start_address + length - 1);
         const auto range = boost::icl::discrete_interval<u64>::closed(start_address, end_address);
@@ -249,13 +260,13 @@ private:
         if (auto block = emitter.GetBasicBlock(descriptor))
             return block->entrypoint;
 
-#ifdef NXBOX_STALL_PROFILE
+#if NXBOX_STALL_PROFILE
         const NxboxStall::Scope stall_scope{NxboxStall::Kind::Jit};
 #endif
         constexpr size_t MINIMUM_REMAINING_CODESIZE = 1 * 1024 * 1024;
         if (block_of_code.SpaceRemaining() < MINIMUM_REMAINING_CODESIZE) {
             // Immediately evacuate cache
-#ifdef NXBOX_STALL_PROFILE
+#if NXBOX_STALL_PROFILE
             NxboxStall::Record(NxboxStall::Kind::JitFlush, 0);
 #endif
             invalidate_entire_cache = true;
@@ -268,9 +279,33 @@ private:
         // LocationDescriptor ctor() does important ops (like tflags) do not skip
         auto const arch_descriptor = A64::LocationDescriptor{descriptor};
         ir_block.Reset(arch_descriptor);
-        A64::Translate(ir_block, arch_descriptor, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct});
-        Optimization::Optimize(ir_block, conf, polyfill_options);
-        return emitter.Emit(ir_block).entrypoint;
+        {
+#if NXBOX_STALL_PROFILE
+            const NxboxStall::Scope scope{NxboxStall::Kind::JitTranslate};
+#endif
+            A64::Translate(ir_block, arch_descriptor, get_code, {conf.define_unpredictable_behaviour, conf.wall_clock_cntpct});
+        }
+        {
+#if NXBOX_STALL_PROFILE
+            const NxboxStall::Scope scope{NxboxStall::Kind::JitOptimize};
+#endif
+            Optimization::Optimize(ir_block, conf, polyfill_options);
+        }
+        const auto block = [&] {
+#if NXBOX_STALL_PROFILE
+            const NxboxStall::Scope scope{NxboxStall::Kind::JitEmit};
+#endif
+            return emitter.Emit(ir_block);
+        }();
+#if NXBOX_STALL_PROFILE
+        // Per-JIT history survives invalidation. A key repeated here really was compiled again;
+        // migration to another CPU and FPCR/single-step variants are not conflated with that.
+        RecordPc(arch_descriptor.PC());
+        RecordCompilation(seen_keys, descriptor.Value(), NxboxStall::JitEvent::NewKey,
+                          NxboxStall::JitEvent::RepeatKey, NxboxStall::JitEvent::UnknownKey);
+        SampleCache();
+#endif
+        return block.entrypoint;
     }
 
     void PerformRequestedCacheInvalidation(HaltReason hr) {
@@ -283,8 +318,14 @@ private:
                 return;
             }
 
+#if NXBOX_STALL_PROFILE
+            const NxboxStall::Scope scope{NxboxStall::Kind::JitInvalidate};
+#endif
             jit_state.ResetRSB();
             if (invalidate_entire_cache) {
+#if NXBOX_STALL_PROFILE
+                NxboxStall::AddJit(NxboxStall::JitEvent::CacheClears);
+#endif
                 block_of_code.ClearCache();
                 emitter.ClearCache();
             } else {
@@ -292,8 +333,50 @@ private:
             }
             invalid_cache_ranges.clear();
             invalidate_entire_cache = false;
+#if NXBOX_STALL_PROFILE
+            SampleCache();
+#endif
         }
     }
+
+#if NXBOX_STALL_PROFILE
+    void SampleCache() {
+        NxboxStall::SampleJitCache(conf.processor_id,
+                                   conf.code_cache_size - block_of_code.SpaceRemaining(), conf.code_cache_size);
+    }
+
+    static constexpr size_t HISTORY_LIMIT = 65536;
+
+    void RecordPc(u64 pc) {
+        auto it = seen_pcs.find(pc);
+        if (it != seen_pcs.end()) {
+            ++it->second;
+            NxboxStall::AddJit(NxboxStall::JitEvent::RepeatPc);
+        } else if (seen_pcs.size() < HISTORY_LIMIT) {
+            it = seen_pcs.emplace(pc, 1).first;
+            NxboxStall::AddJit(NxboxStall::JitEvent::NewPc);
+        } else {
+            NxboxStall::AddJit(NxboxStall::JitEvent::UnknownPc);
+            return;
+        }
+        NxboxStall::MaxJit(NxboxStall::JitEvent::PcCompileMax, it->second);
+    }
+
+    static void RecordCompilation(std::unordered_set<u64>& history, u64 value, NxboxStall::JitEvent first, NxboxStall::JitEvent repeat, NxboxStall::JitEvent unknown) {
+        // Bound profiling memory. Untracked values are explicitly unknown, never called new.
+        if (history.find(value) != history.end()) {
+            NxboxStall::AddJit(repeat);
+        } else if (history.size() < HISTORY_LIMIT) {
+            history.insert(value);
+            NxboxStall::AddJit(first);
+        } else {
+            NxboxStall::AddJit(unknown);
+        }
+    }
+
+    std::unordered_map<u64, u64> seen_pcs;
+    std::unordered_set<u64> seen_keys;
+#endif
 
     IR::Block ir_block = {LocationDescriptor(0, FP::FPCR(0), false)};
     const UserConfig conf;

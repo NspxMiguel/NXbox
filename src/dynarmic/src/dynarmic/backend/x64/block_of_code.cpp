@@ -8,6 +8,10 @@
 
 #include "dynarmic/backend/x64/block_of_code.h"
 
+#if __has_include("../../../../../common/nxbox_stall.h")
+#    include "../../../../../common/nxbox_stall.h"
+#endif
+
 #ifdef _WIN32
 #    define WIN32_LEAN_AND_MEAN
 #    include <windows.h>
@@ -102,6 +106,10 @@ UwpXbyakAllocator s_allocator;
 
 #ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
 void ProtectMemory(const void* base, size_t size, bool is_executable) {
+#    if NXBOX_STALL_PROFILE
+    const NxboxStall::Scope scope{NxboxStall::Kind::JitProtect};
+    NxboxStall::AddJit(NxboxStall::JitEvent::ProtectBytes, size);
+#    endif
 #    ifdef _WIN32
     DWORD oldProtect = 0;
     // The is_executable→PAGE_EXECUTE_READ transition is the call that requires the `codeGeneration`
