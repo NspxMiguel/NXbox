@@ -23,12 +23,14 @@
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "common/swap.h"
+#include "core/arm/nxbox_fault.h"
 #include "core/core.h"
 #include "core/device_memory.h"
 #include "core/gpu_dirty_memory_manager.h"
 #include "core/hardware_properties.h"
 #include "core/hle/kernel/k_page_table.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_thread.h"
 #include "core/memory.h"
 #include "video_core/gpu.h"
 #include "video_core/host1x/gpu_device_memory_manager.h"
@@ -617,10 +619,67 @@ struct Memory::Impl {
     }
 
 #ifdef NXBOX_UWP
-    void LogUnmappedAccess(u64 addr) const {
+    void LogFaultContext(u64 addr, const char* operation, size_t size) const {
+        const auto access = NxboxFault::current_access;
+        LOG_ERROR(HW_Memory, "NXBOX FAULT BEGIN addr={:#x} operation={} size={} context={}", addr,
+                  operation, size, access.arm ? "a64_callback" : "unavailable");
+        if (!access.arm) {
+            LOG_ERROR(HW_Memory, "NXBOX FAULT END reason=outside_a64_data_callback");
+            return;
+        }
+        Kernel::Svc::ThreadContext ctx{};
+        access.arm->GetContext(ctx);
+        LOG_ERROR(HW_Memory,
+                  "NXBOX FAULT CPU core={} tid={:#x} pc={:#018x} lr={:#018x} sp={:#018x} "
+                  "pstate={:#x} fpcr={:#x} fpsr={:#x} callback_addr={:#x} callback_size={} "
+                  "callback_op={}",
+                  access.core, access.thread ? access.thread->GetThreadId() : 0, ctx.pc, ctx.lr,
+                  ctx.sp, ctx.pstate, ctx.fpcr, ctx.fpsr, access.address, access.size,
+                  access.operation);
+        for (size_t i = 0; i < ctx.r.size(); ++i) {
+            LOG_ERROR(HW_Memory, "NXBOX FAULT REG x{}={:#018x}", i, ctx.r[i]);
+        }
+        LOG_ERROR(HW_Memory, "NXBOX FAULT REG x29={:#018x} x30={:#018x}", ctx.fp, ctx.lr);
+        // Silent byte reads avoid recursion and handle page boundaries independently.
+        // Each word is an AArch64 instruction; a missing byte invalidates the whole word.
+        for (s64 offset = -32; offset < 64; offset += 4) {
+            const u64 address = ctx.pc + offset;
+            u32 word{};
+            bool mapped = true;
+            for (size_t byte = 0; byte < 4; ++byte) {
+                const auto* ptr = GetPointerSilent(address + byte);
+                if (!ptr) {
+                    mapped = false;
+                    break;
+                }
+                word |= u32(*ptr) << (8 * byte);
+            }
+            LOG_ERROR(HW_Memory, "NXBOX FAULT CODE addr={:#018x} offset={} mapped={} word={:08x}",
+                      address, offset, mapped, word);
+        }
+        if (access.thread) {
+            const auto& history = access.thread->nxbox_svc_history;
+            const u64 first =
+                history.count > history.entries.size() ? history.count - history.entries.size() : 0;
+            LOG_ERROR(HW_Memory, "NXBOX FAULT SVC_HISTORY total={} retained={}", history.count,
+                      history.count - first);
+            for (u64 i = first; i < history.count; ++i) {
+                const auto& entry = history.entries[i % history.entries.size()];
+                LOG_ERROR(HW_Memory,
+                          "NXBOX FAULT SVC sequence={} number={:#x} input_x0={:#x} "
+                          "output_x0={:#x} output_x1={:#x} completed={}",
+                          i, entry.number, entry.input_x0, entry.output_x0, entry.output_x1,
+                          entry.completed);
+            }
+        }
+        LOG_ERROR(HW_Memory, "NXBOX FAULT END");
+    }
+
+    void LogUnmappedAccess(u64 addr, const char* operation, size_t size) const {
         if (unmapped_access_logged.exchange(true, std::memory_order_relaxed)) {
             return;
         }
+        LogFaultContext(addr, operation, size);
         if (!AddressSpaceContains(*current_page_table, addr, 1)) {
             LOG_ERROR(HW_Memory, "NXBOX MEM_UNMAPPED addr={:#x} outside {}-bit address space", addr,
                       current_page_table->GetAddressSpaceBits());
@@ -681,7 +740,7 @@ struct Memory::Impl {
                 addr,
                 [this, addr]() {
 #ifdef NXBOX_UWP
-                    LogUnmappedAccess(addr);
+                    LogUnmappedAccess(addr, "read", sizeof(T));
 #endif
                     LOG_ERROR(HW_Memory, "Unmapped Read{} @ {:#016x}", sizeof(T) * 8, addr);
                 },
@@ -721,7 +780,7 @@ struct Memory::Impl {
                 addr,
                 [this, addr, data]() {
 #ifdef NXBOX_UWP
-                    LogUnmappedAccess(addr);
+                    LogUnmappedAccess(addr, "write", sizeof(T));
 #endif
                     LOG_ERROR(HW_Memory, "Unmapped Write{} @ {:#016x} = {:#016x}", sizeof(T) * 8,
                               addr, u64(data));
@@ -731,11 +790,32 @@ struct Memory::Impl {
             std::memcpy(ptr, &data, sizeof(T));
     }
 
+    bool CheckExclusiveAlignment(u64 addr, size_t size) const {
+        if ((addr & (size - 1)) == 0) {
+            return true;
+        }
+#ifdef NXBOX_UWP
+        if (!invalid_exclusive_logged.exchange(true, std::memory_order_relaxed)) {
+            LOG_ERROR(HW_Memory, "NXBOX FAULT EXCLUSIVE_ALIGNMENT addr={:#x} size={}", addr, size);
+            LogFaultContext(addr, "exclusive_alignment", size);
+        }
+#endif
+        // A failed exclusive store is preferable to a host CAS on unrelated pages.
+        // Do not split an atomic operation into independent byte writes.
+        return false;
+    }
+
     template <typename T>
     bool WriteExclusive(Common::ProcessAddress vaddr, const T data, const T expected) {
+        if (!CheckExclusiveAlignment(GetInteger(vaddr), sizeof(T))) {
+            return false;
+        }
         u8* const ptr = GetPointerImpl(
             GetInteger(vaddr),
-            [vaddr, data]() {
+            [this, vaddr, data]() {
+#ifdef NXBOX_UWP
+                LogUnmappedAccess(GetInteger(vaddr), "exclusive_write", sizeof(data));
+#endif
                 LOG_ERROR(HW_Memory, "Unmapped WriteExclusive{} @ {:#016x} = {:#016x}",
                           sizeof(T) * 8, GetInteger(vaddr), static_cast<u64>(data));
             },
@@ -743,13 +823,19 @@ struct Memory::Impl {
         if (ptr) {
             return Common::AtomicCompareAndSwap(reinterpret_cast<T*>(ptr), data, expected);
         }
-        return true;
+        return false;
     }
 
     bool WriteExclusive128(Common::ProcessAddress vaddr, const u128 data, const u128 expected) {
+        if (!CheckExclusiveAlignment(GetInteger(vaddr), sizeof(u128))) {
+            return false;
+        }
         u8* const ptr = GetPointerImpl(
             GetInteger(vaddr),
-            [vaddr, data]() {
+            [this, vaddr, data]() {
+#ifdef NXBOX_UWP
+                LogUnmappedAccess(GetInteger(vaddr), "exclusive_write", sizeof(data));
+#endif
                 LOG_ERROR(HW_Memory, "Unmapped WriteExclusive128 @ {:#016x} = {:#016x}{:016X}",
                           GetInteger(vaddr), static_cast<u64>(data[1]), static_cast<u64>(data[0]));
             },
@@ -757,7 +843,7 @@ struct Memory::Impl {
         if (ptr) {
             return Common::AtomicCompareAndSwap(reinterpret_cast<u64*>(ptr), data, expected);
         }
-        return true;
+        return false;
     }
 
     void HandleRasterizerDownload(VAddr v_address, size_t size) {
@@ -860,6 +946,7 @@ struct Memory::Impl {
 #ifdef NXBOX_UWP
     mutable std::atomic<bool> unmapped_access_logged{false};
     mutable std::atomic<bool> split_access_logged{false};
+    mutable std::atomic<bool> invalid_exclusive_logged{false};
 #endif
     std::atomic<u16> block_count = 0;
 };

@@ -119,6 +119,12 @@ A64EmitX64::BlockDescriptor A64EmitX64::Emit(IR::Block& block) noexcept {
 
     for (auto& inst : block.instructions) {
         auto const opcode = inst.GetOpcode();
+        if (conf.collect_memory_access_context && IR::IsMemoryReadOrWrite(opcode)) {
+            const A64::LocationDescriptor location{IR::LocationDescriptor{inst.GetArg(0).GetU64()}};
+            // Immediate stores do not clobber live host registers or host flags.
+            code.mov(code.dword[code.ABI_JIT_PTR + offsetof(A64JitState, pc)], u32(location.PC()));
+            code.mov(code.dword[code.ABI_JIT_PTR + offsetof(A64JitState, pc) + 4], u32(location.PC() >> 32));
+        }
         // Call the relevant Emit* member function.
         switch (opcode) {
 #define OPCODE(name, type, ...) case IR::Opcode::name: goto opcode_branch;

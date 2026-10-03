@@ -20,6 +20,7 @@
 #include "common/intrusive_red_black_tree.h"
 #include "common/scratch_buffer.h"
 #include "core/arm/arm_interface.h"
+#include "core/arm/nxbox_fault.h"
 #include "core/hle/kernel/k_affinity_mask.h"
 #include "core/hle/kernel/k_light_lock.h"
 #include "core/hle/kernel/k_spin_lock.h"
@@ -176,6 +177,10 @@ public:
      * Gets the thread's thread ID
      * @return The thread's ID
      */
+#ifdef NXBOX_UWP
+    Core::NxboxFault::SvcHistory nxbox_svc_history{};
+#endif
+
     u64 GetThreadId() const {
         return m_thread_id;
     }

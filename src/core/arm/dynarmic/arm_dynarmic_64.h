@@ -113,6 +113,10 @@ private:
 
     std::optional<Dynarmic::A64::Jit> m_jit{};
 
+#ifdef NXBOX_UWP
+    Kernel::KThread* m_running_thread{};
+#endif
+
     // SVC callback
     u32 m_svc{};
 

@@ -326,6 +326,11 @@ VirtualDir PatchManager::PatchExeFS(VirtualDir exefs) const {
         LOG_INFO(Loader, "    ExeFS: Update ({}) applied successfully",
                  FormatTitleVersion(content_provider.GetEntryVersion(update_tid).value_or(0)));
         exefs = update->GetExeFS();
+#ifdef NXBOX_UWP
+        LOG_INFO(Loader,
+                 "NXBOX FAULT EXEFS_UPDATE selected_version_known={} selected_version={:#x}",
+                 enabled_version.has_value(), enabled_version.value_or(0));
+#endif
     }
 
     // LayeredExeFS
@@ -348,8 +353,15 @@ VirtualDir PatchManager::PatchExeFS(VirtualDir exefs) const {
             continue;
 
         auto exefs_dir = FindSubdirectoryCaseless(subdir, "exefs");
-        if (exefs_dir != nullptr)
+        if (exefs_dir != nullptr) {
+#ifdef NXBOX_UWP
+            for (const auto& replacement : exefs_dir->GetFiles()) {
+                LOG_INFO(Loader, "NXBOX FAULT EXEFS_LAYER layer={} file={} size={:#x}",
+                         subdir->GetName(), replacement->GetName(), replacement->GetSize());
+            }
+#endif
             layers.push_back(std::move(exefs_dir));
+        }
     }
     layers.push_back(exefs);
 

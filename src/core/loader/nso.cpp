@@ -7,6 +7,10 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstring>
+#include <limits>
+#ifdef NXBOX_UWP
+#include <openssl/evp.h>
+#endif
 #include <span>
 #include <vector>
 
@@ -94,57 +98,87 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         return 0;
     }();
 
-    auto const last_segment_it = &nso_header.segments[nso_header.segments.size() - 1];
-    // Build program image directly in codeset memory :)
-    Kernel::CodeSet codeset;
-    codeset.memory.resize(module_start + last_segment_it->location + last_segment_it->size);
-    {
-        std::vector<u8> compressed_data(*std::ranges::max_element(nso_header.segments_compressed_size));
-        std::vector<u8> decompressed_size(std::ranges::max_element(nso_header.segments, [](auto const& a, auto const& b) {
-            return a.size < b.size;
-        })->size);
-        for (std::size_t i = 0; i < nso_header.segments.size(); ++i) {
-            nso_file.Read(compressed_data.data(), nso_header.segments_compressed_size[i], nso_header.segments[i].offset);
-            if (nso_header.IsSegmentCompressed(i)) {
-                if (nso_header.IsZBICCompressed()) {
-                    // ZBIC compression
-                    const int r = Common::Compression::DecompressDataZBIC(
-                        std::span<u8>{decompressed_size}.first(nso_header.segments[i].size),
-                        std::span<const u8>{compressed_data}.first(nso_header.segments_compressed_size[i])
-                    );
-                    ASSERT(r > 0);
-                } else {
-                    // LZ4 compression
-                    int r = Common::Compression::DecompressDataLZ4(
-                        decompressed_size.data(),
-                        nso_header.segments[i].size,
-                        compressed_data.data(),
-                        nso_header.segments_compressed_size[i]
-                    );
-                    ASSERT(r == int(nso_header.segments[i].size));
-                }
+    // Widen before adding: segment metadata is 32-bit, host sizes are not.
+    u64 image_end{};
+    for (const auto& segment : nso_header.segments) {
+        image_end = std::max(image_end, u64(segment.location) + u64(segment.size));
+    }
+    const u64 argument_size =
+        should_pass_arguments && !Settings::values.program_args.GetValue().empty()
+            ? NSO_ARGUMENT_DATA_ALLOCATION_SIZE
+            : 0;
+    const u64 total_size = module_start + image_end + argument_size +
+                           u64(nso_header.segments[2].bss_size) + Core::Memory::YUZU_PAGEMASK;
+    if (total_size > std::numeric_limits<u32>::max()) {
+        LOG_ERROR(Loader, "NSO image is too large: {} size={:#x}", nso_file.GetName(), total_size);
+        return std::nullopt;
+    }
 
-                std::memcpy(
-                    codeset.memory.data() + module_start + nso_header.segments[i].location,
-                    decompressed_size.data(),
-                    nso_header.segments[i].size
-                );
-            } else {
-                // Not compressed
-                std::memcpy(
-                    codeset.memory.data() + module_start + nso_header.segments[i].location,
-                    compressed_data.data(),
-                    nso_header.segments[i].size
-                );
-            }
-            codeset.segments[i].addr = module_start + nso_header.segments[i].location;
-            codeset.segments[i].offset = module_start + nso_header.segments[i].location;
-            codeset.segments[i].size = nso_header.segments[i].size;
+    Kernel::CodeSet codeset;
+    codeset.memory.resize(module_start + image_end);
+    for (size_t i = 0; i < nso_header.segments.size(); ++i) {
+        const auto& segment = nso_header.segments[i];
+        const bool compressed = nso_header.IsSegmentCompressed(i);
+        const size_t stored_size =
+            compressed ? u32(nso_header.segments_compressed_size[i]) : u32(segment.size);
+        const u64 offset = segment.offset;
+        if (offset > nso_file.GetSize() || stored_size > nso_file.GetSize() - offset ||
+            (compressed && (stored_size > std::numeric_limits<int>::max() ||
+                            u32(segment.size) > std::numeric_limits<int>::max()))) {
+            LOG_ERROR(Loader, "NSO segment bounds invalid: {} segment={}", nso_file.GetName(), i);
+            return std::nullopt;
         }
+        std::vector<u8> stored(stored_size);
+        if (nso_file.Read(stored.data(), stored_size, offset) != stored_size) {
+            LOG_ERROR(Loader, "NSO segment short read: {} segment={}", nso_file.GetName(), i);
+            return std::nullopt;
+        }
+        auto output =
+            std::span<u8>{codeset.memory}.subspan(module_start + segment.location, segment.size);
+        if (compressed) {
+            const int result =
+                nso_header.IsZBICCompressed()
+                    ? Common::Compression::DecompressDataZBIC(output, stored)
+                    : Common::Compression::DecompressDataLZ4(output.data(), output.size(),
+                                                             stored.data(), stored.size());
+            if (result < 0 || size_t(result) != output.size()) {
+                LOG_ERROR(Loader,
+                          "NSO decompression size mismatch: {} segment={} expected={} actual={}",
+                          nso_file.GetName(), i, output.size(), result);
+                return std::nullopt;
+            }
+        } else {
+            std::copy(stored.begin(), stored.end(), output.begin());
+        }
+#ifdef NXBOX_UWP
+        if (load_into_process) {
+            NSOHeader::SHA256Hash digest{};
+            unsigned int digest_size{};
+            const bool hashed = EVP_Digest(output.data(), output.size(), digest.data(),
+                                           &digest_size, EVP_sha256(), nullptr) == 1 &&
+                                digest_size == digest.size();
+            const bool check_hash = (nso_header.flags & (1U << (i + 3))) != 0;
+            LOG_INFO(Loader,
+                     "NXBOX FAULT NSO_SEGMENT name={} segment={} offset={:#x} stored={:#x} "
+                     "location={:#x} size={:#x} compressed={} flags={:#x} hash_enabled={} "
+                     "hash_valid={} hash_ok={} sha256={} expected={}",
+                     nso_file.GetName(), i, offset, stored_size, u32(segment.location),
+                     u32(segment.size), compressed, u32(nso_header.flags), check_hash, hashed,
+                     hashed && digest == nso_header.segment_hashes[i], Common::HexToString(digest),
+                     Common::HexToString(nso_header.segment_hashes[i]));
+        }
+#endif
+        codeset.segments[i].addr = module_start + segment.location;
+        codeset.segments[i].offset = module_start + segment.location;
+        codeset.segments[i].size = segment.size;
     }
 
     if (should_pass_arguments && !Settings::values.program_args.GetValue().empty()) {
         const auto arg_data{Settings::values.program_args.GetValue()};
+        if (arg_data.size() > NSO_ARGUMENT_DATA_ALLOCATION_SIZE - sizeof(NSOArgumentHeader)) {
+            LOG_ERROR(Loader, "NSO arguments exceed the reserved allocation");
+            return std::nullopt;
+        }
 
         codeset.DataSegment().size += NSO_ARGUMENT_DATA_ALLOCATION_SIZE;
         NSOArgumentHeader args_header{NSO_ARGUMENT_DATA_ALLOCATION_SIZE, static_cast<u32_le>(arg_data.size()), {}};
@@ -162,6 +196,9 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
         codeset.segments[i].size = PageAlignSize(codeset.segments[i].size);
     }
 
+#ifdef NXBOX_UWP
+    bool nso_patched = false;
+#endif
     // Apply patches if necessary
     const auto name = nso_file.GetName();
     if (pm && (pm->HasNSOPatch(nso_header.build_id, name) || Settings::values.dump_nso)) {
@@ -173,6 +210,14 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
 
         pi_header = pm->PatchNSO(pi_header, name);
 
+        if (pi_header.size() != sizeof(NSOHeader) + patchable_section.size()) {
+            LOG_ERROR(Loader, "NSO patch changed image size: {}", name);
+            return std::nullopt;
+        }
+#ifdef NXBOX_UWP
+        nso_patched = !std::equal(pi_header.begin() + sizeof(NSOHeader), pi_header.end(),
+                                  patchable_section.begin());
+#endif
         std::copy(pi_header.begin() + sizeof(NSOHeader), pi_header.end(), patchable_section.data());
     }
 
@@ -245,6 +290,22 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
             system.RegisterCheatList(cheats, nso_header.build_id, load_base, image_size);
         }
     }
+
+#ifdef NXBOX_UWP
+    NSOHeader::SHA256Hash final_digest{};
+    unsigned int final_digest_size{};
+    const bool final_hashed =
+        EVP_Digest(codeset.memory.data(), codeset.memory.size(), final_digest.data(),
+                   &final_digest_size, EVP_sha256(), nullptr) == 1 &&
+        final_digest_size == final_digest.size();
+    LOG_INFO(Loader,
+             "NXBOX FAULT MODULE name={} base={:#x} end={:#x} text={:#x}+{:#x} "
+             "bss={:#x} build_id={} nso_patched={} final_hash_valid={} final_sha256={}",
+             name, load_base, load_base + image_size, load_base + codeset.CodeSegment().addr,
+             codeset.CodeSegment().size, u32(nso_header.segments[2].bss_size),
+             Common::HexToString(nso_header.build_id), nso_patched, final_hashed,
+             Common::HexToString(final_digest));
+#endif
 
     // Load codeset for current process
     process.LoadModule(system.Kernel(), std::move(codeset), load_base);

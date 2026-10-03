@@ -25,16 +25,6 @@
 
 namespace Loader {
 
-static u32 CalculatePointerBufferSize(size_t heap_size) {
-    if (heap_size > 1073741824) { // Games with 1 GiB
-        return 0x10000;
-    } else if (heap_size > 536870912) { // Games with 512 MiB
-        return 0xC000;
-    } else {
-        return 0x8000; // Default for all other games
-    }
-}
-
 AppLoader_NCA::AppLoader_NCA(FileSys::VirtualFile file_, u64 update_only_program_id_)
     : AppLoader(std::move(file_)),
       nca(std::make_unique<FileSys::NCA>(file, nullptr, update_only_program_id_ != 0)),
@@ -90,26 +80,8 @@ AppLoader_NCA::LoadResult AppLoader_NCA::Load(Kernel::KProcess& process, Core::S
 
     directory_loader = std::make_unique<AppLoader_DeconstructedRomDirectory>(exefs, true);
 
-    // Read heap size from main.npdm in ExeFS
-    u64 heap_size = 0;
-
-    if (exefs) {
-        const auto npdm_file = exefs->GetFile("main.npdm");
-        if (npdm_file) {
-            auto npdm_data = npdm_file->ReadAllBytes();
-            if (npdm_data.size() >= 0x30) {
-                heap_size = *reinterpret_cast<const u64*>(&npdm_data[0x28]);
-                LOG_INFO(Loader, "Read heap size {:#x} bytes from main.npdm", heap_size);
-            } else {
-                LOG_WARNING(Loader, "main.npdm too small to read heap size!");
-            }
-        } else {
-            LOG_WARNING(Loader, "No main.npdm found in ExeFS!");
-        }
-    }
-
-    // Set pointer buffer size based on heap size
-    process.SetPointerBufferSize(CalculatePointerBufferSize(heap_size));
+    // NPDM has no heap-size field. In particular, offset 0x28 is part of the
+    // application name. Keep the process's default IPC pointer-buffer size.
 
     // Load modules
     const auto load_result = directory_loader->Load(process, system);
@@ -117,8 +89,8 @@ AppLoader_NCA::LoadResult AppLoader_NCA::Load(Kernel::KProcess& process, Core::S
         return load_result;
     }
 
-    LOG_INFO(Loader, "Set pointer buffer size to {:#x} bytes for ProgramID {:#018x} (Heap size: {:#x})",
-             process.GetPointerBufferSize(), GetProgramId(), heap_size);
+    LOG_INFO(Loader, "IPC pointer buffer size {:#x} bytes for ProgramID {:#018x}",
+             process.GetPointerBufferSize(), GetProgramId());
 
     auto metadata =
         FileSys::PatchManager::GetMetadataFromBaseOrUpdate(system, this->GetProgramId());

@@ -495,7 +495,7 @@ static void ReplaceUsesWith(IR::Inst& inst, bool is_32_bit, u64 value) {
     }
 }
 
-static void A64GetSetElimination(IR::Block& block) {
+static void A64GetSetElimination(IR::Block& block, bool preserve_memory_context) {
     using Iterator = IR::Block::iterator;
 
     enum class TrackingType {
@@ -552,6 +552,18 @@ static void A64GetSetElimination(IR::Block& block) {
     };
     for (auto inst = block.instructions.begin(); inst != block.instructions.end(); ++inst) {
         auto const opcode = inst->GetOpcode();
+        if (preserve_memory_context && IR::IsMemoryReadOrWrite(opcode)) {
+            // A later register write must not erase the state visible to this callback.
+            for (auto& info : reg_info) {
+                info.set_instruction_present = false;
+            }
+            for (auto& info : vec_info) {
+                info.set_instruction_present = false;
+            }
+            sp_info.set_instruction_present = false;
+            nzcv_info.set_instruction_present = false;
+        }
+
         switch (opcode) {
         case IR::Opcode::A64GetW: {
             const size_t index = A64::RegNumber(inst->GetArg(0).GetA64RegRef());
@@ -1466,7 +1478,7 @@ void Optimize(IR::Block& block, const A64::UserConfig& conf, const Optimization:
     Optimization::A64CallbackConfigPass(block, conf);
     Optimization::NamingPass(block);
     if (conf.HasOptimization(OptimizationFlag::GetSetElimination) && !conf.check_halt_on_memory_access) {
-        Optimization::A64GetSetElimination(block);
+        Optimization::A64GetSetElimination(block, conf.collect_memory_access_context);
         Optimization::DeadCodeElimination(block);
     }
     if (conf.HasOptimization(OptimizationFlag::ConstProp)) {

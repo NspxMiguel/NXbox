@@ -152,7 +152,21 @@ void PhysicalCore::RunThread(KernelCore& kernel, Kernel::KThread* thread) {
         // Handle system calls.
         if (supervisor_call) {
             // Perform call.
+#ifdef NXBOX_UWP
+            auto& history = thread->nxbox_svc_history;
+            auto& entry = history.entries[history.count++ % history.entries.size()];
+            std::array<u64, 8> args{};
+            interface->GetSvcArguments(args);
+            entry = {interface->GetSvcNumber(), args[0], 0, 0, false};
+#endif
             Svc::Call(system, interface->GetSvcNumber());
+#ifdef NXBOX_UWP
+            // A blocking SVC may migrate the guest thread. Reacquire the current core.
+            kernel.CurrentPhysicalCore().SaveSvcArguments(*process, args);
+            entry.output_x0 = args[0];
+            entry.output_x1 = args[1];
+            entry.completed = true;
+#endif
             return;
         }
 

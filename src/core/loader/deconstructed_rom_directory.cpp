@@ -181,6 +181,15 @@ AppLoader_DeconstructedRomDirectory::LoadResult AppLoader_DeconstructedRomDirect
         return {result2, {}};
     }
     metadata.Print();
+#ifdef NXBOX_UWP
+    LOG_INFO(Loader,
+             "NXBOX FAULT NPDM title={:#x} a64={} address_space_type={} system_resource={:#x} "
+             "main_stack={:#x} main_core={} priority={} pool={}",
+             metadata.GetTitleID(), metadata.Is64BitProgram(),
+             static_cast<int>(metadata.GetAddressSpaceType()), metadata.GetSystemResourceSize(),
+             metadata.GetMainThreadStackSize(), metadata.GetMainThreadCore(),
+             metadata.GetMainThreadPriority(), static_cast<int>(metadata.GetPoolPartition()));
+#endif
 
     // Enable NCE only for applications with 39-bit address space.
     const bool is_39bit =

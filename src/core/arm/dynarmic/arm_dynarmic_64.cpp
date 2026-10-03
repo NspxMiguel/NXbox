@@ -4,11 +4,13 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "common/settings.h"
 #include "common/nxbox_stall.h"
+#include "common/scope_exit.h"
+#include "common/settings.h"
 #include "core/arm/dynarmic/arm_dynarmic.h"
 #include "core/arm/dynarmic/arm_dynarmic_64.h"
 #include "core/arm/dynarmic/dynarmic_exclusive_monitor.h"
+#include "core/arm/nxbox_fault.h"
 #include "core/core_timing.h"
 #include "core/hle/kernel/k_process.h"
 #include "dynarmic/interface/A64/config.h"
@@ -24,6 +26,10 @@ DynarmicCallbacks64::DynarmicCallbacks64(ArmDynarmic64& parent, Kernel::KProcess
 {}
 
 u64 DynarmicCallbacks64::MemoryRead(u64 vaddr, size_t size) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, size, "read"}};
+#endif
     CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Read);
     switch (size) {
     case sizeof(u64): return m_memory.Read64(vaddr);
@@ -34,6 +40,10 @@ u64 DynarmicCallbacks64::MemoryRead(u64 vaddr, size_t size) {
     }
 }
 Dynarmic::A64::Vector DynarmicCallbacks64::MemoryRead128(u64 vaddr) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 16, "read"}};
+#endif
     CheckMemoryAccess(vaddr, 16, Kernel::DebugWatchpointType::Read);
     return {m_memory.Read64(vaddr), m_memory.Read64(vaddr + 8)};
 }
@@ -50,6 +60,10 @@ std::optional<u32> DynarmicCallbacks64::MemoryReadCode(u64 vaddr) {
 }
 
 void DynarmicCallbacks64::MemoryWrite(Dynarmic::A64::VAddr vaddr, u64 value, std::size_t size) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, size, "write"}};
+#endif
     if (CheckMemoryAccess(vaddr, size, Kernel::DebugWatchpointType::Write)) {
         switch (size) {
         case sizeof(u64): return m_memory.Write64(vaddr, u64(value));
@@ -61,6 +75,10 @@ void DynarmicCallbacks64::MemoryWrite(Dynarmic::A64::VAddr vaddr, u64 value, std
     }
 }
 void DynarmicCallbacks64::MemoryWrite128(u64 vaddr, Dynarmic::A64::Vector value) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 16, "write"}};
+#endif
     if (CheckMemoryAccess(vaddr, 16, Kernel::DebugWatchpointType::Write)) {
         m_memory.Write64(vaddr, value[0]);
         m_memory.Write64(vaddr + 8, value[1]);
@@ -68,22 +86,43 @@ void DynarmicCallbacks64::MemoryWrite128(u64 vaddr, Dynarmic::A64::Vector value)
 }
 
 bool DynarmicCallbacks64::MemoryWriteExclusive8(u64 vaddr, std::uint8_t value, std::uint8_t expected) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 1, "exclusive_write"}};
+#endif
     return CheckMemoryAccess(vaddr, 1, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive8(vaddr, value, expected);
 }
 bool DynarmicCallbacks64::MemoryWriteExclusive16(u64 vaddr, std::uint16_t value, std::uint16_t expected) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 2, "exclusive_write"}};
+#endif
     return CheckMemoryAccess(vaddr, 2, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive16(vaddr, value, expected);
 }
 bool DynarmicCallbacks64::MemoryWriteExclusive32(u64 vaddr, std::uint32_t value, std::uint32_t expected) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 4, "exclusive_write"}};
+#endif
     return CheckMemoryAccess(vaddr, 4, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive32(vaddr, value, expected);
 }
 bool DynarmicCallbacks64::MemoryWriteExclusive64(u64 vaddr, std::uint64_t value, std::uint64_t expected) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{
+        {&m_parent, m_parent.m_running_thread, m_parent.m_core_index, vaddr, 8, "exclusive_write"}};
+#endif
     return CheckMemoryAccess(vaddr, 8, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive64(vaddr, value, expected);
 }
 bool DynarmicCallbacks64::MemoryWriteExclusive128(u64 vaddr, Dynarmic::A64::Vector value, Dynarmic::A64::Vector expected) {
+#ifdef NXBOX_UWP
+    const NxboxFault::AccessScope fault_scope{{&m_parent, m_parent.m_running_thread,
+                                               m_parent.m_core_index, vaddr, 16,
+                                               "exclusive_write"}};
+#endif
     return CheckMemoryAccess(vaddr, 16, Kernel::DebugWatchpointType::Write) &&
             m_memory.WriteExclusive128(vaddr, value, expected);
 }
@@ -352,15 +391,41 @@ void ArmDynarmic64::MakeJit(Common::PageTable* page_table, std::size_t address_s
         config.fastmem_pointer = std::nullopt;
         config.fastmem_exclusive_access = false;
     }
+#ifdef NXBOX_UWP
+    config.collect_memory_access_context = true;
+    LOG_INFO(Core_ARM,
+             "NXBOX FAULT CONFIG core={} accuracy={} optimizations={:#x} unsafe={} "
+             "page_table={} fastmem={} fastmem_exclusives={} wall_clock={} "
+             "misalignment_mask={} boundary_only={} precise_context={}",
+             m_core_index, static_cast<int>(Settings::values.cpu_accuracy.GetValue()),
+             static_cast<u32>(config.optimizations), config.unsafe_optimizations,
+             config.page_table != nullptr, config.fastmem_pointer.has_value(),
+             config.fastmem_exclusive_access, config.wall_clock_cntpct,
+             config.detect_misaligned_access_via_page_table,
+             config.only_detect_misalignment_via_page_table_on_page_boundary,
+             config.collect_memory_access_context);
+#endif
     m_jit.emplace(config);
 }
 
 HaltReason ArmDynarmic64::RunThread(Kernel::KThread* thread) {
+#ifdef NXBOX_UWP
+    m_running_thread = thread;
+    SCOPE_EXIT {
+        m_running_thread = nullptr;
+    };
+#endif
     m_jit->ClearExclusiveState();
     return TranslateHaltReason(m_jit->Run());
 }
 
 HaltReason ArmDynarmic64::StepThread(Kernel::KThread* thread) {
+#ifdef NXBOX_UWP
+    m_running_thread = thread;
+    SCOPE_EXIT {
+        m_running_thread = nullptr;
+    };
+#endif
     m_jit->ClearExclusiveState();
     return TranslateHaltReason(m_jit->Step());
 }

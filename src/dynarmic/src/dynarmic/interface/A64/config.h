@@ -297,6 +297,10 @@ struct UserConfig {
     /// for exit after every data memory access by the emulated program.
     bool check_halt_on_memory_access = false;
 
+    /// x64 diagnostic: materialize PC and preserve register stores at memory accesses.
+    /// Does not halt execution or change the result of a memory callback.
+    bool collect_memory_access_context = false;
+
     /// This option allows you to disable cycle counting. If this is set to false,
     /// AddTicks and GetTicksRemaining are never called, and no cycle counting is done.
     bool enable_cycle_counting = true;
