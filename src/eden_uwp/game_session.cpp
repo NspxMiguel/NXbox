@@ -430,14 +430,22 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     {
         auto& dirs = Settings::values.external_content_dirs;
         dirs.clear();
-        const auto local_state = std::filesystem::path(winrt::to_string(
-            winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
-        dirs.push_back(Common::FS::PathToUTF8String(local_state / "games"));
-        for (const auto& folder : ExternalGameFolders()) {
-            dirs.push_back(Common::FS::PathToUTF8String(folder));
+        // Applying updates currently breaks games (the guest computes garbage pointers from
+        // patched RomFS data); keep them off until that is fixed. NXBOX_UPDATES=1 in
+        // LocalState\nxbox_env.txt turns them on for testing.
+        const char* updates = std::getenv("NXBOX_UPDATES");
+        if (updates == nullptr || updates[0] != '1') {
+            Diagnostic("CONTENT_DIRS off (set NXBOX_UPDATES=1 to load updates and DLC)");
+        } else {
+            const auto local_state = std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+            dirs.push_back(Common::FS::PathToUTF8String(local_state / "games"));
+            for (const auto& folder : ExternalGameFolders()) {
+                dirs.push_back(Common::FS::PathToUTF8String(folder));
         }
-        for (const auto& dir : dirs) {
-            Diagnostic("CONTENT_DIR " + dir);
+            for (const auto& dir : dirs) {
+                Diagnostic("CONTENT_DIR " + dir);
+        }
         }
         // NXBOX_DISABLE_DLC=<title id in hex> (LocalState\nxbox_env.txt) runs a game without its
         // DLC, to tell a DLC problem from an update problem.
