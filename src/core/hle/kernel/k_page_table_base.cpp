@@ -4,6 +4,7 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "common/nxbox_stall.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "core/core.h"
@@ -83,6 +84,9 @@ void InvalidateInstructionCache(KernelCore& kernel, KPageTableBase* table, Addre
         for (size_t i = 0; i < Core::Hardware::NUM_CPU_CORES; i++) {
             auto* interface = process->GetArmInterface(i);
             if (interface) {
+#if NXBOX_STALL_PROFILE
+                NxboxStall::AddJit(NxboxStall::JitEvent::PageTableInvalidations);
+#endif
                 interface->InvalidateCacheRange(GetInteger(addr), size);
             }
         }

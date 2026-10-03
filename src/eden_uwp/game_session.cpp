@@ -606,10 +606,11 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     }
                 }
             }
+#if NXBOX_STALL_PROFILE
             // Host work in the window, as total/longest milliseconds and call count, so each
             // hitch can be traced to shader builds, texture uploads, decoding or cache eviction.
             std::string stall_line = "GAME_STALL";
-            constexpr std::array<std::pair<NxboxStall::Kind, const char*>, 16> stall_kinds{{
+            constexpr std::array<std::pair<NxboxStall::Kind, const char*>, 21> stall_kinds{{
                 {NxboxStall::Kind::Shader, "shader"},
                 {NxboxStall::Kind::Upload, "upload"},
                 {NxboxStall::Kind::Convert, "convert"},
@@ -617,6 +618,11 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 {NxboxStall::Kind::Video, "video"},
                 {NxboxStall::Kind::Jit, "jit"},
                 {NxboxStall::Kind::JitFlush, "jitflush"},
+                {NxboxStall::Kind::JitProtect, "jitprotect"},
+                {NxboxStall::Kind::JitTranslate, "jittranslate"},
+                {NxboxStall::Kind::JitOptimize, "jitoptimize"},
+                {NxboxStall::Kind::JitEmit, "jitemit"},
+                {NxboxStall::Kind::JitInvalidate, "jitinvalidate"},
                 {NxboxStall::Kind::Io, "io"},
                 {NxboxStall::Kind::Aes, "aes"},
                 {NxboxStall::Kind::GpuBusy, "gpu"},
@@ -632,7 +638,38 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 stall_line += fmt::format(" {}={:.0f}/{:.0f}/{}", name, taken.total_us / 1000.0,
                                           taken.max_us / 1000.0, taken.calls);
             }
+            // Brackets distinguish raw counts/bytes from duration triples and let existing
+            // duration-only stall-report.py readers ignore these fields.
+            constexpr std::array<std::pair<NxboxStall::JitEvent, const char*>, 17> jit_events{{
+                {NxboxStall::JitEvent::RangeCalls, "jit_inv_calls"},
+                {NxboxStall::JitEvent::RangeBytes, "jit_inv_bytes"},
+                {NxboxStall::JitEvent::ClearRequests, "jit_clear_req"},
+                {NxboxStall::JitEvent::CacheClears, "jit_clears"},
+                {NxboxStall::JitEvent::ClearBlocks, "jit_clear_blocks"},
+                {NxboxStall::JitEvent::RangeBlocks, "jit_range_blocks"},
+                {NxboxStall::JitEvent::EmptyInvalidations, "jit_inv_empty"},
+                {NxboxStall::JitEvent::NewPc, "jit_pc_new"},
+                {NxboxStall::JitEvent::RepeatPc, "jit_pc_repeat"},
+                {NxboxStall::JitEvent::UnknownPc, "jit_pc_unknown"},
+                {NxboxStall::JitEvent::PcCompileMax, "jit_pc_max"},
+                {NxboxStall::JitEvent::NewKey, "jit_key_new"},
+                {NxboxStall::JitEvent::RepeatKey, "jit_key_repeat"},
+                {NxboxStall::JitEvent::UnknownKey, "jit_key_unknown"},
+                {NxboxStall::JitEvent::InstructionInvalidations, "jit_ic"},
+                {NxboxStall::JitEvent::PageTableInvalidations, "jit_pt"},
+                {NxboxStall::JitEvent::ProtectBytes, "jit_protect_bytes"},
+            }};
+            for (const auto& [event, name] : jit_events) {
+                stall_line += fmt::format(" {}=[{}]", name, NxboxStall::TakeJit(event));
+            }
+            for (std::size_t core = 0; core < NxboxStall::JitCaches().size(); ++core) {
+                const auto& cache = NxboxStall::JitCaches()[core];
+                stall_line += fmt::format(" jit_cache{}=[{}/{}]", core,
+                                          cache.used.load(std::memory_order_relaxed),
+                                          cache.capacity.load(std::memory_order_relaxed));
+            }
             Diagnostic(stall_line);
+#endif
             worst_gap_ms = 0.0;
             hitches = 0;
             measured_at = now;
