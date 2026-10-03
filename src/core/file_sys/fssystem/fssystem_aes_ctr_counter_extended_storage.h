@@ -12,6 +12,7 @@
 #include "common/literals.h"
 #include "core/file_sys/fssystem/fs_i_storage.h"
 #include "core/file_sys/fssystem/fssystem_bucket_tree.h"
+#include "core/file_sys/romfs_read_diagnostics.h"
 
 namespace FileSys {
 
@@ -78,6 +79,7 @@ public:
     AesCtrCounterExtendedStorage()
         : m_table(), m_data_storage(), m_secure_value(), m_counter_offset(), m_decryptor() {}
     virtual ~AesCtrCounterExtendedStorage() {
+        m_diagnostics.Log("destroy");
         this->Finalize();
     }
 
@@ -91,6 +93,13 @@ public:
     }
 
     virtual size_t Read(u8* buffer, size_t size, size_t offset) const override;
+
+    s64 GetCounterOffset() const {
+        return m_counter_offset;
+    }
+    void LogReadDiagnostics(std::string_view phase) const {
+        m_diagnostics.Log(phase);
+    }
 
     virtual size_t GetSize() const override {
         BucketTree::Offsets offsets{};
@@ -107,6 +116,7 @@ private:
                       VirtualFile table_storage);
 
 private:
+    BktrReadDiagnostics m_diagnostics{"subsection"};
     mutable BucketTree m_table;
     VirtualFile m_data_storage;
     std::array<u8, KeySize> m_key;

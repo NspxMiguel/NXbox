@@ -122,14 +122,35 @@ size_t IndirectStorage::Read(u8* buffer, size_t size, size_t offset) const {
         return 0;
     }
 
-    const_cast<IndirectStorage*>(this)->OperatePerEntry<true, true>(
+    u64 visited = 0;
+    const Result result = const_cast<IndirectStorage*>(this)->OperatePerEntry<true, true>(
         offset, size,
         [=](VirtualFile storage, s64 data_offset, s64 cur_offset, s64 cur_size) -> Result {
-            storage->Read(reinterpret_cast<u8*>(buffer) + (cur_offset - offset),
-                          static_cast<size_t>(cur_size), data_offset);
+            const auto read = storage->Read(buffer + (cur_offset - offset),
+                                            static_cast<size_t>(cur_size), data_offset);
+            R_UNLESS(read == static_cast<size_t>(cur_size), ResultInvalidIndirectStorageSize);
+            R_SUCCEED();
+        },
+        m_diagnostics.Enabled() ? &visited : nullptr);
+    m_diagnostics.Record(visited, R_FAILED(result));
+    if (R_FAILED(result)) {
+        m_diagnostics.Failure(offset, size, result.raw);
+        // The continuous-read optimization may have filled noncontiguous ranges.
+        // No prefix is guaranteed valid after a failed operation.
+        return 0;
+    }
+    return size;
+}
+
+size_t IndirectStorage::ReadUnmerged(u8* buffer, size_t size, size_t offset) {
+    const Result result = OperatePerEntry<false, true>(
+        offset, size,
+        [=](VirtualFile storage, s64 data_offset, s64 cur_offset, s64 cur_size) -> Result {
+            R_UNLESS(storage->Read(buffer + (cur_offset - offset), cur_size, data_offset) ==
+                         static_cast<size_t>(cur_size),
+                     ResultInvalidIndirectStorageSize);
             R_SUCCEED();
         });
-
-    return size;
+    return R_SUCCEEDED(result) ? size : 0;
 }
 } // namespace FileSys

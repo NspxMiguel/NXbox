@@ -25,6 +25,7 @@
 #include "core/file_sys/patch_manager.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/file_sys/romfs.h"
+#include "core/file_sys/romfs_read_diagnostics.h"
 #include "core/file_sys/vfs/vfs_cached.h"
 #include "core/file_sys/vfs/vfs_layered.h"
 #include "core/file_sys/vfs/vfs_vector.h"
@@ -723,6 +724,11 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
                      enabled_version.has_value() ? FormatTitleVersion(*enabled_version) :
                      FormatTitleVersion(content_provider.GetEntryVersion(update_tid).value_or(0)));
             romfs = new_nca->GetRomFS();
+            if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
+                LOG_INFO(Loader, "NXBOX VERIFY_ROMFS SELECT title={:016X} selected_version={:#x}",
+                         title_id, enabled_version.value_or(0));
+                new_nca->VerifyRomFS();
+            }
         }
     } else if (!update_disabled && packed_update_raw != nullptr && base_nca != nullptr) {
         const auto new_nca = std::make_shared<NCA>(packed_update_raw, base_nca);
@@ -730,12 +736,29 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
             new_nca->GetRomFS() != nullptr) {
             LOG_INFO(Loader, "    RomFS: Update (PACKED) applied successfully");
             romfs = new_nca->GetRomFS();
+            if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
+                LOG_INFO(Loader, "NXBOX VERIFY_ROMFS SELECT title={:016X} selected_version={:#x}",
+                         title_id, enabled_version.value_or(0));
+                new_nca->VerifyRomFS();
+            }
         }
     }
 
+    if (type == ContentRecordType::Program && IsRomfsVerificationEnabled() && romfs == base_romfs &&
+        base_nca != nullptr) {
+        base_nca->VerifyRomFS();
+    }
+
+    const auto verified_romfs = romfs;
     // LayeredFS
     if (apply_layeredfs) {
         ApplyLayeredFS(romfs, type);
+    }
+    if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
+        LOG_INFO(Loader,
+                 "NXBOX VERIFY_ROMFS FINAL title={:016X} layeredfs_changed={} size={:#x} "
+                 "ivfc_scope=before_layeredfs",
+                 title_id, romfs != verified_romfs, romfs ? romfs->GetSize() : 0);
     }
 
     return romfs;

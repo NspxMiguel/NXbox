@@ -4,8 +4,10 @@
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <cstring>
+#include <limits>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include "common/nxbox_stall.h"
@@ -124,15 +126,23 @@ void AESCipher<Key>::Transcode(const u8* src, std::size_t size, u8* dest, Op op)
     ASSERT(block_size > 0 && block_size <= int(AesBlockBytes));
 
     const std::size_t whole_block_bytes = size - (size % block_size);
-    int written = 0;
-
-    if (whole_block_bytes != 0) {
-        ASSERT(EVP_CipherUpdate(context, dest, &written, src, static_cast<int>(whole_block_bytes)));
-
-        if (std::size_t(written) != whole_block_bytes) {
-            LOG_WARNING(Crypto, "Not all data was processed requested={:016X}, actual={:016X}.",
-                        whole_block_bytes, written);
+    // EVP takes an int length even on 64-bit Windows. Keep one cipher stream
+    // across bounded updates; resetting the IV between chunks would repeat CTR data.
+    const bool is_xts = EVP_CIPHER_CTX_get_mode(context) == EVP_CIPH_XTS_MODE;
+    if (is_xts && whole_block_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        UNREACHABLE_MSG("XTS data unit exceeds the EVP length limit");
+    }
+    const std::size_t max_update_bytes = is_xts ? whole_block_bytes : 1 << 20;
+    for (std::size_t processed = 0; processed < whole_block_bytes;) {
+        const auto chunk = std::min(max_update_bytes, whole_block_bytes - processed);
+        int written = 0;
+        const int result = EVP_CipherUpdate(context, dest + processed, &written, src + processed,
+                                            static_cast<int>(chunk));
+        ASSERT(result == 1 && written >= 0 && static_cast<std::size_t>(written) == chunk);
+        if (result != 1 || written < 0 || static_cast<std::size_t>(written) != chunk) {
+            return;
         }
+        processed += chunk;
     }
 
     // tail

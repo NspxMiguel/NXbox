@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <optional>
 
 #include "core/crypto/aes_util.h"
@@ -37,6 +38,7 @@ private:
     VirtualFile m_base_storage;
     std::array<u8, KeySize> m_key;
     std::array<u8, IvSize> m_iv;
+    mutable std::mutex m_mutex;
     mutable std::optional<Core::Crypto::AESCipher<Core::Crypto::Key128>> m_cipher;
 };
 

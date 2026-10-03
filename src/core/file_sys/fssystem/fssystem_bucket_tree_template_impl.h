@@ -47,7 +47,7 @@ Result BucketTree::ScanContinuousReading(ContinuousReadingInfo* out_info,
     R_UNLESS(m_node_size + ofs <= size_t(entry_storage_size),
                 ResultInvalidBucketTreeNodeEntryCount);
 
-    m_entry_storage->Read(buffer, m_node_size, ofs);
+    R_UNLESS(m_entry_storage->Read(buffer, m_node_size, ofs) == m_node_size, ResultOutOfRange);
 
     // Calculate extents.
     const auto end_offset = cur_offset + s64(param.size);

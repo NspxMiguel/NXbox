@@ -132,6 +132,9 @@ add_library(core STATIC
     file_sys/program_metadata.h
     file_sys/registered_cache.cpp
     file_sys/registered_cache.h
+    file_sys/romfs_read_diagnostics.h
+    file_sys/romfs_verify.cpp
+    file_sys/romfs_verify.h
     file_sys/romfs.cpp
     file_sys/romfs.h
     file_sys/romfs_factory.cpp

@@ -230,6 +230,7 @@ public:
         VirtualFile indirect_storage_meta_storage;
         std::shared_ptr<IndirectStorage> indirect_storage;
         VirtualFile fs_data_storage;
+        VirtualFile raw_storage;
         VirtualFile compressed_storage_meta_storage;
         std::shared_ptr<CompressedStorage> compressed_storage;
 

@@ -19,6 +19,7 @@
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "core/file_sys/vfs/vfs.h"
+#include "core/file_sys/romfs_read_diagnostics.h"
 #include "core/file_sys/vfs/vfs_real.h"
 
 // For FileTimeStampRaw
@@ -342,7 +343,18 @@ std::size_t RealVfsFile::Read(u8* data, std::size_t length, std::size_t offset) 
     if (!reference->file || !reference->file->Seek(static_cast<s64>(offset))) {
         return 0;
     }
-    return reference->file->ReadSpan(std::span{data, length});
+    const auto read = reference->file->ReadSpan(std::span{data, length});
+    if (read != length && IsRomfsVerificationEnabled()) {
+        static std::atomic<u32> reported{};
+        if (reported.fetch_add(1, std::memory_order_relaxed) < 16) {
+            const int read_errno = errno;
+            LOG_ERROR(Loader,
+                      "NXBOX VERIFY_ROMFS IO_SHORT path={} offset={:#x} requested={:#x} "
+                      "actual={:#x} tell={:#x} errno={}",
+                      path, offset, length, read, reference->file->Tell(), read_errno);
+        }
+    }
+    return read;
 }
 
 std::size_t RealVfsFile::Write(const u8* data, std::size_t length, std::size_t offset) {

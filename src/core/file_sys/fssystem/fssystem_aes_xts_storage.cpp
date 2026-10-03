@@ -51,7 +51,10 @@ size_t AesXtsStorage::Read(u8* buffer, size_t size, size_t offset) const {
     // Ensure buffer is valid and we can only read at block aligned offsets.
     ASSERT(buffer != nullptr);
     ASSERT(Common::IsAligned(offset, AesBlockSize) && Common::IsAligned(size, AesBlockSize));
-    m_base_storage->Read(buffer, size, offset);
+    if (m_base_storage->Read(buffer, size, offset) != size) {
+        return 0;
+    }
+    const std::scoped_lock lock{m_mutex};
 
     // Setup the counter.
     std::array<u8, IvSize> ctr;

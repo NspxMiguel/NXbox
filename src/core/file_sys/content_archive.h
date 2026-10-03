@@ -25,6 +25,7 @@ enum class ResultStatus : u16;
 namespace FileSys {
 
 class NcaReader;
+class RomfsVerification;
 
 /// Describes the type of content within an NCA archive.
 enum class NCAContentType : u8 {
@@ -84,6 +85,7 @@ public:
     bool IsUpdate() const;
 
     VirtualFile GetRomFS() const;
+    void VerifyRomFS() const;
     VirtualDir GetExeFS() const;
 
     VirtualFile GetBaseFile() const;
@@ -106,6 +108,7 @@ private:
 
     Core::Crypto::KeyManager& keys;
     std::shared_ptr<NcaReader> reader;
+    std::unique_ptr<RomfsVerification> romfs_verification;
 };
 
 } // namespace FileSys

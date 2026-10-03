@@ -81,7 +81,9 @@ size_t AlignmentMatchingStorageImpl::Read(VirtualFile base_storage, char* work_b
 
     // Read the core portion.
     if (core_size > 0) {
-        base_storage->Read(aligned_core_buffer, core_size, core_offset);
+        if (base_storage->Read(aligned_core_buffer, core_size, core_offset) != core_size) {
+            return 0;
+        }
 
         if (offset_gap != 0 || buffer_gap != 0) {
             std::memmove(aligned_core_buffer - buffer_gap, aligned_core_buffer + offset_gap,
@@ -97,7 +99,10 @@ size_t AlignmentMatchingStorageImpl::Read(VirtualFile base_storage, char* work_b
 
         ASSERT(GetRoundDownDifference(offset, data_alignment) + head_size <= work_buf_size);
 
-        base_storage->Read(reinterpret_cast<u8*>(work_buf), data_alignment, head_offset);
+        if (base_storage->Read(reinterpret_cast<u8*>(work_buf), data_alignment, head_offset) !=
+            data_alignment) {
+            return 0;
+        }
         std::memcpy(buffer, work_buf + GetRoundDownDifference(offset, data_alignment), head_size);
     }
 
@@ -109,7 +114,10 @@ size_t AlignmentMatchingStorageImpl::Read(VirtualFile base_storage, char* work_b
         const auto cur_size =
             (std::min)(static_cast<size_t>(aligned_tail_offset + data_alignment - tail_offset),
                      remaining_tail_size);
-        base_storage->Read(reinterpret_cast<u8*>(work_buf), data_alignment, aligned_tail_offset);
+        if (base_storage->Read(reinterpret_cast<u8*>(work_buf), data_alignment,
+                               aligned_tail_offset) != data_alignment) {
+            return 0;
+        }
 
         ASSERT((tail_offset - offset) + cur_size <= size);
         ASSERT((tail_offset - aligned_tail_offset) + cur_size <= data_alignment);

@@ -14,6 +14,7 @@
 #include "core/file_sys/fssystem/fssystem_bucket_tree.h"
 #include "core/file_sys/fssystem/fssystem_bucket_tree_template_impl.h"
 #include "core/file_sys/vfs/vfs.h"
+#include "core/file_sys/romfs_read_diagnostics.h"
 #include "core/file_sys/vfs/vfs_offset.h"
 
 namespace FileSys {
@@ -70,6 +71,7 @@ public:
 public:
     IndirectStorage() : m_table(), m_data_storage() {}
     virtual ~IndirectStorage() {
+        m_diagnostics.Log("destroy");
         this->Finalize();
     }
 
@@ -81,8 +83,10 @@ public:
     }
 
     Result Initialize(VirtualFile node_storage, VirtualFile entry_storage, s32 entry_count) {
-        R_RETURN(
+        R_TRY(
             m_table.Initialize(node_storage, entry_storage, NodeSize, sizeof(Entry), entry_count));
+        m_diagnostics.Initialize(entry_count);
+        R_SUCCEED();
     }
 
     void SetStorage(s32 idx, VirtualFile storage) {
@@ -111,6 +115,11 @@ public:
 
     virtual size_t Read(u8* buffer, size_t size, size_t offset) const override;
 
+    size_t ReadUnmerged(u8* buffer, size_t size, size_t offset);
+    void LogReadDiagnostics(std::string_view phase) const {
+        m_diagnostics.Log(phase);
+    }
+
 public:
     static constexpr s64 QueryHeaderStorageSize() {
         return BucketTree::QueryHeaderStorageSize();
@@ -135,7 +144,7 @@ protected:
     }
 
     template <bool ContinuousCheck, bool RangeCheck, typename F>
-    Result OperatePerEntry(s64 offset, s64 size, F func);
+    Result OperatePerEntry(s64 offset, s64 size, F func, u64* visited = nullptr);
     // Launching another game makes the original storage inaccessable.
     // This is a helper for multi-nca games.
     void ReportMissingOriginal(s64 offset, s64 size);
@@ -161,6 +170,7 @@ private:
     static_assert(std::is_trivial_v<ContinuousReadingEntry>);
 
 private:
+    BktrReadDiagnostics m_diagnostics{"relocation"};
     mutable BucketTree m_table;
     std::array<VirtualFile, StorageCount> m_data_storage;
     bool m_original_missing{false};
@@ -168,7 +178,7 @@ private:
 };
 
 template <bool ContinuousCheck, bool RangeCheck, typename F>
-Result IndirectStorage::OperatePerEntry(s64 offset, s64 size, F func) {
+Result IndirectStorage::OperatePerEntry(s64 offset, s64 size, F func, u64* visited) {
     // Validate preconditions.
     ASSERT(offset >= 0);
     ASSERT(size >= 0);
@@ -199,6 +209,9 @@ Result IndirectStorage::OperatePerEntry(s64 offset, s64 size, F func) {
     BucketTree::ContinuousReadingInfo cr_info;
 
     while (cur_offset < end_offset) {
+        if (visited != nullptr) {
+            ++*visited;
+        }
         // Get the current entry.
         const auto cur_entry = *visitor.Get<Entry>();
 

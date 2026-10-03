@@ -130,7 +130,8 @@ public:
             auto mid = pos + half;
 
             s64 offset = 0;
-            storage->ReadObject(std::addressof(offset), mid.Get());
+            R_UNLESS(storage->ReadObject(std::addressof(offset), mid.Get()) == sizeof(offset),
+                     ResultOutOfRange);
 
             if (offset <= virtual_address) {
                 pos = mid + 1;
@@ -194,7 +195,8 @@ Result BucketTree::Initialize(VirtualFile node_storage, VirtualFile entry_storag
     };
 
     // Read node.
-    node_storage->Read(reinterpret_cast<u8*>(m_node_l1.Get()), node_size);
+    R_UNLESS(node_storage->Read(reinterpret_cast<u8*>(m_node_l1.Get()), node_size) == node_size,
+             ResultOutOfRange);
 
     // Verify node.
     R_TRY(m_node_l1->Verify(0, node_size, sizeof(s64)));
@@ -297,7 +299,9 @@ Result BucketTree::EnsureOffsetCache() {
     R_SUCCEED_IF(m_offset_cache.is_initialized);
 
     // Read/verify L1.
-    m_node_storage->Read(reinterpret_cast<u8*>(m_node_l1.Get()), m_node_size);
+    R_UNLESS(m_node_storage->Read(reinterpret_cast<u8*>(m_node_l1.Get()), m_node_size) ==
+                 m_node_size,
+             ResultOutOfRange);
     R_TRY(m_node_l1->Verify(0, m_node_size, sizeof(s64)));
 
     // Get the node.
@@ -353,7 +357,9 @@ Result BucketTree::Visitor::MoveNext() {
         const auto entry_set_size = m_tree->m_node_size;
         const auto entry_set_offset = entry_set_index * static_cast<s64>(entry_set_size);
 
-        m_tree->m_entry_storage->ReadObject(std::addressof(m_entry_set), entry_set_offset);
+        R_UNLESS(m_tree->m_entry_storage->ReadObject(std::addressof(m_entry_set),
+                                                     entry_set_offset) == sizeof(m_entry_set),
+                 ResultOutOfRange);
         R_TRY(m_entry_set.header.Verify(entry_set_index, entry_set_size, m_tree->m_entry_size));
 
         R_UNLESS(m_entry_set.info.start == end && m_entry_set.info.start < m_entry_set.info.end,
@@ -368,7 +374,9 @@ Result BucketTree::Visitor::MoveNext() {
     const auto entry_size = m_tree->m_entry_size;
     const auto entry_offset = impl::GetBucketTreeEntryOffset(
         m_entry_set.info.index, m_tree->m_node_size, entry_size, entry_index);
-    m_tree->m_entry_storage->Read(reinterpret_cast<u8*>(m_entry), entry_size, entry_offset);
+    R_UNLESS(m_tree->m_entry_storage->Read(reinterpret_cast<u8*>(m_entry), entry_size,
+                                           entry_offset) == entry_size,
+             ResultOutOfRange);
 
     // Note that we changed index.
     m_entry_index = entry_index;
@@ -391,7 +399,9 @@ Result BucketTree::Visitor::MovePrevious() {
         const auto entry_set_index = m_entry_set.info.index - 1;
         const auto entry_set_offset = entry_set_index * static_cast<s64>(entry_set_size);
 
-        m_tree->m_entry_storage->ReadObject(std::addressof(m_entry_set), entry_set_offset);
+        R_UNLESS(m_tree->m_entry_storage->ReadObject(std::addressof(m_entry_set),
+                                                     entry_set_offset) == sizeof(m_entry_set),
+                 ResultOutOfRange);
         R_TRY(m_entry_set.header.Verify(entry_set_index, entry_set_size, m_tree->m_entry_size));
 
         R_UNLESS(m_entry_set.info.end == start && m_entry_set.info.start < m_entry_set.info.end,
@@ -408,7 +418,9 @@ Result BucketTree::Visitor::MovePrevious() {
     const auto entry_size = m_tree->m_entry_size;
     const auto entry_offset = impl::GetBucketTreeEntryOffset(
         m_entry_set.info.index, m_tree->m_node_size, entry_size, entry_index);
-    m_tree->m_entry_storage->Read(reinterpret_cast<u8*>(m_entry), entry_size, entry_offset);
+    R_UNLESS(m_tree->m_entry_storage->Read(reinterpret_cast<u8*>(m_entry), entry_size,
+                                           entry_offset) == entry_size,
+             ResultOutOfRange);
 
     // Note that we changed index.
     m_entry_index = entry_index;
@@ -477,7 +489,8 @@ Result BucketTree::Visitor::FindEntrySetWithBuffer(s32* out_index, s64 virtual_a
     VirtualFile storage = m_tree->m_node_storage;
 
     // Read the node.
-    storage->Read(reinterpret_cast<u8*>(buffer), node_size, node_offset);
+    R_UNLESS(storage->Read(reinterpret_cast<u8*>(buffer), node_size, node_offset) == node_size,
+             ResultOutOfRange);
 
     // Validate the header.
     NodeHeader header;
@@ -503,7 +516,8 @@ Result BucketTree::Visitor::FindEntrySetWithoutBuffer(s32* out_index, s64 virtua
 
     // Read and validate the header.
     NodeHeader header;
-    storage->ReadObject(std::addressof(header), node_offset);
+    R_UNLESS(storage->ReadObject(std::addressof(header), node_offset) == sizeof(header),
+             ResultOutOfRange);
     R_TRY(header.Verify(node_index, node_size, sizeof(s64)));
 
     // Create the node, and find.
@@ -530,7 +544,9 @@ Result BucketTree::Visitor::FindEntryWithBuffer(s64 virtual_address, s32 entry_s
     VirtualFile storage = m_tree->m_entry_storage;
 
     // Read the entry set.
-    storage->Read(reinterpret_cast<u8*>(buffer), entry_set_size, entry_set_offset);
+    R_UNLESS(storage->Read(reinterpret_cast<u8*>(buffer), entry_set_size, entry_set_offset) ==
+                 entry_set_size,
+             ResultOutOfRange);
 
     // Validate the entry_set.
     EntrySetHeader entry_set;
@@ -563,7 +579,8 @@ Result BucketTree::Visitor::FindEntryWithoutBuffer(s64 virtual_address, s32 entr
 
     // Read and validate the entry_set.
     EntrySetHeader entry_set;
-    storage->ReadObject(std::addressof(entry_set), entry_set_offset);
+    R_UNLESS(storage->ReadObject(std::addressof(entry_set), entry_set_offset) == sizeof(entry_set),
+             ResultOutOfRange);
     R_TRY(entry_set.header.Verify(entry_set_index, entry_set_size, entry_size));
 
     // Create the node, and find.
@@ -575,7 +592,8 @@ Result BucketTree::Visitor::FindEntryWithoutBuffer(s64 virtual_address, s32 entr
     const auto entry_index = node.GetIndex();
     const auto entry_offset =
         impl::GetBucketTreeEntryOffset(entry_set_offset, entry_size, entry_index);
-    storage->Read(reinterpret_cast<u8*>(m_entry), entry_size, entry_offset);
+    R_UNLESS(storage->Read(reinterpret_cast<u8*>(m_entry), entry_size, entry_offset) == entry_size,
+             ResultOutOfRange);
 
     // Set our entry set/index.
     m_entry_set = entry_set;

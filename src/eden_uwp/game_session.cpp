@@ -35,6 +35,7 @@
 #include "core/cpu_manager.h"
 #include "core/file_sys/nsz.h"
 #include "core/file_sys/registered_cache.h"
+#include "core/file_sys/romfs_verify.h"
 #include "core/file_sys/vfs/vfs_real.h"
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
@@ -385,6 +386,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         }
     }
     Common::Log::Initialize();
+    FileSys::ResetRomfsVerification();
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
     // XAudio2 is the audio path available to UWP; NXBOX_AUDIO=null (LocalState\nxbox_env.txt)
     // falls back to silence.

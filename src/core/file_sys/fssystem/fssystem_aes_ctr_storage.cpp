@@ -52,7 +52,12 @@ size_t AesCtrStorage::Read(u8* buffer, size_t size, size_t offset) const {
     ASSERT(Common::IsAligned(size, BlockSize));
 
     // Read the data.
-    m_base_storage->Read(buffer, size, offset);
+    if (m_base_storage->Read(buffer, size, offset) != size) {
+        return 0;
+    }
+
+    // SetIV and Transcode share an EVP context and must be one atomic operation.
+    const std::scoped_lock lock{m_mutex};
 
     // Setup the counter.
     std::array<u8, IvSize> ctr;
@@ -78,6 +83,9 @@ size_t AesCtrStorage::Write(const u8* buffer, size_t size, size_t offset) {
     // We can only write at block aligned offsets.
     ASSERT(Common::IsAligned(offset, BlockSize));
     ASSERT(Common::IsAligned(size, BlockSize));
+
+    // SetIV and Transcode share an EVP context and must be one atomic operation.
+    const std::scoped_lock lock{m_mutex};
 
     // Setup the counter.
     std::array<u8, IvSize> ctr;

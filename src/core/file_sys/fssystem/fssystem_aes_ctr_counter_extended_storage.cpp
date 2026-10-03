@@ -80,6 +80,7 @@ Result AesCtrCounterExtendedStorage::Initialize(const void* key, size_t key_size
     m_secure_value = secure_value;
     m_counter_offset = counter_offset;
     m_decryptor = std::move(decryptor);
+    m_diagnostics.Initialize(entry_count);
 
     R_SUCCEED();
 }
@@ -154,91 +155,73 @@ Result AesCtrCounterExtendedStorage::GetEntryList(Entry* out_entries, s32* out_e
 }
 
 size_t AesCtrCounterExtendedStorage::Read(u8* buffer, size_t size, size_t offset) const {
-    // Validate preconditions.
     ASSERT(this->IsInitialized());
-
-    // Allow zero size.
     if (size == 0) {
-        return size;
+        return 0;
     }
-
-    // Validate arguments.
-    ASSERT(buffer != nullptr);
-    ASSERT(Common::IsAligned(offset, BlockSize));
-    ASSERT(Common::IsAligned(size, BlockSize));
-
+    u64 visited = 0;
+    const auto fail = [&](Result result) -> size_t {
+        m_diagnostics.Record(visited, true);
+        m_diagnostics.Failure(offset, size, result.raw);
+        return 0;
+    };
+    if (buffer == nullptr || !Common::IsAligned(offset, BlockSize) ||
+        !Common::IsAligned(size, BlockSize)) {
+        return fail(ResultInvalidArgument);
+    }
     BucketTree::Offsets table_offsets{};
-    ASSERT(R_SUCCEEDED(m_table.GetOffsets(std::addressof(table_offsets))));
-
-    ASSERT(table_offsets.IsInclude(offset, size));
-
-    // Read the data.
-    m_data_storage->Read(buffer, size, offset);
-
-    // Find the offset in our tree.
+    if (const Result result = m_table.GetOffsets(&table_offsets); R_FAILED(result)) {
+        return fail(result);
+    }
+    if (offset > static_cast<u64>(table_offsets.end_offset) ||
+        size > static_cast<u64>(table_offsets.end_offset) - offset ||
+        offset < static_cast<u64>(table_offsets.start_offset)) {
+        return fail(ResultOutOfRange);
+    }
+    if (m_data_storage->Read(buffer, size, offset) != size) {
+        return fail(ResultInvalidSize);
+    }
     BucketTree::Visitor visitor;
-    ASSERT(R_SUCCEEDED(m_table.Find(std::addressof(visitor), offset)));
-    {
-        const auto entry_offset = visitor.Get<Entry>()->GetOffset();
-        ASSERT(Common::IsAligned(entry_offset, BlockSize));
-        ASSERT(0 <= entry_offset && table_offsets.IsInclude(entry_offset));
+    if (const Result result = m_table.Find(&visitor, offset); R_FAILED(result)) {
+        return fail(result);
     }
-
-    // Prepare to read in chunks.
-    u8* cur_data = static_cast<u8*>(buffer);
-    auto cur_offset = offset;
-    const auto end_offset = offset + static_cast<s64>(size);
-
-    while (cur_offset < end_offset) {
-        // Get the current entry.
-        const auto cur_entry = *visitor.Get<Entry>();
-
-        // Get and validate the entry's offset.
-        const auto cur_entry_offset = cur_entry.GetOffset();
-        ASSERT(static_cast<size_t>(cur_entry_offset) <= cur_offset);
-
-        // Get and validate the next entry offset.
-        s64 next_entry_offset;
+    size_t current = offset;
+    const size_t end = offset + size;
+    while (current < end) {
+        ++visited;
+        const auto entry = *visitor.Get<Entry>();
+        const s64 entry_offset = entry.GetOffset();
+        if (entry_offset < 0 || static_cast<u64>(entry_offset) > current ||
+            !Common::IsAligned(entry_offset, BlockSize)) {
+            return fail(ResultInvalidAesCtrCounterExtendedEntryOffset);
+        }
+        s64 next_offset = table_offsets.end_offset;
         if (visitor.CanMoveNext()) {
-            ASSERT(R_SUCCEEDED(visitor.MoveNext()));
-            next_entry_offset = visitor.Get<Entry>()->GetOffset();
-            ASSERT(table_offsets.IsInclude(next_entry_offset));
-        } else {
-            next_entry_offset = table_offsets.end_offset;
+            if (const Result result = visitor.MoveNext(); R_FAILED(result)) {
+                return fail(result);
+            }
+            next_offset = visitor.Get<Entry>()->GetOffset();
         }
-        ASSERT(Common::IsAligned(next_entry_offset, BlockSize));
-        ASSERT(cur_offset < static_cast<size_t>(next_entry_offset));
-
-        // Get the offset of the entry in the data we read.
-        const auto data_offset = cur_offset - cur_entry_offset;
-        const auto data_size = (next_entry_offset - cur_entry_offset) - data_offset;
-        ASSERT(data_size > 0);
-
-        // Determine how much is left.
-        const auto remaining_size = end_offset - cur_offset;
-        const auto cur_size = static_cast<size_t>((std::min)(remaining_size, data_size));
-        ASSERT(cur_size <= size);
-
-        // If necessary, perform decryption.
-        if (cur_entry.encryption_value == Entry::Encryption::Encrypted) {
-            // Make the CTR for the data we're decrypting.
-            const auto counter_offset = m_counter_offset + cur_entry_offset + data_offset;
-            NcaAesCtrUpperIv upper_iv = {
-                .part = {.generation = static_cast<u32>(cur_entry.generation),
+        if (next_offset <= static_cast<s64>(current) || next_offset > table_offsets.end_offset ||
+            !Common::IsAligned(next_offset, BlockSize)) {
+            return fail(ResultInvalidAesCtrCounterExtendedEntryOffset);
+        }
+        const size_t chunk = std::min(end - current, static_cast<size_t>(next_offset) - current);
+        if (entry.encryption_value == Entry::Encryption::Encrypted) {
+            const NcaAesCtrUpperIv upper_iv = {
+                .part = {.generation = static_cast<u32>(entry.generation),
                          .secure_value = m_secure_value}};
-
-            std::array<u8, IvSize> iv;
-            AesCtrStorage::MakeIv(iv.data(), IvSize, upper_iv.value, counter_offset);
-
-            // Decrypt.
-            m_decryptor->Decrypt(cur_data, cur_size, m_key, iv);
+            std::array<u8, IvSize> iv{};
+            // The low counter uses the physical NCA position, not the virtual
+            // relocation offset or the start of the subsection.
+            AesCtrStorage::MakeIv(iv.data(), iv.size(), upper_iv.value, m_counter_offset + current);
+            m_decryptor->Decrypt(buffer + (current - offset), chunk, m_key, iv);
+        } else if (entry.encryption_value != Entry::Encryption::NotEncrypted) {
+            return fail(ResultInvalidArgument);
         }
-
-        // Advance.
-        cur_data += cur_size;
-        cur_offset += cur_size;
+        current += chunk;
     }
-
+    m_diagnostics.Record(visited, false);
     return size;
 }
 
