@@ -1258,6 +1258,16 @@ Result KProcess::LoadFromMetadata(KernelCore& kernel, const FileSys::ProgramMeta
     // Initialize for application process.
     R_TRY(this->Initialize(kernel, params, metadata.GetKernelCapabilities(), res_limit, pool, aslr_space_start));
 
+#ifdef NXBOX_UWP
+    LOG_INFO(Kernel, "NXBOX MEM_LAYOUT pid={:#x} code={:#x}+{:#x} pool={:#x} system_resource={:#x}",
+             m_process_id, params.code_address, code_size, physical_memory_size,
+             metadata.GetSystemResourceSize());
+    LOG_INFO(Kernel, "NXBOX MEM_LAYOUT heap={:#x}+{:#x} alias={:#x}+{:#x} stack={:#x}+{:#x}",
+             GetInteger(m_page_table.GetHeapRegionStart()), m_page_table.GetHeapRegionSize(),
+             GetInteger(m_page_table.GetAliasRegionStart()), m_page_table.GetAliasRegionSize(),
+             GetInteger(m_page_table.GetStackRegionStart()), m_page_table.GetStackRegionSize());
+#endif
+
     // Assign remaining properties.
     m_ideal_core_id = metadata.GetMainThreadCore();
 
