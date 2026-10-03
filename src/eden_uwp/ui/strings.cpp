@@ -53,8 +53,8 @@ constexpr Entry kTable[] = {
      L"prod.keys into the app's eden\\keys folder with Device Portal, or press A to import "
      L"from a USB drive."}, // MissingKeysBody
     {L"Procurando jogos", L"Looking for games"},           // ScanningTitle
-    {L"Convertendo o jogo para um formato que o Xbox entende",
-     L"Converting the game to a format the Xbox understands"}, // ConvertingTitle
+    {L"Convertendo o jogo para o formato do emulador",
+     L"Converting the game to the emulator's format"}, // ConvertingTitle
     {L"Configurações", L"Settings"},                       // SettingsTitle
     {L"Fontes de jogos, mods e arte entram aqui nas próximas versões.",
      L"Game sources, mods and art will live here in upcoming versions."}, // SettingsBody
