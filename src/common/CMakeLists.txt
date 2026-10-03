@@ -151,7 +151,7 @@ add_library(
 
 set_source_files_properties(zbic_compression.cpp PROPERTIES
     INCLUDE_DIRECTORIES "${ZBIC_INCLUDE_DIR}"
-    COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,GNU>:-Wno-unused-function;-Wno-missing-declarations;-Wno-shadow>")
+    COMPILE_OPTIONS "$<$<CXX_COMPILER_ID:Clang,GNU>:-Wno-unused-function;-Wno-missing-declarations;-Wno-shadow>;$<$<CXX_COMPILER_ID:MSVC>:/W0;/wd4505>")
 
 if(WIN32)
     target_sources(common PRIVATE windows/timer_resolution.cpp
