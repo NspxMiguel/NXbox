@@ -8,6 +8,7 @@
 #include "common/assert.h"
 #include "common/logging.h"
 #include "core/core.h"
+#include "core/hle/kernel/k_process.h"
 #include "core/hle/service/nvdrv/core/container.h"
 #include "core/hle/service/nvdrv/devices/ioctl_serialization.h"
 #include "core/hle/service/nvdrv/devices/nvhost_nvdec.h"
@@ -25,18 +26,20 @@ NvResult nvhost_nvdec::Ioctl1(DeviceFD fd, Ioctl command, std::span<const u8> in
     switch (command.group) {
     case 0x0:
         switch (command.cmd) {
-        case 0x1:
+        case 0x01:
             return WrapFixedVariable(this, &nvhost_nvdec::Submit, input, output, fd);
-        case 0x2:
+        case 0x02:
             return WrapFixed(this, &nvhost_nvdec::GetSyncpoint, input, output);
-        case 0x3:
+        case 0x03:
             return WrapFixed(this, &nvhost_nvdec::GetWaitbase, input, output);
-        case 0x7:
+        case 0x07:
             return WrapFixed(this, &nvhost_nvdec::SetSubmitTimeout, input, output);
-        case 0x9:
+        case 0x09:
             return WrapFixedVariable(this, &nvhost_nvdec::MapBuffer, input, output, fd);
-        case 0xa:
+        case 0x0a:
             return WrapFixedVariable(this, &nvhost_nvdec::UnmapBuffer, input, output);
+        case 0x23:
+            return WrapFixed(this, &nvhost_nvdec::GetClkRate, input, output);
         default:
             break;
         }
@@ -69,17 +72,23 @@ NvResult nvhost_nvdec::Ioctl3(DeviceFD fd, Ioctl command, std::span<const u8> in
 
 void nvhost_nvdec::OnOpen(NvCore::SessionId session_id, DeviceFD fd) {
     LOG_INFO(Service_NVDRV, "NVDEC video stream started");
-    system.SetNVDECActive(true);
     sessions[fd] = session_id;
+    if (const auto* session = core.GetSession(session_id);
+        session != nullptr && session->process != nullptr) {
+        system.NotifyNVDECChannelOpen(session->process->GetId());
+    }
     host1x.StartDevice(fd, Tegra::Host1x::ChannelType::NvDec, channel_syncpoint);
 }
 
 void nvhost_nvdec::OnClose(DeviceFD fd) {
     LOG_INFO(Service_NVDRV, "NVDEC video stream ended");
     host1x.StopDevice(fd, Tegra::Host1x::ChannelType::NvDec);
-    system.SetNVDECActive(false);
     auto it = sessions.find(fd);
     if (it != sessions.end()) {
+        if (const auto* session = core.GetSession(it->second);
+            session != nullptr && session->process != nullptr) {
+            system.NotifyNVDECChannelClose(session->process->GetId());
+        }
         sessions.erase(it);
     }
 }

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
@@ -23,12 +23,12 @@ void ExitProcess(Core::System& system) {
 
 /// Gets the ID of the specified process or a specified thread's owning process.
 Result GetProcessId(Core::System& system, u64* out_process_id, Handle handle) {
-    LOG_DEBUG(Kernel_SVC, "called handle=0x{:08X}", handle);
+    LOG_DEBUG(Kernel_SVC, "called handle={:#08x}", handle);
 
     // Get the object from the handle table.
     KScopedAutoObject obj = GetCurrentProcess(system.Kernel())
-                                .GetHandleTable()
-                                .GetObject<KAutoObject>(static_cast<Handle>(handle));
+        .GetHandleTable()
+        .GetObject<KAutoObject>(system.Kernel(), Handle(handle));
     R_UNLESS(obj.IsNotNull(), ResultInvalidHandle);
 
     // Get the process from the object.
@@ -55,7 +55,7 @@ Result GetProcessId(Core::System& system, u64* out_process_id, Handle handle) {
 
 Result GetProcessList(Core::System& system, s32* out_num_processes, u64 out_process_ids,
                       int32_t out_process_ids_size) {
-    LOG_DEBUG(Kernel_SVC, "called. out_process_ids=0x{:016X}, out_process_ids_size={}",
+    LOG_DEBUG(Kernel_SVC, "called. out_process_ids={:#016x}, out_process_ids_size={}",
               out_process_ids, out_process_ids_size);
 
     // If the supplied size is negative or greater than INT32_MAX / sizeof(u64), bail.
@@ -71,7 +71,7 @@ Result GetProcessList(Core::System& system, s32* out_num_processes, u64 out_proc
 
     if (out_process_ids_size > 0 &&
         !GetCurrentProcess(kernel).GetPageTable().Contains(out_process_ids, total_copy_size)) {
-        LOG_ERROR(Kernel_SVC, "Address range outside address space. begin=0x{:016X}, end=0x{:016X}",
+        LOG_ERROR(Kernel_SVC, "Address range outside address space. begin={:#016x}, end={:#016x}",
                   out_process_ids, out_process_ids + total_copy_size);
         R_THROW(ResultInvalidCurrentMemory);
     }
@@ -95,12 +95,12 @@ Result GetProcessList(Core::System& system, s32* out_num_processes, u64 out_proc
 
 Result GetProcessInfo(Core::System& system, s64* out, Handle process_handle,
                       ProcessInfoType info_type) {
-    LOG_DEBUG(Kernel_SVC, "called, handle=0x{:08X}, type={:#X}", process_handle, info_type);
+    LOG_DEBUG(Kernel_SVC, "called, handle={:#08x}, type={:#x}", process_handle, info_type);
 
     const auto& handle_table = GetCurrentProcess(system.Kernel()).GetHandleTable();
-    KScopedAutoObject process = handle_table.GetObject<KProcess>(process_handle);
+    KScopedAutoObject process = handle_table.GetObject<KProcess>(system.Kernel(), process_handle);
     if (process.IsNull()) {
-        LOG_ERROR(Kernel_SVC, "Process handle does not exist, process_handle=0x{:08X}",
+        LOG_ERROR(Kernel_SVC, "Process handle does not exist, process_handle={:#08x}",
                   process_handle);
         R_THROW(ResultInvalidHandle);
     }

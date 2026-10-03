@@ -96,6 +96,8 @@ std::once_flag flag;
 std::optional<SpinLockImpl> impl;
 
 void SpinLockImpl::Initialize() noexcept {
+    // Needed for W^X systems (i.e SElinux, OpenBSD)
+    code.setProtectMode(Xbyak::CodeArray::ProtectMode::PROTECT_RW);
     Xbyak::Reg64 const ABI_PARAM1 = Backend::X64::HostLocToReg64(Backend::X64::ABI_PARAM1);
     code.align();
     lock = code.getCurr<void (*)(volatile int*)>();
@@ -105,6 +107,7 @@ void SpinLockImpl::Initialize() noexcept {
     unlock = code.getCurr<void (*)(volatile int*)>();
     EmitSpinLockUnlock(code, ABI_PARAM1, code.eax);
     code.ret();
+    code.setProtectMode(Xbyak::CodeArray::ProtectMode::PROTECT_RE);
 }
 
 void SpinLockImpl::GlobalInitialize() noexcept {

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -12,7 +15,7 @@ namespace Kernel::Svc {
 /// Sets the thread activity
 Result SetThreadActivity(Core::System& system, Handle thread_handle,
                          ThreadActivity thread_activity) {
-    LOG_DEBUG(Kernel_SVC, "called, handle=0x{:08X}, activity=0x{:08X}", thread_handle,
+    LOG_DEBUG(Kernel_SVC, "called, handle={:#08x}, activity={:#08x}", thread_handle,
               thread_activity);
 
     // Validate the activity.
@@ -22,17 +25,15 @@ Result SetThreadActivity(Core::System& system, Handle thread_handle,
     R_UNLESS(IsValidThreadActivity(thread_activity), ResultInvalidEnumValue);
 
     // Get the thread from its handle.
-    KScopedAutoObject thread =
-        GetCurrentProcess(system.Kernel()).GetHandleTable().GetObject<KThread>(thread_handle);
+    KScopedAutoObject thread = GetCurrentProcess(system.Kernel()).GetHandleTable().GetObject<KThread>(system.Kernel(), thread_handle);
     R_UNLESS(thread.IsNotNull(), ResultInvalidHandle);
 
     // Check that the activity is being set on a non-current thread for the current process.
-    R_UNLESS(thread->GetOwnerProcess() == GetCurrentProcessPointer(system.Kernel()),
-             ResultInvalidHandle);
+    R_UNLESS(thread->GetOwnerProcess() == GetCurrentProcessPointer(system.Kernel()), ResultInvalidHandle);
     R_UNLESS(thread.GetPointerUnsafe() != GetCurrentThreadPointer(system.Kernel()), ResultBusy);
 
     // Set the activity.
-    R_TRY(thread->SetActivity(thread_activity));
+    R_TRY(thread->SetActivity(system.Kernel(), thread_activity));
 
     return ResultSuccess;
 }

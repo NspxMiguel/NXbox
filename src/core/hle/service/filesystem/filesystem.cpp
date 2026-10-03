@@ -43,6 +43,16 @@ static FileSys::VirtualDir GetDirectoryRelativeWrapped(FileSys::VirtualDir base,
     return base->GetDirectoryRelative(dir_name);
 }
 
+static std::string_view GetGuestParentPath(std::string_view path) {
+    const auto name_index = path.find_last_of("\\/");
+    return name_index == std::string_view::npos ? std::string_view{} : path.substr(0, name_index);
+}
+
+static std::string_view GetGuestFilename(std::string_view path) {
+    const auto name_index = path.find_last_of("\\/");
+    return name_index == std::string_view::npos ? path : path.substr(name_index + 1);
+}
+
 VfsDirectoryServiceWrapper::VfsDirectoryServiceWrapper(FileSys::VirtualDir backing_)
     : backing(std::move(backing_)) {}
 
@@ -83,11 +93,12 @@ Result VfsDirectoryServiceWrapper::DeleteFile(const std::string& path_) const {
         return ResultSuccess;
     }
 
-    auto dir = GetDirectoryRelativeWrapped(backing, Common::FS::GetParentPath(path));
-    if (dir == nullptr || dir->GetFile(Common::FS::GetFilename(path)) == nullptr) {
+    const auto filename = GetGuestFilename(path);
+    auto dir = GetDirectoryRelativeWrapped(backing, GetGuestParentPath(path));
+    if (filename.empty() || dir == nullptr || dir->GetFile(filename) == nullptr) {
         return FileSys::ResultPathNotFound;
     }
-    if (!dir->DeleteFile(Common::FS::GetFilename(path))) {
+    if (!dir->DeleteFile(filename)) {
         // TODO(DarkLordZach): Find a better error code for this
         return ResultUnknown;
     }
@@ -97,7 +108,9 @@ Result VfsDirectoryServiceWrapper::DeleteFile(const std::string& path_) const {
 
 Result VfsDirectoryServiceWrapper::CreateDirectory(const std::string& path_) const {
     std::string path(Common::FS::SanitizePath(path_));
-
+    if (GetDirectoryRelativeWrapped(backing, path) != nullptr) {
+        return FileSys::ResultPathAlreadyExists;
+    }
     // NOTE: This is inaccurate behavior. CreateDirectory is not recursive.
     // CreateDirectory should return PathNotFound if the parent directory does not exist.
     // This is here temporarily in order to have UMM "work" in the meantime.
@@ -117,8 +130,19 @@ Result VfsDirectoryServiceWrapper::CreateDirectory(const std::string& path_) con
 
 Result VfsDirectoryServiceWrapper::DeleteDirectory(const std::string& path_) const {
     std::string path(Common::FS::SanitizePath(path_));
-    auto dir = GetDirectoryRelativeWrapped(backing, Common::FS::GetParentPath(path));
-    if (!dir->DeleteSubdirectory(Common::FS::GetFilename(path))) {
+    const auto dirname = GetGuestFilename(path);
+    auto dir = GetDirectoryRelativeWrapped(backing, GetGuestParentPath(path));
+    FileSys::VirtualDir target{};
+    if (!dirname.empty() && dir != nullptr) {
+        target = dir->GetSubdirectory(dirname);
+    }
+    if (target == nullptr) {
+        return FileSys::ResultPathNotFound;
+    }
+    if (!target->GetFiles().empty() || !target->GetSubdirectories().empty()) {
+        return ResultUnknown;
+    }
+    if (!dir->DeleteSubdirectory(dirname)) {
         // TODO(DarkLordZach): Find a better error code for this
         return ResultUnknown;
     }
@@ -127,8 +151,12 @@ Result VfsDirectoryServiceWrapper::DeleteDirectory(const std::string& path_) con
 
 Result VfsDirectoryServiceWrapper::DeleteDirectoryRecursively(const std::string& path_) const {
     std::string path(Common::FS::SanitizePath(path_));
-    auto dir = GetDirectoryRelativeWrapped(backing, Common::FS::GetParentPath(path));
-    if (!dir->DeleteSubdirectoryRecursive(Common::FS::GetFilename(path))) {
+    const auto dirname = GetGuestFilename(path);
+    auto dir = GetDirectoryRelativeWrapped(backing, GetGuestParentPath(path));
+    if (dirname.empty() || dir == nullptr || dir->GetSubdirectory(dirname) == nullptr) {
+        return FileSys::ResultPathNotFound;
+    }
+    if (!dir->DeleteSubdirectoryRecursive(dirname)) {
         // TODO(DarkLordZach): Find a better error code for this
         return ResultUnknown;
     }
@@ -137,9 +165,13 @@ Result VfsDirectoryServiceWrapper::DeleteDirectoryRecursively(const std::string&
 
 Result VfsDirectoryServiceWrapper::CleanDirectoryRecursively(const std::string& path) const {
     const std::string sanitized_path(Common::FS::SanitizePath(path));
-    auto dir = GetDirectoryRelativeWrapped(backing, Common::FS::GetParentPath(sanitized_path));
+    const auto dirname = GetGuestFilename(sanitized_path);
+    auto dir = GetDirectoryRelativeWrapped(backing, GetGuestParentPath(sanitized_path));
 
-    if (!dir->CleanSubdirectoryRecursive(Common::FS::GetFilename(sanitized_path))) {
+    if (dirname.empty() || dir == nullptr || dir->GetSubdirectory(dirname) == nullptr) {
+        return FileSys::ResultPathNotFound;
+    }
+    if (!dir->CleanSubdirectoryRecursive(dirname)) {
         // TODO(DarkLordZach): Find a better error code for this
         return ResultUnknown;
     }
@@ -195,12 +227,13 @@ Result VfsDirectoryServiceWrapper::RenameDirectory(const std::string& src_path_,
     std::string src_path(Common::FS::SanitizePath(src_path_));
     std::string dest_path(Common::FS::SanitizePath(dest_path_));
     auto src = GetDirectoryRelativeWrapped(backing, src_path);
+    if (src == nullptr)
+        return FileSys::ResultPathNotFound;
+
     if (Common::FS::GetParentPath(src_path) == Common::FS::GetParentPath(dest_path)) {
-        // Use more-optimized vfs implementation rename.
-        if (src == nullptr)
-            return FileSys::ResultPathNotFound;
-        if (!src->Rename(Common::FS::GetFilename(dest_path))) {
-            // TODO(DarkLordZach): Find a better error code for this
+        std::string full_src_path = backing->GetFullPath() + "/" + src_path;
+        std::string full_dest_path = backing->GetFullPath() + "/" + dest_path;
+        if (!Common::FS::RenameDir(full_src_path, full_dest_path)) {
             return ResultUnknown;
         }
         return ResultSuccess;
@@ -754,6 +787,13 @@ void FileSystemController::CreateFactories(FileSys::VfsFilesystem& vfs, bool ove
     }
 }
 
+void FileSystemController::InitTempStorage() {
+    const auto save_directory = system.GetFilesystem()->OpenDirectory(Common::FS::GetEdenPathString(Common::FS::EdenPath::SaveDir), FileSys::OpenMode::ReadWrite);
+    if (save_directory != nullptr) {
+        save_directory->DeleteSubdirectoryRecursive("temp");
+    }
+}
+
 void FileSystemController::Reset() {
     std::scoped_lock lk{registration_lock};
     registrations.clear();
@@ -764,9 +804,9 @@ void LoopProcess(Core::System& system) {
 
     const auto FileSystemProxyFactory = [&] { return std::make_shared<FSP_SRV>(system); };
 
-    server_manager->RegisterNamedService("fsp-ldr", std::make_shared<FSP_LDR>(system));
-    server_manager->RegisterNamedService("fsp:pr", std::make_shared<FSP_PR>(system));
-    server_manager->RegisterNamedService("fsp-srv", std::move(FileSystemProxyFactory));
+    server_manager->RegisterNamedService("fsp-ldr", std::make_shared<FSP_LDR>(system), 61);
+    server_manager->RegisterNamedService("fsp-pr", std::make_shared<FSP_PR>(system), 61);
+    server_manager->RegisterNamedService("fsp-srv", std::move(FileSystemProxyFactory), 61);
     ServerManager::RunServer(std::move(server_manager));
 }
 

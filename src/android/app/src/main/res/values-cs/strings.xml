@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Tento software umožňuje spouštět hry pro herní konzoli Nintendo Switch. Neobsahuje žádné herní tituly ani klíče.<br /><br /> Nejdříve prosím vyhledejte soubor <![CDATA[<b> prod.keys </b>]]> v úložišti vašeho zařízení.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Další informace</a>]]></string>
     <string name="notice_notification_channel_name">Upozornění a chyby</string>
     <string name="notice_notification_channel_description">Zobrazí oznámení v případě chyby.</string>
     <string name="notification_permission_not_granted">Oprávnění k zobrazení oznámení nebylo uděleno!</string>
@@ -97,7 +96,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Emulace NVDEC</string>
-    <string name="nvdec_emulation_description">Určuje, jakým způsobem se zpracovává dekódování videa (NVDEC).</string>
     <string name="nvdec_emulation_none">Žádné</string>
 
     <!-- Optimize SPIRV output -->
@@ -417,9 +415,6 @@
     <string name="use_custom_rtc_description">Umožňuje nastavit vlastní hodiny reálného času nezávisle na systému.</string>
     <string name="set_custom_rtc">Nastavit vlastní RTC</string>
 
-    <!-- CPU -->
-    <string name="fast_cpu_time">Přetaktování CPU</string>
-    <string name="fast_cpu_time_description">Vynutí běh CPU na vyšší frekvenci, což může pomoci obejít některé omezovače FPS. Režim Boost (1700 MHz) odpovídá maximální taktu konzole Switch, režim Fast (2000 MHz) je dvojnásobek základního taktu konzole.</string>
     <string name="custom_cpu_ticks">Vlastní hodnota CPU cyků</string>
     <string name="custom_cpu_ticks_description">Nastavte vlastní hodnotu cyklů CPU. Vyšší hodnoty mohou zvýšit výkon, ale mohou také způsobit zamrznutí hry. Doporučený rozsah hodnot je 77–21000.</string>
     <string name="cpu_ticks">Cykly</string>
@@ -445,7 +440,6 @@
     <string name="advanced">Pokročilé</string>
 
     <string name="renderer_accuracy">Režim GPU</string>
-    <string name="renderer_accuracy_description">Určuje režim emulovaného GPU. Většina her běží bez problémů v rychlém, nebo vyváženém režimu, ale některé stále vyžadují přesný režim. Částicové efekty se většinou zobrazují korektně pouze v přesném režimu. </string>
     <string name="dma_accuracy">Přesnost DMA</string>
     <string name="dma_accuracy_description">Ovládá přesnost DMA. Bezpečná přesnost může vyřešit problémy v některých hrách, ale v některých případech může také ovlivnit výkon. Pokud si nejste jisti, použijte výchozí nastavení.</string>
     <string name="anisotropic_filtering">Anizotropní filtrování</string>
@@ -467,8 +461,6 @@
     <string name="enable_buffer_history_description">Umožňuje přístup k předchozím stavům bufferu. Tato volba může u některých her zvýšit kvalitu vykreslování a zlepšit stabilitu výkonu.</string>
     <string name="hacks">Hacky</string>
 
-    <string name="fast_gpu_time">Rychlé časování GPU</string>
-    <string name="fast_gpu_time_description">Nutí většinu her běžet v nejvyšším nativním rozlišení. Použijte hodnotu 256 pro maximální výkon a 512 pro nejlepší kvalitu.</string>
     <string name="skip_cpu_inner_invalidation">Přeskočit vnitřní invalidaci CPU</string>
     <string name="skip_cpu_inner_invalidation_description">Přeskočí určité invalidace mezipaměti procesoru při aktualizacích paměti, čímž snižuje vytížení CPU a zvyšuje jeho výkon. Může způsobit chyby nebo pády některých hrách.</string>
     <string name="renderer_asynchronous_shaders">Asynchronní kompilace shaderů</string>
@@ -502,7 +494,6 @@
     <string name="log">Protokolování</string>
     <string name="flush_by_line">Vypisovat ladicí záznamy po řádcích</string>
     <string name="flush_by_line_description">Vypisuje ladicí záznamy po každém napsaném řádku, což usnadňuje ladění v případě pádu nebo zamrznutí.</string>
-
     <!-- Audio settings strings -->
     <string name="audio_output_engine">Výstupní engine</string>
     <string name="audio_volume">Hlasitost</string>
@@ -613,8 +604,6 @@
     <string name="loader_error_file_not_found">ROM neexistuje</string>
 
     <string name="loader_requires_firmware">Hra vyžaduje firmware</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Hra, kterou se pokoušíte spustit, vyžaduje firmware pro spuštění nebo pro překročení úvodní nabídky. Prosím <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> převezměte a nainstalujte firmware</a>, nebo stiskněte \"OK\" pro pokračování v každém případě.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Hledání hry...</string>
     <string name="game_not_found_for_title_id">Hra nebyla nalezena pro ID titulu: %1$s</string>
@@ -695,10 +684,6 @@
     <string name="memory_6gb">6GB (Nebezpečné)</string>
     <string name="memory_8gb">8GB (Nebezpečné)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Boost (1700MHz)</string>
-    <string name="clock_fast">Rychlé (2000MHz)</string>
-
     <!-- Temperature Units -->
     <string name="temperature_celsius">Celsia</string>
     <string name="temperature_fahrenheit">Fahrenheita</string>
@@ -707,7 +692,6 @@
 
     <!-- Renderer Accuracy -->
     <string name="renderer_accuracy_low">Rychlý</string>
-    <string name="renderer_accuracy_medium">Vyvážený</string>
     <string name="renderer_accuracy_high">Přesný</string>
 
     <!-- DMA Accuracy -->

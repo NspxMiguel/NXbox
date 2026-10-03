@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Это программное обеспечение предназначено для запуска игр для игровой консоли Nintendo Switch. Игры и ключи в комплект не входят.<br /><br />Прежде чем начать, пожалуйста, найдите файл <![CDATA[<b>prod.keys</b>]]> на вашем устройстве.<br /><br /> <![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Узнать больше</a>]]></string>
+    <string name="app_disclaimer">Это программное обеспечение предназначено для запуска игр консоли Nintendo Switch. Никакие игры или ключи не входят в комплект.<br /><br />Перед началом работы найдите файл <![CDATA[<b> prod.keys </b>]]> во внутреннем хранилище вашего устройства. <br /><br /><![CDATA[<a href=\"https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/QuickStart.md\">Узнать больше</a>]]></string>
     <string name="notice_notification_channel_name">Уведомления и ошибки</string>
     <string name="notice_notification_channel_description">Показывает уведомления, когда что-то пошло не так</string>
     <string name="notification_permission_not_granted">Вы не предоставили разрешение на уведомления!</string>
@@ -106,7 +106,7 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Эмуляция NVDEC</string>
-    <string name="nvdec_emulation_description">Обработка видео (ролики, интро)</string>
+    <string name="nvdec_emulation_description">Переключите на CPU, если происходит вылет на кат-сценах.</string>
     <string name="nvdec_emulation_none">Отключено</string>
 
     <!-- Optimize SPIRV output -->
@@ -291,6 +291,80 @@
     <string name="gpu_driver_fetcher">Получение драйверов ГПУ</string>
     <string name="gpu_driver_manager">Менеджер драйверов ГПУ</string>
     <string name="install_gpu_driver_description">Установите альтернативные драйверы для потенциально лучшей производительности и/или точности</string>
+    <string name="post_processing">Эффекты постобработки</string>
+    <string name="post_processing_description">Эффекты ReShade FX, применяемые после рендеринга</string>
+    <string name="post_processing_per_game_description">Настроить цепочку эффектов для этой игры</string>
+    <string name="post_processing_add">Добавить эффект</string>
+    <string name="post_processing_remove">Удалить</string>
+    <string name="post_processing_open_list">Открыть список</string>
+    <string name="post_processing_close_list">Закрыть список</string>
+    <string name="post_processing_remove_all">Удалить эффекты</string>
+    <string name="post_processing_preset_locked">Пресет активен. Отредактируйте его в разделе \"Эффекты постобработки\" перед запуском игры.</string>
+    <string name="post_processing_preset_modified">Значения изменены относительно исходного пресета.</string>
+    <string name="post_processing_presets">Пресеты</string>
+    <string name="post_processing_preset_new">Новый пресет</string>
+    <string name="post_processing_preset_new_description">Сохраняет загруженные вами эффекты вместе с их текущими значениями в виде пресета, который можно будет выбрать позже.</string>
+    <string name="post_processing_preset_name_invalid">Дайте пресету имя без знака равенства.</string>
+    <string name="post_processing_preset_none">Нет пресета</string>
+    <string name="post_processing_preset_delete">Удалить пресет</string>
+    <string name="post_processing_preset_reset">Сбросить значения пресета</string>
+    <string name="post_processing_reset">Сбросить до значений по умолчанию</string>
+    <string name="post_processing_empty">Эффекты не найдены. Поместите файлы .fx в эту папку:</string>
+    <string name="frame_gen">Генерация кадров</string>
+    <string name="frame_gen_per_game_description">Настройка генерации кадров для данной игры</string>
+    <string name="frame_gen_description">Вставляет промежуточные кадры между отрендеренными с помощью Lossless Scaling. При включении принудительно устанавливает режим вывода FIFO.</string>
+    <string name="frame_gen_multiplier">Множитель кадров</string>
+    <string name="frame_gen_multiplier_description">Количество кадров, отображаемых на каждый отрисованный кадр. Повышение значения пропорционально увеличивает затраты ресурсов ГПУ. Если запрашивать больше, чем может отобразить ваш экран, эмуляция будет замедляться.</string>
+    <string name="frame_gen_target_rate">Целевая частота кадров</string>
+    <string name="frame_gen_target_rate_description">Выберите значение под ваш дисплей. Множитель подстроится сам, чтобы его держать, и откатит изменения, если игра начнёт тормозить.</string>
+    <string name="frame_gen_target_rate_off">Использовать фиксированный множитель</string>
+    <string name="frame_gen_on">Вкл.</string>
+    <string name="frame_gen_off">Выкл.</string>
+    <string name="frame_gen_fixed">Фикс.</string>
+    <string name="frame_gen_flow_auto">Авто</string>
+    <string name="frame_gen_quick_description">Включите или выключите генерацию кадров и выберите множитель кадров.</string>
+    <string name="frame_gen_target_rate_quick_description">Генерация кадров с заданной частотой кадров. Множитель регулируется автоматически.</string>
+    <string name="frame_gen_flow_scale_quick_description">Разрешение, используемое для оценки движения между кадрами. Меньшие значения экономят время ГПУ.</string>
+    <string name="frame_gen_queue_target">Целевой размер очереди кадров</string>
+    <string name="frame_gen_queue_target_description">Сколько готовых кадров может ожидать перед выводом на экран. Более длинные очереди сглаживают скачки ГПУ ценой задержки ввода.</string>
+    <string name="frame_gen_queue_target_0">Минимальная задержка (Без буферизации)</string>
+    <string name="frame_gen_queue_target_1">Сбалансированный (1 кадр)</string>
+    <string name="frame_gen_queue_target_2">Наиболее плавный (2 кадра)</string>
+    <string name="frame_gen_flow_scale_auto">Подстроить оценку движения под игру</string>
+    <string name="frame_gen_flow_scale_auto_description">Оценивать движение в разрешении, которое игра действительно рендерит, вместо масштабированного вывода. Ничего не стоит в точности, так как масштабирование не добавляет деталей движения.</string>
+    <string name="frame_gen_flow_scale">Разрешение оценки движения</string>
+    <string name="frame_gen_flow_scale_description">Разрешение прохода оптического потока в долях от выходного разрешения. Его понижение — самый дешёвый способ вернуть производительность.</string>
+    <string name="frame_gen_unsupported">Генерация кадров недоступна</string>
+    <string name="frame_gen_unsupported_description">В этом ГПУ драйвере отсутствует поддержка модели памяти Vulkan или половинной точности (float16), которая требуется шейдерам Lossless Scaling.</string>
+    <string name="lossless_scaling_setup_description">Опционально. Укажите свой Lossless.dll для включения генерации кадров позже.</string>
+    <string name="lossless_scaling_install">Установить Lossless.dll</string>
+    <string name="lossless_scaling_install_description">Для генерации кадров требуется ваша собственная легальная копия Lossless.dll из Lossless Scaling</string>
+    <string name="lossless_scaling_replace_description">Выбрать другой файл Lossless.dll</string>
+    <string name="frame_generation_support">Генерация кадров</string>
+    <string name="frame_generation_supported">Поддерживается</string>
+    <string name="frame_generation_unsupported">Не поддерживается (нет модели памяти Vulkan или float16)</string>
+    <string name="lossless_scaling_description">Предоставьте свою копию Lossless.dll для включения генерации кадров</string>
+    <string name="lossless_scaling_installed">Установлена</string>
+    <string name="lossless_scaling_not_installed">Не установлена</string>
+    <string name="lossless_scaling_replace">Заменить</string>
+    <string name="lossless_scaling_remove">Удалить</string>
+    <string name="lossless_scaling_remove_description">Удалить установленный Lossless.dll и его подготовленные шейдеры</string>
+    <string name="lossless_scaling_remove_confirmation">Генерация кадров перестанет работать, пока вы снова не установите Lossless.dll. Ваш исходный файл не пострадает.</string>
+    <string name="lossless_scaling_missing">Lossless.dll не установлен</string>
+    <string name="lossless_scaling_missing_description">Установите его через Настройки › Lossless Scaling для использования генерации кадров.</string>
+    <string name="lossless_scaling_locked">Сначала закройте игру</string>
+    <string name="lossless_scaling_locked_description">Lossless.dll нельзя изменить, пока запущена игра.</string>
+    <string name="lossless_scaling_remove_unavailable">Нечего удалять.</string>
+    <string name="lossless_scaling_remove_unavailable_description">Lossless.dll ещё не установлен.</string>
+    <string name="lossless_scaling_installing">Подготовка шейдеров генерации кадров…</string>
+    <string name="lossless_scaling_install_success">Lossless.dll успешно установлен</string>
+    <string name="lossless_scaling_install_failed">Не удалось установить Lossless.dll</string>
+    <string name="error_lossless_copy_failed">Не удалось скопировать выбранный файл.</string>
+    <string name="error_lossless_unreadable">Не удалось прочитать выбранный файл.</string>
+    <string name="error_lossless_not_pe">Выбранный файл не является библиотекой Windows. Выберите Lossless.dll из установки Lossless Scaling.</string>
+    <string name="error_lossless_missing_shaders">Эта копия Lossless.dll не содержит шейдеров генерации кадров. Обновите Lossless Scaling и попробуйте снова.</string>
+    <string name="error_lossless_translation_failed">Не удалось транслировать шейдеры генерации кадров. Эта версия Lossless Scaling пока не поддерживается.</string>
+    <string name="error_lossless_cache_failed">Не удалось записать транслированные шейдеры в хранилище. Проверьте, есть ли свободное место.</string>
     <string name="advanced_settings">Расширенные настройки</string>
     <string name="settings_description">Настройка параметров эмулятора</string>
     <string name="search_recently_played">Недавно сыгранные</string>
@@ -424,6 +498,9 @@
     <string name="cpu_accuracy">Точность ЦП</string>
     <string name="value_with_units">%1$s%2$s</string>
 
+    <string name="program_args">Аргументы Homebrew</string>
+    <string name="program_args_description">Аргументы командной строки, переданные Homebrew при запуске (например, -noglsl)</string>
+
     <!-- System settings strings -->
     <string name="device_name">Название устройства</string>
     <string name="use_docked_mode">Режим док-станции</string>
@@ -437,8 +514,8 @@
     <string name="set_custom_rtc">Установить пользовательский RTC</string>
 
     <!-- CPU -->
-    <string name="fast_cpu_time">Разгон ЦП</string>
-    <string name="fast_cpu_time_description">Принудительно повышает тактовую частоту эмулируемого ЦП, снижая влияние некоторых ограничителей FPS. Используйте Разгон (1700 МГц) для работы на максимальной штатной частоте Switch или Быстрая (2000 МГц) для удвоенной частоты.</string>
+    <string name="fast_cpu_time">Тактовая частота ЦП</string>
+    <string name="fast_cpu_time_description">Повышает тактовую частоту, которую сообщает эмулируемый процессор, что убирает некоторые ограничители FPS. На более слабых процессорах производительность может снизиться, а в некоторых играх возможно некорректное поведение.</string>
     <string name="custom_cpu_ticks">Пользовательские такты ЦП</string>
     <string name="custom_cpu_ticks_description">Установите пользовательское значение тактов ЦП. Более высокие значения могут увеличить производительность, но также могут вызвать зависание игры. Рекомендуется диапазон 77–21000.</string>
     <string name="cpu_ticks">Такты</string>
@@ -466,9 +543,11 @@
     <string name="advanced">Расширенные</string>
 
     <string name="renderer_accuracy">Режим ГПУ</string>
-    <string name="renderer_accuracy_description">Управляет режимом эмуляции графического процессора. Большинство игр нормально отображаются в режимах «Быстрый» или «Сбалансированный», но для некоторых требуется режим «Точный». Частицы обычно корректно отображаются только в режиме «Точный».</string>
+    <string name="renderer_accuracy_description">Управляет режимом эмуляции ГПУ. Большинство игр нормально отображаются в режиме Быстрый, но для некоторых требуется режим Точный. Частицы обычно корректно отображаются только в режиме Точный.</string>
     <string name="dma_accuracy">Точность DMA</string>
     <string name="dma_accuracy_description">Управляет точностью DMA. Безопасная точность может исправить проблемы в некоторых играх, но в некоторых случаях также может повлиять на производительность. Если не уверены, оставьте значение По умолчанию.</string>
+    <string name="gpu_fence_behavior">Поведение барьеров ГПУ</string>
+    <string name="gpu_fence_behavior_description">Управляет поведением синхронизации через барьеры ГПУ. Мгновенный — самый быстрый вариант, но может вызывать некоторые проблемы. Сбалансированный обеспечивает лучшую совместимость и может исправлять проблемы в некоторых играх. Точный ещё больше повышает совместимость ценой некоторого снижения производительности. Строгий — самый медленный вариант, но может исправлять проблемы, требующие более строгой синхронизации. По умолчанию соответствует настройке точности ГПУ.</string>
     <string name="anisotropic_filtering">Анизотропная фильтрация</string>
     <string name="anisotropic_filtering_description">Улучшает качество текстур под углом</string>
     <string name="vram_usage_mode">Режим VRAM</string>
@@ -495,12 +574,10 @@
 
     <string name="hacks">Хаки</string>
 
-    <string name="fast_gpu_time">Быстрое время ГПУ</string>
-    <string name="fast_gpu_time_description">Принудительно запускает большинство игр в их максимальном нативном разрешении. Используйте значение 256 для максимальной производительности и 512 для максимального качества графики.</string>
+    <string name="fast_gpu_time">Тактовая частота ГПУ</string>
+    <string name="fast_gpu_time_description">Заставляет игру думать, что работа ГПУ завершается быстрее, чем на самом деле, поэтому она перестаёт снижать разрешение и дистанцию прорисовки, чтобы подстраиваться под тактовые частоты Switch.</string>
     <string name="skip_cpu_inner_invalidation">Пропустить внутреннюю инвалидацию ЦП</string>
     <string name="skip_cpu_inner_invalidation_description">Пропускает некоторые инвалидации кэша на стороне ЦП при обновлениях памяти, уменьшая нагрузку на процессор и повышая производительность. Может вызывать сбои в некоторых играх.</string>
-    <string name="antiflicker">Анти-мерцание</string>
-    <string name="antiflicker_description">Принудительно заставляет обратные вызовы ГПУ-фильтра ожидать выполнения отправленных задач на ГПУ. Используйте с Быстрым режимом ГПУ, что бы избежать мерцаний с меньшим влиянием на производительность.</string>
     <string name="fix_bloom_effects">Исправить эффекты размытия</string>
     <string name="fix_bloom_effects_description">Частично убирает размытие в LA/EOW (Adreno A6XX - A7XX/ Turnip), полностью отключает его в Burnout. Внимание: может вызывать графические артефакты в других играх.</string>
     <string name="emulate_bgr565">Эмулировать BGR565</string>
@@ -545,6 +622,7 @@
 
     <!-- Debug settings strings -->
     <string name="cpu">ЦП</string>
+    <string name="clocks">Тактовая частота</string>
     <string name="use_auto_stub">Использовать Auto Stub</string>
     <string name="use_auto_stub_description">Автоматически заглушает отсутствующие сервисы и функции. Может улучшить совместимость, но вызывать сбои и проблемы стабильности.</string>
 
@@ -559,17 +637,23 @@
     <string name="log">Логирование</string>
     <string name="flush_by_line">Сбрасывать логи отладки построчно</string>
     <string name="flush_by_line_description">Сбрасывает логи отладки после каждой написанной строки, упрощая отладку в случае сбоев или зависаний.</string>
+    <string name="extended_logging">Включить расширенное логирование</string>
+    <string name="extended_logging_description">Увеличивает максимальный размер файла журнала со 100 МБ до 1 ГБ.</string>
+    <string name="log_filter">Фильтр журнала</string>
+    <string name="log_filter_description">Управляет категориями журнала Eden. Пример: :Info Service.LM:Debug</string>
 
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">Ведение журнала ГПУ</string>
-    <string name="gpu_logging_enabled">Включить ведение журнала ГПУ</string>
-    <string name="gpu_logging_enabled_description">Записывать операции ГПУ в файл eden_gpu.log для отладки драйверов Adreno</string>
     <string name="gpu_log_level">Уровень журналирования</string>
     <string name="gpu_log_level_description">Уровень детализации логов ГПУ (больше значение = больше деталей, выше нагрузка)</string>
     <string name="gpu_log_vulkan_calls">Записывать вызовы Vulkan API</string>
     <string name="gpu_log_vulkan_calls_description">Отслеживать все вызовы Vulkan API в кольцевом буфере</string>
-    <string name="gpu_log_shader_dumps">Выгрузить шейдеры</string>
-    <string name="gpu_log_shader_dumps_description">Сохранять скомпилированные SPIR-V шейдеры в файлы</string>
+    <string name="gpu_log_shader_dumps">Выгрузить SPIR-V шейдеры</string>
+    <string name="gpu_log_shader_dumps_description">Сохранять перекомпилированные SPIR-V бинарные файлы (.spv) в папку дампа. Проверять с помощью spirv-dis/spirv-cross/spirv-val.</string>
+    <string name="dump_guest_shaders">Выгрузить гостевые (Maxwell) шейдеры</string>
+    <string name="dump_guest_shaders_description">Сохранять файлы байткода гостевых шейдеров Maxwell (*.ash) в папку дампа. Проверять с помощью nvdisasm.</string>
+    <string name="dump_macros">Выгрузить макросы Maxwell</string>
+    <string name="dump_macros_description">Сохранять файлы макропрограмм Maxwell (*.macro) в папку дампа. Проверять с помощью envydis.</string>
     <string name="gpu_log_memory_tracking">Отслеживать память ГПУ</string>
     <string name="gpu_log_memory_tracking_description">Мониторить выделение и освобождение памяти ГПУ</string>
     <string name="gpu_log_driver_debug">Отладочная информация драйвера</string>
@@ -841,7 +925,7 @@
     <string name="loader_error_file_not_found">Файл ROM не существует</string>
 
     <string name="loader_requires_firmware">Игре требуется прошивка</string>
-    <string name="loader_requires_firmware_description"><![CDATA[Для запуска этой игры или прохождения начального меню требуется прошивка. Пожалуйста, <a href=\"https://yuzu-mirror.github.io/help/quickstart\">сохраните и установите прошивку</a> или нажмите \"OK\" для запуска в любом случае.]]></string>
+    <string name="loader_requires_firmware_description"><![CDATA[Для корректной работы этой игры может потребоваться прошивка, а у вас она не установлена. Пожалуйста, установите прошивку перед запуском или нажмите \"OK\", чтобы всё равно запустить.]]></string>
 
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Поиск игры...</string>
@@ -942,14 +1026,15 @@
     <string name="memory_6gb">6 ГБ (Небезопасно)</string>
     <string name="memory_8gb">8 ГБ (Небезопасно)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Разгон (1700MHz)</string>
-    <string name="clock_fast">Быстрая (2000MHz)</string>
+    <!-- CPU clock levels -->
+    <string name="clock_normal">Обычная</string>
+    <string name="clock_boost">Турбо</string>
+    <string name="clock_fast">Разгон</string>
 
-    <!-- GPU overclock factors -->
-    <string name="off">Выкл.</string>
-    <string name="fast_gpu_medium">Среднее (256)</string>
-    <string name="fast_gpu_high">Высокое (512)</string>
+    <!-- GPU clock levels -->
+    <string name="fast_gpu_normal">Обычная</string>
+    <string name="fast_gpu_medium">Турбо</string>
+    <string name="fast_gpu_high">Разгон</string>
 
     <!-- GPU swizzle texture size -->
     <string name="gpu_texturesizeswizzle_verysmall">Очень малый (16 МБ)</string>
@@ -989,13 +1074,18 @@
 
     <!-- Renderer Accuracy -->
     <string name="renderer_accuracy_low">Быстрый</string>
-    <string name="renderer_accuracy_medium">Сбалансированный</string>
     <string name="renderer_accuracy_high">Точный</string>
 
     <!-- DMA Accuracy -->
     <string name="dma_accuracy_default">По умолчанию</string>
     <string name="dma_accuracy_unsafe">Небезопасно</string>
     <string name="dma_accuracy_safe">Безопасный</string>
+
+    <!-- GPU Fence Behavior -->
+    <string name="gpu_fence_behavior_default">По умолчанию</string>
+    <string name="gpu_fence_behavior_immediate">Мгновенный</string>
+    <string name="gpu_fence_behavior_balanced">Сбалансированный</string>
+    <string name="gpu_fence_behavior_accurate">Точный</string>
 
     <string name="vram_usage_conservative">Консервативный</string>
     <string name="vram_usage_aggressive">Агрессивный</string>
@@ -1071,8 +1161,6 @@
     <string name="theme_mode_follow_system">Системная</string>
     <string name="theme_mode_light">Светлая</string>
     <string name="theme_mode_dark">Темная</string>
-
-    <string name="multiplier_none">Отключено</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Чёрный фон</string>

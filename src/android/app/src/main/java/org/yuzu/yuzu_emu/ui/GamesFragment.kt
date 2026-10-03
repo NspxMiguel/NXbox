@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.updatePadding
 import androidx.core.widget.doOnTextChanged
 import androidx.fragment.app.Fragment
@@ -46,7 +47,6 @@ import info.debatty.java.stringsimilarity.Jaccard
 import info.debatty.java.stringsimilarity.JaroWinkler
 import java.util.Locale
 import androidx.core.content.edit
-import androidx.core.view.doOnNextLayout
 
 class GamesFragment : Fragment() {
     private var _binding: FragmentGamesBinding? = null
@@ -58,7 +58,10 @@ class GamesFragment : Fragment() {
     private var originalHeaderLeftMargin: Int? = null
 
     private var lastViewType: Int = GameAdapter.VIEW_TYPE_GRID
-    private var fallbackBottomInset: Int = 0
+    private var pendingPostReloadListSettle = false
+    private var pendingPostReloadListSettleGeneration = 0
+    private var gameListSubmitGeneration = 0
+    private var committedGameListSubmitGeneration = 0
 
     companion object {
         private const val SEARCH_TEXT = "SearchText"
@@ -168,10 +171,9 @@ class GamesFragment : Fragment() {
 
         gamesViewModel.shouldScrollAfterReload.collect(viewLifecycleOwner) { shouldScroll ->
             if (shouldScroll) {
-                binding.gridGames.post {
-                    (binding.gridGames as? CarouselRecyclerView)?.pendingScrollAfterReload = true
-                    gameAdapter.notifyDataSetChanged()
-                }
+                pendingPostReloadListSettle = true
+                pendingPostReloadListSettleGeneration = gameListSubmitGeneration
+                schedulePostReloadListSettle()
                 gamesViewModel.setShouldScrollAfterReload(false)
             }
         }
@@ -223,12 +225,7 @@ class GamesFragment : Fragment() {
                 }
                 else -> throw IllegalArgumentException("Invalid view type: $savedViewType")
             }
-            if (savedViewType == GameAdapter.VIEW_TYPE_CAROUSEL) {
-                (binding.gridGames as? View)?.let { it -> ViewCompat.requestApplyInsets(it)}
-                doOnNextLayout { //Carousel: important to avoid overlap issues
-                    (this as? CarouselRecyclerView)?.notifyLaidOut(fallbackBottomInset)
-                }
-            } else {
+            if (savedViewType != GameAdapter.VIEW_TYPE_CAROUSEL) {
                 (this as? CarouselRecyclerView)?.setupCarousel(false)
             }
             adapter = gameAdapter
@@ -273,11 +270,42 @@ class GamesFragment : Fragment() {
             lastSearchText = currentSearchText
             lastFilter = currentFilter
         } else {
-            ((binding.gridGames as? RecyclerView)?.adapter as? GameAdapter)?.submitList(games)
+            submitGameList(games)
             gamesViewModel.setFilteredGames(games)
         }
     }
 
+    private fun submitGameList(games: List<Game>) {
+        val adapter = (binding.gridGames as? RecyclerView)?.adapter as? GameAdapter
+        if (adapter == null) {
+            schedulePostReloadListSettle()
+            return
+        }
+
+        val submitGeneration = ++gameListSubmitGeneration
+        adapter.submitList(games) {
+            if (committedGameListSubmitGeneration < submitGeneration) {
+                committedGameListSubmitGeneration = submitGeneration
+            }
+            schedulePostReloadListSettle()
+        }
+    }
+
+
+    private fun schedulePostReloadListSettle() {
+        if (!pendingPostReloadListSettle || _binding == null) return
+
+        binding.gridGames.doOnPreDraw {
+            if (!pendingPostReloadListSettle || _binding == null) return@doOnPreDraw
+            if (committedGameListSubmitGeneration < pendingPostReloadListSettleGeneration) {
+                schedulePostReloadListSettle()
+                return@doOnPreDraw
+            }
+            pendingPostReloadListSettle = false
+
+            (binding.gridGames as? CarouselRecyclerView)?.refreshView()
+        }
+    }
     private fun setupTopView() {
         binding.searchText.doOnTextChanged() { text: CharSequence?, _: Int, _: Int, _: Int ->
             if (text.toString().isNotEmpty()) {
@@ -414,9 +442,7 @@ class GamesFragment : Fragment() {
 
         val searchTerm = binding.searchText.text.toString().lowercase(Locale.getDefault())
         if (searchTerm.isEmpty()) {
-            ((binding.gridGames as? RecyclerView)?.adapter as? GameAdapter)?.submitList(
-                filteredList
-            )
+            submitGameList(filteredList)
             gamesViewModel.setFilteredGames(filteredList)
             return
         }
@@ -432,7 +458,7 @@ class GamesFragment : Fragment() {
             }
         }.sortedByDescending { it.score }.map { it.item }
 
-        ((binding.gridGames as? RecyclerView)?.adapter as? GameAdapter)?.submitList(sortedList)
+        submitGameList(sortedList)
         gamesViewModel.setFilteredGames(sortedList)
     }
 
@@ -557,11 +583,6 @@ class GamesFragment : Fragment() {
                 qlaunchButton.layoutParams = mlpQLaunch
             }
 
-            val navInsets = windowInsets.getInsets(WindowInsetsCompat.Type.navigationBars())
-            val gestureInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemGestures())
-            val bottomInset = maxOf(navInsets.bottom, gestureInsets.bottom, cutoutInsets.bottom)
-            fallbackBottomInset = bottomInset
-            (binding.gridGames as? CarouselRecyclerView)?.notifyInsetsReady(bottomInset)
             windowInsets
         }
 }

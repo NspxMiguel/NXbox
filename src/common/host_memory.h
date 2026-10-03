@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
@@ -7,9 +7,9 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include "common/common_funcs.h"
 #include "common/common_types.h"
-#include "common/virtual_buffer.h"
 
 namespace Common {
 
@@ -76,12 +76,16 @@ private:
     size_t backing_size{};
     size_t virtual_size{};
 
+#if !(defined(__OPENORBIS__) || defined(__managarm__))
     // Low level handler for the platform dependent memory routines
     class Impl;
     std::unique_ptr<Impl> impl;
+#endif
     u8* backing_base{};
     u8* virtual_base{};
     size_t virtual_base_offset{};
+    // Windows requires it for kernels whom lack proper support for some functions!
+    bool fallback_buffer{false};
 };
 
 } // namespace Common

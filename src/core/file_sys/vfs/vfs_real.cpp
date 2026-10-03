@@ -40,6 +40,16 @@ namespace {
 
 constexpr size_t MaxOpenFiles = 8192;
 
+bool IsWithinRoot(std::string_view root, std::string_view full_path) {
+    if (root.empty())
+        return true;
+
+    if (full_path.size() < root.size() || full_path.substr(0, root.size()) != root)
+        return false;
+
+    return full_path.size() == root.size() || full_path[root.size()] == '/' || full_path[root.size()] == '\\';
+}
+
 constexpr FS::FileAccessMode ModeFlagsToFileAccessMode(OpenMode mode) {
     switch (mode) {
     case OpenMode::Read:
@@ -104,8 +114,7 @@ VirtualFile RealVfsFilesystem::OpenFileFromEntry(std::string_view path_, std::op
     auto reference = std::make_unique<FileReference>();
     this->InsertReferenceIntoListLocked(*reference);
 
-    auto file = std::shared_ptr<RealVfsFile>(
-        new RealVfsFile(*this, std::move(reference), path, perms, size, std::move(parent_path)));
+    auto file = std::make_shared<RealVfsFile>(*this, std::move(reference), path, perms, size, std::move(parent_path));
     cache[path] = file;
 
     return file;
@@ -172,7 +181,7 @@ bool RealVfsFilesystem::DeleteFile(std::string_view path_) {
 
 VirtualDir RealVfsFilesystem::OpenDirectory(std::string_view path_, OpenMode perms) {
     const auto path = FS::SanitizePath(path_, FS::DirectorySeparator::PlatformDefault);
-    return std::shared_ptr<RealVfsDirectory>(new RealVfsDirectory(*this, path, perms));
+    return std::make_shared<RealVfsDirectory>(*this, path, perms);
 }
 
 VirtualDir RealVfsFilesystem::CreateDirectory(std::string_view path_, OpenMode perms) {
@@ -180,7 +189,7 @@ VirtualDir RealVfsFilesystem::CreateDirectory(std::string_view path_, OpenMode p
     if (!FS::CreateDirs(path)) {
         return nullptr;
     }
-    return std::shared_ptr<RealVfsDirectory>(new RealVfsDirectory(*this, path, perms));
+    return std::make_shared<RealVfsDirectory>(*this, path, perms);
 }
 
 VirtualDir RealVfsFilesystem::CopyDirectory(std::string_view old_path_,
@@ -432,7 +441,8 @@ RealVfsDirectory::~RealVfsDirectory() = default;
 
 VirtualFile RealVfsDirectory::GetFileRelative(std::string_view relative_path) const {
     const auto full_path = FS::SanitizePath(path + '/' + std::string(relative_path));
-    if (!FS::Exists(full_path) || FS::IsDir(full_path)) {
+    if (!FS::Exists(full_path) || FS::IsDir(full_path)
+        || !IsWithinRoot(FS::SanitizePath(path), full_path)) {
         return nullptr;
     }
     return base.OpenFile(full_path, perms);
@@ -440,7 +450,8 @@ VirtualFile RealVfsDirectory::GetFileRelative(std::string_view relative_path) co
 
 VirtualDir RealVfsDirectory::GetDirectoryRelative(std::string_view relative_path) const {
     const auto full_path = FS::SanitizePath(path + '/' + std::string(relative_path));
-    if (!FS::Exists(full_path) || !FS::IsDir(full_path)) {
+    if (!FS::Exists(full_path) || !FS::IsDir(full_path)
+        || !IsWithinRoot(FS::SanitizePath(path), full_path)) {
         return nullptr;
     }
     return base.OpenDirectory(full_path, perms);
@@ -456,7 +467,7 @@ VirtualDir RealVfsDirectory::GetSubdirectory(std::string_view name) const {
 
 VirtualFile RealVfsDirectory::CreateFileRelative(std::string_view relative_path) {
     const auto full_path = FS::SanitizePath(path + '/' + std::string(relative_path));
-    if (!FS::CreateParentDirs(full_path)) {
+    if (!FS::CreateParentDirs(full_path) || !IsWithinRoot(FS::SanitizePath(path), full_path)) {
         return nullptr;
     }
     return base.CreateFile(full_path, perms);
@@ -469,7 +480,7 @@ VirtualDir RealVfsDirectory::CreateDirectoryRelative(std::string_view relative_p
 
 bool RealVfsDirectory::DeleteSubdirectoryRecursive(std::string_view name) {
     const auto full_path = FS::SanitizePath(this->path + '/' + std::string(name));
-    return base.DeleteDirectory(full_path);
+    return FS::RemoveDirRecursively(full_path);
 }
 
 std::vector<VirtualFile> RealVfsDirectory::GetFiles() const {
@@ -553,7 +564,7 @@ VirtualFile RealVfsDirectory::CreateFile(std::string_view name) {
 
 bool RealVfsDirectory::DeleteSubdirectory(std::string_view name) {
     const std::string subdir_path = (path + '/').append(name);
-    return base.DeleteDirectory(subdir_path);
+    return FS::RemoveDir(subdir_path);
 }
 
 bool RealVfsDirectory::DeleteFile(std::string_view name) {

@@ -14,7 +14,8 @@
 #include <boost/variant/detail/apply_visitor_binary.hpp>
 #include "dynarmic/mcl/bit.hpp"
 #include "common/common_types.h"
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 
 #include "dynarmic/backend/x64/block_of_code.h"
 #include "dynarmic/backend/x64/nzcv_util.h"
@@ -27,6 +28,10 @@
 
 // TODO: Have ARM flags in host flags and not have them use up GPR registers unless necessary.
 // TODO: Actually implement that proper instruction selector you've always wanted to sweetheart.
+
+#if __has_include("../../../../../common/nxbox_stall.h")
+#    include "../../../../../common/nxbox_stall.h"
+#endif
 
 namespace Dynarmic::Backend::X64 {
 
@@ -403,16 +408,30 @@ void EmitX64::Unpatch(const IR::LocationDescriptor& target_desc) {
 }
 
 void EmitX64::ClearCache() {
+#if NXBOX_STALL_PROFILE
+    NxboxStall::AddJit(NxboxStall::JitEvent::ClearBlocks, block_descriptors.size());
+#endif
     block_descriptors.clear();
     patch_information.clear();
 
     PerfMapClear();
 }
 
-void EmitX64::InvalidateBasicBlocks(const ankerl::unordered_dense::set<IR::LocationDescriptor>& locations) {
+void EmitX64::InvalidateBasicBlocks(const ::Common::unordered_set<IR::LocationDescriptor>& locations) {
+    // No patch sites or dispatch entries can change when there are no descriptors.
+    // Avoid flipping the entire committed code cache RW/RX for an empty invalidation.
+    if (locations.empty()) {
+#if NXBOX_STALL_PROFILE
+        NxboxStall::AddJit(NxboxStall::JitEvent::EmptyInvalidations);
+#endif
+        return;
+    }
     code.EnableWriting();
     for (const auto& descriptor : locations) {
         if (auto const it = block_descriptors.find(descriptor); it != block_descriptors.end()) {
+#if NXBOX_STALL_PROFILE
+            NxboxStall::AddJit(NxboxStall::JitEvent::RangeBlocks);
+#endif
             Unpatch(descriptor);
             block_descriptors.erase(it);
         }

@@ -54,7 +54,7 @@ FSP_SRV::FSP_SRV(Core::System& system_)
     static const FunctionInfo functions[] = {
         {0, nullptr, "OpenFileSystem"},
         {1, D<&FSP_SRV::SetCurrentProcess>, "SetCurrentProcess"},
-        {2, nullptr, "OpenDataFileSystemByCurrentProcess"},
+        {2, D<&FSP_SRV::OpenDataFileSystemByCurrentProcess>, "OpenDataFileSystemByCurrentProcess"},
         {7, D<&FSP_SRV::OpenFileSystemWithPatch>, "OpenFileSystemWithPatch"},
         {8, nullptr, "OpenFileSystemWithId"},
         {9, nullptr, "OpenDataFileSystemByApplicationId"},
@@ -118,6 +118,7 @@ FSP_SRV::FSP_SRV(Core::System& system_)
         {204, nullptr, "OpenDataFileSystemByProgramIndex"},
         {205, D<&FSP_SRV::OpenDataStorageWithProgramIndex>, "OpenDataStorageWithProgramIndex"},
         {206, nullptr, "OpenDataStorageByPath"},
+        {210, D<&FSP_SRV::SetCurrentProcess>, "SetCurrentProcess"},
         {400, nullptr, "OpenDeviceOperator"},
         {500, nullptr, "OpenSdCardDetectionEventNotifier"},
         {501, nullptr, "OpenGameCardDetectionEventNotifier"},
@@ -153,6 +154,9 @@ FSP_SRV::FSP_SRV(Core::System& system_)
         {720, nullptr, "AbandonAccessFailure"},
         {800, nullptr, "GetAndClearFileSystemProxyErrorInfo"},
         {810, nullptr, "RegisterProgramIndexMapInfo"},
+        {820, nullptr, "GetContentStorageInfoIndex"},
+        {830, nullptr, "EncryptStreamPlaySaveData"},
+        {831, nullptr, "DecryptStreamPlaySaveData"},
         {1000, nullptr, "SetBisRootForHost"},
         {1001, nullptr, "SetSaveDataSize"},
         {1002, nullptr, "SetSaveDataRootPath"},
@@ -190,7 +194,7 @@ FSP_SRV::~FSP_SRV() = default;
 Result FSP_SRV::SetCurrentProcess(ClientProcessId pid) {
     current_process_id = *pid;
 
-    LOG_DEBUG(Service_FS, "called. current_process_id=0x{:016X}", current_process_id);
+    LOG_DEBUG(Service_FS, "called. current_process_id={:#016x}", current_process_id);
 
     R_RETURN(
         fsc.OpenProcess(&program_id, &save_data_controller, &romfs_controller, current_process_id));
@@ -284,9 +288,17 @@ Result FSP_SRV::OpenSaveDataFileSystem(OutInterface<IFileSystem> out_interface,
         id = FileSys::StorageId::NandSystem;
         break;
     case FileSys::SaveDataSpaceId::Temporary:
+        // ok this is definitely wrong. ASSERT(false) here just kills the whole game the first
+        // time it opens cache storage, and plenty of games do that (TOTK for one). there is
+        // user-space scratch storage so it belongs on user nand. map it, do not crash.
+        id = FileSys::StorageId::NandUser;
+        break;
     case FileSys::SaveDataSpaceId::ProperSystem:
     case FileSys::SaveDataSpaceId::SafeMode:
-        ASSERT(false);
+        // same deal for these two. they are system-level spaces so they go on system nand.
+        // way better than nuking the title over a save-space id we just did not list out.
+        id = FileSys::StorageId::NandSystem;
+        break;
     }
 
     *out_interface =
@@ -324,9 +336,15 @@ Result FSP_SRV::OpenSaveDataFileSystemBySystemSaveDataId(OutInterface<IFileSyste
         id = FileSys::StorageId::NandSystem;
         break;
     case FileSys::SaveDataSpaceId::Temporary:
+        // same broken switch as OpenSaveDataFileSystem above. do not ASSERT(false) and kill the
+        // game over a save-space id, just map Temporary to user nand like it should be.
+        id = FileSys::StorageId::NandUser;
+        break;
     case FileSys::SaveDataSpaceId::ProperSystem:
     case FileSys::SaveDataSpaceId::SafeMode:
-        ASSERT(false);
+        // system spaces -> system nand. handled, not crashed.
+        id = FileSys::StorageId::NandSystem;
+        break;
     }
 
     *out_interface =
@@ -443,6 +461,31 @@ Result FSP_SRV::OpenSaveDataTransferProhibiter(
     OutInterface<ISaveDataTransferProhibiter> out_prohibiter, u64 id) {
     LOG_WARNING(Service_FS, "(STUBBED) called, id={:016X}", id);
     *out_prohibiter = std::make_shared<ISaveDataTransferProhibiter>(system);
+    R_SUCCEED();
+}
+
+Result FSP_SRV::OpenDataFileSystemByCurrentProcess(OutInterface<IFileSystem> out_interface) {
+    LOG_DEBUG(Service_FS, "called");
+
+    if (!romfs) {
+        auto current_romfs = romfs_controller->OpenRomFSCurrentProcess();
+        if (!current_romfs) {
+            LOG_CRITICAL(Service_FS, "No file system interface available!");
+            R_RETURN(ResultUnknown);
+        }
+
+        romfs = current_romfs;
+    }
+
+    auto extracted_romfs = FileSys::ExtractRomFS(romfs);
+    if (!extracted_romfs) {
+        LOG_CRITICAL(Service_FS, "Failed to extract RomFS for the current process!");
+        R_RETURN(ResultUnknown);
+    }
+
+    *out_interface = std::make_shared<IFileSystem>(
+        system, extracted_romfs, SizeGetter::FromStorageId(fsc, FileSys::StorageId::NandUser));
+
     R_SUCCEED();
 }
 

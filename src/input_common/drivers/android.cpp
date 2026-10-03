@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
@@ -111,7 +114,7 @@ std::set<s32> Android::GetDeviceAxes(JNIEnv* env, jobject& j_device) const {
     std::set<s32> axes;
     for (int i = 0; i < env->GetArrayLength(j_axes); ++i) {
         jobject axis = env->GetObjectArrayElement(j_axes, i);
-        axes.insert(env->GetIntField(axis, Common::Android::GetIntegerValueField()));
+        axes.insert(env->CallIntMethod(axis, Common::Android::GetIntegerValueMethod()));
     }
     return axes;
 }
@@ -157,8 +160,8 @@ Common::ParamPackage Android::BuildButtonParamPackageForButton(PadIdentifier ide
 
 bool Android::MatchVID(Common::UUID device, const std::vector<std::string>& vids) const {
     for (size_t i = 0; i < vids.size(); ++i) {
-        auto fucker = device.RawString();
-        if (fucker.find(vids[i]) != std::string::npos) {
+        auto dev_str = device.RawString();
+        if (dev_str.find(vids[i]) != std::string::npos) {
             return true;
         }
     }

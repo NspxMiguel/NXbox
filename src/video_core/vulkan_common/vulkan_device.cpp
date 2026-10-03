@@ -7,15 +7,20 @@
 #include <algorithm>
 #include <bitset>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <thread>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 #include <utility>
 #include <vector>
 
 #include <fmt/format.h>
 
 #include "common/assert.h"
+#include "common/fs/fs.h"
+#include "common/fs/path_util.h"
 #include "common/literals.h"
 #include <ranges>
 #include "common/settings.h"
@@ -95,6 +100,12 @@ constexpr std::array VK_FORMAT_A4B4G4R4_UNORM_PACK16{
     VK_FORMAT_UNDEFINED,
 };
 
+constexpr std::array B10G11R11_UFLOAT_PACK32{
+    VK_FORMAT_R16G16B16A16_SFLOAT,
+    VK_FORMAT_A8B8G8R8_SRGB_PACK32,
+    VK_FORMAT_UNDEFINED,
+};
+
 } // namespace Alternatives
 
 template <typename T>
@@ -127,6 +138,8 @@ constexpr const VkFormat* GetFormatAlternatives(VkFormat format) {
         return Alternatives::VK_FORMAT_R32G32B32_SFLOAT.data();
     case VK_FORMAT_A4B4G4R4_UNORM_PACK16_EXT:
         return Alternatives::VK_FORMAT_A4B4G4R4_UNORM_PACK16.data();
+    case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+        return Alternatives::B10G11R11_UFLOAT_PACK32.data();
     default:
         return nullptr;
     }
@@ -145,7 +158,7 @@ VkFormatFeatureFlags GetFormatFeatures(VkFormatProperties properties, FormatType
     }
 }
 
-ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
+::Common::unordered_map<VkFormat, VkFormatProperties> GetFormatProperties(vk::PhysicalDevice physical) {
     static constexpr std::array formats{
         VK_FORMAT_A1R5G5B5_UNORM_PACK16,
         VK_FORMAT_A2B10G10R10_SINT_PACK32,
@@ -286,8 +299,18 @@ ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(v
         VK_FORMAT_R8_UNORM,
         VK_FORMAT_R8_USCALED,
         VK_FORMAT_S8_UINT,
+        VK_FORMAT_ETC2_R8G8B8_UNORM_BLOCK,
+        VK_FORMAT_ETC2_R8G8B8A8_UNORM_BLOCK,
+        VK_FORMAT_ETC2_R8G8B8A1_UNORM_BLOCK,
+        VK_FORMAT_ETC2_R8G8B8_SRGB_BLOCK,
+        VK_FORMAT_ETC2_R8G8B8A8_SRGB_BLOCK,
+        VK_FORMAT_ETC2_R8G8B8A1_SRGB_BLOCK,
+        VK_FORMAT_EAC_R11_UNORM_BLOCK,
+        VK_FORMAT_EAC_R11_SNORM_BLOCK,
+        VK_FORMAT_EAC_R11G11_UNORM_BLOCK,
+        VK_FORMAT_EAC_R11G11_SNORM_BLOCK,
     };
-    ankerl::unordered_dense::map<VkFormat, VkFormatProperties> format_properties;
+    ::Common::unordered_map<VkFormat, VkFormatProperties> format_properties;
     for (const auto format : formats) {
         format_properties.emplace(format, physical.GetFormatProperties(format));
     }
@@ -295,7 +318,7 @@ ankerl::unordered_dense::map<VkFormat, VkFormatProperties> GetFormatProperties(v
 }
 
 #if defined(__ANDROID__) && defined(ARCHITECTURE_arm64)
-void OverrideBcnFormats(ankerl::unordered_dense::map<VkFormat, VkFormatProperties>& format_properties) {
+void OverrideBcnFormats(::Common::unordered_map<VkFormat, VkFormatProperties>& format_properties) {
     // These properties are extracted from Adreno driver 512.687.0
     constexpr VkFormatFeatureFlags tiling_features{VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
                                                    VK_FORMAT_FEATURE_BLIT_SRC_BIT |
@@ -373,6 +396,17 @@ std::vector<const char*> ExtensionListForVulkan(
         output.push_back(extension.c_str());
     }
     return output;
+}
+
+constexpr std::array<char, 8> STATIC_CACHE_MAGIC_NUMBER{'e', 'd', 'e', 'n', 's', 't', 'p', 'c'};
+constexpr u32 STATIC_CACHE_VERSION = 1;
+
+std::filesystem::path StaticPipelineCacheFilename() {
+    const auto shader_dir = Common::FS::GetEdenPath(Common::FS::EdenPath::ShaderDir);
+    if (!Common::FS::CreateDir(shader_dir)) {
+        return {};
+    }
+    return shader_dir / "vulkan_static_pipelines.bin";
 }
 
 } // Anonymous namespace
@@ -486,23 +520,23 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     CollectToolingInfo();
 
     if (is_qualcomm) {
-        LOG_WARNING(Render_Vulkan,
-                    "Qualcomm drivers require scaled vertex format emulation");
         must_emulate_scaled_formats = true;
-        LOG_WARNING(Render_Vulkan,
-                    "Qualcomm drivers have broken provoking vertex");
-        RemoveExtension(extensions.provoking_vertex, VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
-        LOG_WARNING(Render_Vulkan,
-                    "Qualcomm drivers have slow push descriptor implementation");
-        RemoveExtension(extensions.push_descriptor, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
-        LOG_WARNING(Render_Vulkan,
-                    "Disabling shader float controls and 64-bit integer features on Qualcomm proprietary drivers");
-        RemoveExtension(extensions.shader_float_controls, VK_KHR_SHADER_FLOAT_CONTROLS_EXTENSION_NAME);
+        LOG_WARNING(Render_Vulkan, "Qualcomm drivers require scaled vertex format emulation.");
+        has_broken_descriptor_aliasing = true;
+        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken descriptor aliasing.");
+        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken color write enable.");
+        RemoveExtensionFeature(extensions.color_write_enable, features.color_write_enable,
+                               VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken shader atomic int64.");
         RemoveExtensionFeature(extensions.shader_atomic_int64, features.shader_atomic_int64,
                                VK_KHR_SHADER_ATOMIC_INT64_EXTENSION_NAME);
         features.shader_atomic_int64.shaderBufferInt64Atomics = false;
         features.shader_atomic_int64.shaderSharedInt64Atomics = false;
         features.features.shaderInt64 = false;
+        LOG_WARNING(Render_Vulkan, "Qualcomm drivers have broken workgroup memory explicit layout.");
+        RemoveExtensionFeature(extensions.workgroup_memory_explicit_layout,
+                               features.workgroup_memory_explicit_layout,
+                               VK_KHR_WORKGROUP_MEMORY_EXPLICIT_LAYOUT_EXTENSION_NAME);
 
 #if defined(__ANDROID__) && defined(ARCHITECTURE_arm64)
         // BCn patching only safe on Android 9+ (API 28+). Older versions crash on driver load.
@@ -555,7 +589,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
             features.shader_float16_int8.shaderFloat16 = false;
         }
 
-        // Mali/ NVIDIA proprietary drivers: Shader stencil export not supported
         // Use hardware depth/stencil blits instead when available
         if (!extensions.shader_stencil_export) {
             LOG_INFO(Render_Vulkan,
@@ -594,21 +627,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         }
     }
 
-    if (is_qualcomm) {
-        const size_t sampler_limit = properties.properties.limits.maxSamplerAllocationCount;
-        if (sampler_limit > 0) {
-            constexpr size_t MIN_SAMPLER_BUDGET = 1024U;
-            const size_t reserved = sampler_limit / 4U;
-            const size_t derived_budget =
-                (std::max)(MIN_SAMPLER_BUDGET, sampler_limit - reserved);
-            sampler_heap_budget = derived_budget;
-            LOG_WARNING(Render_Vulkan,
-                        "Qualcomm driver reports max {} samplers; reserving {} (25%) and "
-                        "allowing Eden to use {} (75%) to avoid heap exhaustion",
-                        sampler_limit, reserved, sampler_heap_budget);
-        }
-    }
-
     if (extensions.sampler_filter_minmax && is_amd) {
         // Disable ext_sampler_filter_minmax on AMD GCN4 and lower as it is broken.
         if (!features.shader_float16_int8.shaderFloat16) {
@@ -623,13 +641,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         // Intel's compiler crashes when using fp16 on Astral Chain, disable it for the time being.
         LOG_WARNING(Render_Vulkan, "Intel has broken float16 math");
         features.shader_float16_int8.shaderFloat16 = false;
-    }
-
-    if (is_intel_windows) {
-        LOG_WARNING(Render_Vulkan,
-                    "Intel proprietary drivers do not support MSAA->MSAA image blits. "
-                    "MSAA scaling will use 3D helpers. MSAA resolves work normally.");
-        cant_blit_msaa = true;
     }
 
     has_broken_compute =
@@ -651,14 +662,6 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     }
 
     const auto dyna_state = Settings::values.dyna_state.GetValue();
-
-    // Base dynamic states (VIEWPORT, SCISSOR, DEPTH_BIAS, etc.) are ALWAYS active in vk_graphics_pipeline.cpp
-    // This slider controls EXTENDED dynamic states with accumulative levels per Vulkan specs:
-    //   Level 0 = Core Dynamic States only (Vulkan 1.0)
-    //   Level 1 = Core + VK_EXT_extended_dynamic_state
-    //   Level 2 = Core + VK_EXT_extended_dynamic_state + VK_EXT_extended_dynamic_state2
-    //   Level 3 = Core + VK_EXT_extended_dynamic_state + VK_EXT_extended_dynamic_state2 + VK_EXT_extended_dynamic_state3
-
     switch (dyna_state) {
     case Settings::ExtendedDynamicState::Disabled:
         // Level 0: Disable all extended dynamic state extensions
@@ -693,10 +696,40 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
         break;
     }
 
-    // VK_EXT_vertex_input_dynamic_state is independent from EDS
-    // It can be enabled even without extended_dynamic_state
+    // VK_EXT_vertex_input_dynamic_state
     if (!Settings::values.vertex_input_dynamic_state.GetValue()) {
         RemoveExtensionFeature(extensions.vertex_input_dynamic_state, features.vertex_input_dynamic_state, VK_EXT_VERTEX_INPUT_DYNAMIC_STATE_EXTENSION_NAME);
+    }
+
+    // Descriptors feature list
+    {
+        auto& descriptor_indexing = features.descriptor_indexing;
+        descriptor_indexing.shaderInputAttachmentArrayDynamicIndexing = false;
+        descriptor_indexing.shaderUniformTexelBufferArrayDynamicIndexing = false;
+        descriptor_indexing.shaderStorageTexelBufferArrayDynamicIndexing = false;
+        descriptor_indexing.shaderUniformBufferArrayNonUniformIndexing = false;
+        descriptor_indexing.shaderStorageBufferArrayNonUniformIndexing = false;
+        descriptor_indexing.shaderInputAttachmentArrayNonUniformIndexing = false;
+        descriptor_indexing.descriptorBindingUniformBufferUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingSampledImageUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingStorageImageUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingStorageBufferUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingUniformTexelBufferUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingStorageTexelBufferUpdateAfterBind = false;
+        descriptor_indexing.descriptorBindingUpdateUnusedWhilePending = false;
+        descriptor_indexing.descriptorBindingVariableDescriptorCount = false;
+        descriptor_indexing.runtimeDescriptorArray = false;
+    }
+
+    // VK_EXT_descriptor_buffer requires VK_KHR_buffer_device_address
+    if (extensions.descriptor_buffer && !features.buffer_device_address.bufferDeviceAddress) {
+        LOG_WARNING(Render_Vulkan, "Descriptor buffer needs buffer device address, disabling.");
+        RemoveExtensionFeature(extensions.descriptor_buffer, features.descriptor_buffer,
+                               VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
+    }
+    if (!extensions.descriptor_buffer) {
+        RemoveExtensionFeature(extensions.buffer_device_address, features.buffer_device_address,
+                               VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     }
 
     logical = vk::Device::Create(physical, queue_cis, ExtensionListForVulkan(loaded_extensions), first_next, dld);
@@ -711,6 +744,9 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
     VmaAllocatorCreateFlags flags = VMA_ALLOCATOR_CREATE_EXTERNALLY_SYNCHRONIZED_BIT;
     if (extensions.memory_budget) {
         flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
+    }
+    if (extensions.buffer_device_address) {
+        flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
     }
     const VmaAllocatorCreateInfo allocator_info{
             .flags = flags,
@@ -730,13 +766,98 @@ Device::Device(VkInstance instance_, vk::PhysicalDevice physical_, VkSurfaceKHR 
 
     vk::Check(vmaCreateAllocator(&allocator_info, &allocator));
 
+    owns_static_pipeline_cache = surface != VkSurfaceKHR{};
+    LoadStaticPipelineCache();
+
     // Initialize GPU logging if enabled
     InitializeGPULogging();
 }
 
 Device::~Device() {
+    SaveStaticPipelineCache();
     ShutdownGPULogging();
     vmaDestroyAllocator(allocator);
+}
+
+void Device::LoadStaticPipelineCache() {
+    const auto create = [this](size_t size, const void* data) {
+        static_pipeline_cache = logical.CreatePipelineCache({
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .initialDataSize = size,
+            .pInitialData = data,
+        });
+    };
+    if (!owns_static_pipeline_cache) {
+        create(0, nullptr);
+        return;
+    }
+    const auto filename = StaticPipelineCacheFilename();
+    if (filename.empty()) {
+        create(0, nullptr);
+        return;
+    }
+    std::vector<char> data;
+    try {
+        std::ifstream file(filename, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            create(0, nullptr);
+            return;
+        }
+        file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+        const size_t total = static_cast<size_t>(file.tellg());
+        file.seekg(0, std::ios::beg);
+        std::array<char, 8> magic{};
+        u32 version{};
+        if (total < magic.size() + sizeof(version)) {
+            create(0, nullptr);
+            return;
+        }
+        file.read(magic.data(), magic.size())
+            .read(reinterpret_cast<char*>(&version), sizeof(version));
+        if (magic != STATIC_CACHE_MAGIC_NUMBER || version != STATIC_CACHE_VERSION) {
+            create(0, nullptr);
+            return;
+        }
+        data.resize(total - magic.size() - sizeof(version));
+        file.read(data.data(), static_cast<std::streamsize>(data.size()));
+    } catch (const std::ios_base::failure& e) {
+        create(0, nullptr);
+        return;
+    }
+    create(data.size(), data.empty() ? nullptr : data.data());
+}
+
+void Device::SaveStaticPipelineCache() const {
+    if (!owns_static_pipeline_cache || !static_pipeline_cache) {
+        return;
+    }
+    const auto filename = StaticPipelineCacheFilename();
+    if (filename.empty()) {
+        return;
+    }
+    size_t size = 0;
+    std::vector<char> data;
+    static_pipeline_cache.Read(&size, nullptr);
+    if (size == 0) {
+        return;
+    }
+    data.resize(size);
+    static_pipeline_cache.Read(&size, data.data());
+    try {
+        std::ofstream file(filename, std::ios::binary | std::ios::trunc);
+        file.exceptions(std::ofstream::failbit);
+        if (!file.is_open()) {
+            return;
+        }
+        file.write(STATIC_CACHE_MAGIC_NUMBER.data(), STATIC_CACHE_MAGIC_NUMBER.size())
+            .write(reinterpret_cast<const char*>(&STATIC_CACHE_VERSION),
+                   sizeof(STATIC_CACHE_VERSION))
+            .write(data.data(), static_cast<std::streamsize>(size));
+    } catch (const std::ios_base::failure& e) {
+        Common::FS::RemoveFile(filename);
+    }
 }
 
 VkFormat Device::GetSupportedFormat(VkFormat wanted_format, VkFormatFeatureFlags wanted_usage,
@@ -787,7 +908,6 @@ void Device::SaveShader(std::span<const u32> spirv) const {
 }
 
 bool Device::ComputeIsOptimalAstcSupported() const {
-    // Verify hardware supports all ASTC formats with optimal tiling to avoid software conversion
     static constexpr std::array<VkFormat, 28> astc_formats = {
         VK_FORMAT_ASTC_4x4_UNORM_BLOCK,   VK_FORMAT_ASTC_4x4_SRGB_BLOCK,
         VK_FORMAT_ASTC_5x4_UNORM_BLOCK,   VK_FORMAT_ASTC_5x4_SRGB_BLOCK,
@@ -807,14 +927,13 @@ bool Device::ComputeIsOptimalAstcSupported() const {
     if (!features.features.textureCompressionASTC_LDR) {
         return false;
     }
-    const auto format_feature_usage{VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
-                                    VK_FORMAT_FEATURE_BLIT_SRC_BIT |
-                                    VK_FORMAT_FEATURE_BLIT_DST_BIT |
-                                    VK_FORMAT_FEATURE_TRANSFER_SRC_BIT |
-                                    VK_FORMAT_FEATURE_TRANSFER_DST_BIT};
+    const VkFormatFeatureFlags format_feature_usage{
+        VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT};
     for (const auto format : astc_formats) {
         const auto physical_format_properties{physical.GetFormatProperties(format)};
-        if ((physical_format_properties.optimalTilingFeatures & format_feature_usage) == 0) {
+        if ((physical_format_properties.optimalTilingFeatures & format_feature_usage) !=
+            format_feature_usage) {
             return false;
         }
     }
@@ -927,6 +1046,12 @@ bool Device::GetSuitability(bool requires_swapchain) {
     FOR_EACH_VK_FEATURE_EXT(FEATURE_EXTENSION);
     FOR_EACH_VK_EXTENSION(EXTENSION);
 
+    extensions.depth_stencil_resolve =
+        extensions.depth_stencil_resolve &&
+        (instance_version >= VK_API_VERSION_1_2 || extensions.create_renderpass2);
+    RemoveExtensionIfUnsuitable(extensions.depth_stencil_resolve,
+                                VK_KHR_DEPTH_STENCIL_RESOLVE_EXTENSION_NAME);
+
     if (supported_extensions.contains(VK_KHR_ROBUSTNESS_2_EXTENSION_NAME)) {
         loaded_extensions.erase(VK_EXT_ROBUSTNESS_2_EXTENSION_NAME);
         loaded_extensions.insert(VK_KHR_ROBUSTNESS_2_EXTENSION_NAME);
@@ -958,6 +1083,10 @@ bool Device::GetSuitability(bool requires_swapchain) {
 
     if (requires_swapchain) {
         CHECK_EXTENSION(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    }
+
+    if (instance_version < VK_API_VERSION_1_2) {
+        CHECK_EXTENSION(VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME);
     }
 
 #undef LOG_EXTENSION
@@ -1070,6 +1199,16 @@ bool Device::GetSuitability(bool requires_swapchain) {
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PUSH_DESCRIPTOR_PROPERTIES_KHR;
         SetNext(next, properties.push_descriptor);
     }
+    if (extensions.depth_stencil_resolve || instance_version >= VK_API_VERSION_1_2) {
+        properties.depth_stencil_resolve.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_STENCIL_RESOLVE_PROPERTIES;
+        SetNext(next, properties.depth_stencil_resolve);
+    }
+    if (extensions.descriptor_buffer) {
+        properties.descriptor_buffer.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_PROPERTIES_EXT;
+        SetNext(next, properties.descriptor_buffer);
+    }
     if (extensions.subgroup_size_control || features.subgroup_size_control.subgroupSizeControl) {
         properties.subgroup_size_control.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_PROPERTIES;
@@ -1084,6 +1223,11 @@ bool Device::GetSuitability(bool requires_swapchain) {
         properties.maintenance5.sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_PROPERTIES_KHR;
         SetNext(next, properties.maintenance5);
+    }
+    if (extensions.custom_border_color) {
+        properties.custom_border_color.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_PROPERTIES_EXT;
+        SetNext(next, properties.custom_border_color);
     }
 
     // Perform the property fetch.
@@ -1164,6 +1308,11 @@ bool Device::GetSuitability(bool requires_swapchain) {
 }
 
 void Device::RemoveUnsuitableExtensions() {
+    // VK_EXT_color_write_enable
+    extensions.color_write_enable = features.color_write_enable.colorWriteEnable;
+    RemoveExtensionFeatureIfUnsuitable(extensions.color_write_enable, features.color_write_enable,
+                                       VK_EXT_COLOR_WRITE_ENABLE_EXTENSION_NAME);
+
     // VK_EXT_custom_border_color
     if (extensions.custom_border_color) {
         extensions.custom_border_color =
@@ -1172,6 +1321,15 @@ void Device::RemoveUnsuitableExtensions() {
     }
     RemoveExtensionFeatureIfUnsuitable(extensions.custom_border_color, features.custom_border_color,
                                        VK_EXT_CUSTOM_BORDER_COLOR_EXTENSION_NAME);
+
+    // VK_EXT_border_color_swizzle
+    if (extensions.border_color_swizzle) {
+        extensions.border_color_swizzle =
+            extensions.custom_border_color && features.border_color_swizzle.borderColorSwizzle;
+    }
+    RemoveExtensionFeatureIfUnsuitable(extensions.border_color_swizzle,
+                                       features.border_color_swizzle,
+                                       VK_EXT_BORDER_COLOR_SWIZZLE_EXTENSION_NAME);
 
     // VK_EXT_depth_bias_control
     extensions.depth_bias_control =
@@ -1184,6 +1342,11 @@ void Device::RemoveUnsuitableExtensions() {
     extensions.depth_clip_control = features.depth_clip_control.depthClipControl;
     RemoveExtensionFeatureIfUnsuitable(extensions.depth_clip_control, features.depth_clip_control,
                                        VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME);
+
+    // VK_EXT_descriptor_buffer
+    extensions.descriptor_buffer = features.descriptor_buffer.descriptorBuffer;
+    RemoveExtensionFeatureIfUnsuitable(extensions.descriptor_buffer, features.descriptor_buffer,
+                                       VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME);
 
     // VK_EXT_extended_dynamic_state
     extensions.extended_dynamic_state = features.extended_dynamic_state.extendedDynamicState;
@@ -1324,12 +1487,14 @@ void Device::RemoveUnsuitableExtensions() {
                                VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
     }
 
+    // VK_KHR_shader_quad_control
+    extensions.shader_quad_control = features.shader_quad_control.shaderQuadControl;
+    RemoveExtensionFeatureIfUnsuitable(extensions.shader_quad_control, features.shader_quad_control,
+                                       VK_KHR_SHADER_QUAD_CONTROL_EXTENSION_NAME);
+
     // VK_KHR_workgroup_memory_explicit_layout
     extensions.workgroup_memory_explicit_layout =
-        features.features.shaderInt16 &&
         features.workgroup_memory_explicit_layout.workgroupMemoryExplicitLayout &&
-        features.workgroup_memory_explicit_layout.workgroupMemoryExplicitLayout8BitAccess &&
-        features.workgroup_memory_explicit_layout.workgroupMemoryExplicitLayout16BitAccess &&
         features.workgroup_memory_explicit_layout.workgroupMemoryExplicitLayoutScalarBlockLayout;
     RemoveExtensionFeatureIfUnsuitable(extensions.workgroup_memory_explicit_layout,
                                        features.workgroup_memory_explicit_layout,
@@ -1369,6 +1534,11 @@ void Device::RemoveUnsuitableExtensions() {
     // VK_KHR_maintenance8
     extensions.maintenance8 = loaded_extensions.contains(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     RemoveExtensionIfUnsuitable(extensions.maintenance8, VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
+
+    // VK_KHR_synchronization2
+    extensions.synchronization2 = features.synchronization2.synchronization2;
+    RemoveExtensionFeatureIfUnsuitable(extensions.synchronization2, features.synchronization2,
+                                       VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME);
 }
 
 void Device::SetupFamilies(VkSurfaceKHR surface) {
@@ -1400,17 +1570,34 @@ void Device::SetupFamilies(VkSurfaceKHR surface) {
     }
     if (graphics) {
         graphics_family = *graphics;
+        graphics_family_sparse_binding =
+            (queue_family_properties[*graphics].queueFlags & VK_QUEUE_SPARSE_BINDING_BIT) != 0;
     }
     if (present) {
         present_family = *present;
     }
 }
 
-std::optional<size_t> Device::GetSamplerHeapBudget() const {
-    if (sampler_heap_budget == 0) {
-        return std::nullopt;
+bool Device::TryReserveCustomBorderColorSamplers(size_t count) const {
+    const size_t limit = properties.custom_border_color.maxCustomBorderColorSamplers;
+    if (limit == 0) {
+        return true;
     }
-    return sampler_heap_budget;
+    size_t used = custom_border_color_samplers_used.load(std::memory_order_relaxed);
+    while (used + count <= limit) {
+        if (custom_border_color_samplers_used.compare_exchange_weak(
+                used, used + count, std::memory_order_relaxed, std::memory_order_relaxed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void Device::ReleaseCustomBorderColorSamplers(size_t count) const {
+    if (count == 0) {
+        return;
+    }
+    custom_border_color_samplers_used.fetch_sub(count, std::memory_order_relaxed);
 }
 
 u64 Device::GetDeviceMemoryUsage() const {
@@ -1492,7 +1679,7 @@ void Device::CollectToolingInfo() {
 std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
     static constexpr float QUEUE_PRIORITY = 1.0f;
 
-    ankerl::unordered_dense::set<u32> unique_queue_families{graphics_family, present_family};
+    ::Common::unordered_set<u32> unique_queue_families{graphics_family, present_family};
     std::vector<VkDeviceQueueCreateInfo> queue_cis;
     queue_cis.reserve(unique_queue_families.size());
 
@@ -1512,7 +1699,10 @@ std::vector<VkDeviceQueueCreateInfo> Device::GetDeviceQueueCreateInfos() const {
 }
 
 void Device::InitializeGPULogging() {
-    if (!Settings::values.gpu_logging_enabled.GetValue()) {
+    // Get log level from settings - Off is the disable.
+    const auto log_level = static_cast<GPU::Logging::LogLevel>(
+        static_cast<u32>(Settings::values.gpu_log_level.GetValue()));
+    if (log_level == GPU::Logging::LogLevel::Off) {
         return;
     }
 
@@ -1526,18 +1716,12 @@ void Device::InitializeGPULogging() {
         detected_driver = GPU::Logging::DriverType::Qualcomm;
     }
 
-    // Get log level from settings
-    const auto log_level = static_cast<GPU::Logging::LogLevel>(
-        static_cast<u32>(Settings::values.gpu_log_level.GetValue()));
-
     // Initialize GPU logger
     GPU::Logging::GPULogger::GetInstance().Initialize(log_level, detected_driver);
 
     // Configure feature flags
     GPU::Logging::GPULogger::GetInstance().EnableVulkanCallTracking(
         Settings::values.gpu_log_vulkan_calls.GetValue());
-    GPU::Logging::GPULogger::GetInstance().EnableShaderDumps(
-        Settings::values.gpu_log_shader_dumps.GetValue());
     GPU::Logging::GPULogger::GetInstance().EnableMemoryTracking(
         Settings::values.gpu_log_memory_tracking.GetValue());
     GPU::Logging::GPULogger::GetInstance().EnableDriverDebugInfo(
@@ -1569,8 +1753,8 @@ void Device::InitializeGPULogging() {
         driver_info += fmt::format("Driver ID: {}\n", static_cast<u32>(driver_id));
 
         // Vendor and device IDs
-        driver_info += fmt::format("Vendor ID: 0x{:04X}\n", props.vendorID);
-        driver_info += fmt::format("Device ID: 0x{:04X}\n", props.deviceID);
+        driver_info += fmt::format("Vendor ID: {:#04x}\n", props.vendorID);
+        driver_info += fmt::format("Device ID: {:#04x}\n", props.deviceID);
 
         // Extensions - separate QCOM extensions from others
         driver_info += "\n=== Loaded Vulkan Extensions ===\n";

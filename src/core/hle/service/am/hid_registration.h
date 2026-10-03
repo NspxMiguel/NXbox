@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -24,7 +27,8 @@ public:
     explicit HidRegistration(Core::System& system, Process& process);
     ~HidRegistration();
 
-    void EnableAppletToGetInput(bool enable);
+    void RegisterCurrentProcess();
+    void EnableAppletToGetInput(bool enable_pad, bool enable_touch);
 
 private:
     Process& m_process;

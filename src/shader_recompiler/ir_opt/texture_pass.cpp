@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <bit>
 #include <optional>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <tuple>
 #include <limits>
 #include <boost/container/small_vector.hpp>
@@ -32,71 +32,62 @@ struct TextureInst {
 using TextureInstVector = boost::container::small_vector<TextureInst, 24>;
 
 constexpr u32 DESCRIPTOR_SIZE = 8;
-constexpr u32 DESCRIPTOR_SIZE_SHIFT = static_cast<u32>(std::countr_zero(DESCRIPTOR_SIZE));
-constexpr u32 DYNAMIC_DESCRIPTOR_CBUF_BYTES = 16 * 1024;
-constexpr u32 MAX_DYNAMIC_DESCRIPTOR_COUNT = 1024;
+constexpr u32 DESCRIPTOR_SIZE_SHIFT = u32(std::countr_zero(DESCRIPTOR_SIZE));
+constexpr u32 DESCRIPTOR_MAX_COUNT = 1024;
 
 u32 DynamicDescriptorSizeShift(const IR::U32& dynamic_offset) {
-    const IR::Inst* const inst{dynamic_offset.InstRecursive()};
-    if (!inst || inst->GetOpcode() != IR::Opcode::ShiftLeftLogical32) {
+    const IR::Inst* const inst = dynamic_offset.InstRecursive();
+    if (!inst || inst->GetOpcode() != IR::Opcode::ShiftLeftLogical32)
         return DESCRIPTOR_SIZE_SHIFT;
-    }
-    const IR::Value shift{inst->Arg(1)};
-    if (!shift.IsImmediate()) {
+    const IR::Value shift = inst->Arg(1);
+    if (!shift.IsImmediate())
         return DESCRIPTOR_SIZE_SHIFT;
-    }
-    const u32 size_shift{shift.U32()};
-    return size_shift >= DESCRIPTOR_SIZE_SHIFT && size_shift < 31 ? size_shift
-                                                                  : DESCRIPTOR_SIZE_SHIFT;
+    const u32 size_shift = shift.U32();
+    return size_shift >= DESCRIPTOR_SIZE_SHIFT && size_shift < 31 ? size_shift : DESCRIPTOR_SIZE_SHIFT;
 }
 
-u32 DynamicDescriptorCount(u32 base_offset, u32 size_shift) {
-    if (size_shift >= 31 || base_offset >= DYNAMIC_DESCRIPTOR_CBUF_BYTES) {
+u32 DynamicDescriptorCount(u32 base_offset, u32 size_shift, u32 max_descriptors) {
+    auto const descriptor_limit = (std::max)(1U, max_descriptors);
+    auto const max_cbuf_bytes = 16 * descriptor_limit;
+    if (size_shift >= 31 || base_offset >= max_cbuf_bytes)
         return 1;
-    }
-    const u32 stride{1U << size_shift};
-    const u32 available{DYNAMIC_DESCRIPTOR_CBUF_BYTES - base_offset};
-    if (available < DESCRIPTOR_SIZE) {
+    auto const stride = 1U << size_shift;
+    auto const available = max_cbuf_bytes - base_offset;
+    if (available < DESCRIPTOR_SIZE)
         return 1;
-    }
-    const u32 available_count{1U + (available - DESCRIPTOR_SIZE) / stride};
-    return std::min(MAX_DYNAMIC_DESCRIPTOR_COUNT, available_count);
+    auto const available_count = 1U + (available - DESCRIPTOR_SIZE) / stride;
+    return std::min(descriptor_limit, available_count);
 }
 
 u32 SaturatingSub(u32 lhs, u32 rhs) {
     return lhs > rhs ? lhs - rhs : 0;
 }
 
-template <typename Descriptors>
-u32 StaticDescriptorCount(const Descriptors& descriptors) {
-    u32 count{};
-    for (const auto& desc : descriptors) {
-        if (desc.count <= 1) {
-            count += desc.count;
-        }
-    }
-    return count;
+template <typename T>
+[[nodiscard]] u32 StaticDescriptorCount(T const& descriptors) noexcept {
+    return std::accumulate(descriptors.cbegin(), descriptors.cend(), 0U, [](auto const& acc, auto const& e) {
+        return acc + (e.count <= 1 ? e.count : 0);
+    });
 }
 
-u32 DynamicSampledTextureCap(const Info& info, const HostTranslateInfo& host_info,
-                             u32 dynamic_arrays) {
-    if (dynamic_arrays == 0) {
-        return MAX_DYNAMIC_DESCRIPTOR_COUNT;
+u32 DynamicSampledTextureCap(const Info& info, const HostTranslateInfo& host_info, u32 dynamic_arrays) {
+    auto const sampled_limit = (std::max)(1U, std::min(host_info.max_per_stage_descriptor_sampled_images,
+                                                       host_info.max_descriptor_set_sampled_images));
+    auto const resource_limit = (std::max)(1U, host_info.max_per_stage_resources);
+    if (dynamic_arrays > 0) {
+        auto const sampled_static_count = StaticDescriptorCount(info.texture_buffer_descriptors) + StaticDescriptorCount(info.texture_descriptors);
+        auto const resource_static_count =
+            NumDescriptors(info.constant_buffer_descriptors)
+            + NumDescriptors(info.storage_buffers_descriptors)
+            + sampled_static_count + NumDescriptors(info.image_buffer_descriptors)
+            + NumDescriptors(info.image_descriptors);
+        auto const sampled_budget = SaturatingSub(sampled_limit, sampled_static_count);
+        auto const resource_budget = SaturatingSub(resource_limit, resource_static_count);
+        auto const sampled_cap = sampled_budget / dynamic_arrays;
+        auto const resource_cap = resource_budget / dynamic_arrays;
+        return (std::max)(1U, (std::min)(sampled_cap, resource_cap));
     }
-    const u32 sampled_static_count{StaticDescriptorCount(info.texture_buffer_descriptors) +
-                                   StaticDescriptorCount(info.texture_descriptors)};
-    const u32 resource_static_count{
-        NumDescriptors(info.constant_buffer_descriptors) +
-        NumDescriptors(info.storage_buffers_descriptors) + sampled_static_count +
-        NumDescriptors(info.image_buffer_descriptors) + NumDescriptors(info.image_descriptors)};
-    const u32 sampled_limit{std::min(host_info.max_per_stage_descriptor_sampled_images,
-                                     host_info.max_descriptor_set_sampled_images)};
-    const u32 sampled_budget{SaturatingSub(sampled_limit, sampled_static_count)};
-    const u32 resource_budget{SaturatingSub(host_info.max_per_stage_resources,
-                                            resource_static_count)};
-    const u32 sampled_cap{sampled_budget / dynamic_arrays};
-    const u32 resource_cap{resource_budget / dynamic_arrays};
-    return std::max(1U, std::min({MAX_DYNAMIC_DESCRIPTOR_COUNT, sampled_cap, resource_cap}));
+    return (std::min)({DESCRIPTOR_MAX_COUNT, sampled_limit, resource_limit});
 }
 
 IR::Opcode IndexedInstruction(const IR::Inst& inst) {
@@ -270,21 +261,25 @@ bool IsTextureInstruction(const IR::Inst& inst) {
 
 static inline u32 ReadCbufCached(Environment& env, u32 index, u32 offset) {
     const CbufWordKey k{index, offset};
-    if (auto it = env.cbuf_word_cache.find(k); it != env.cbuf_word_cache.end()) return it->second;
+    if (auto it = env.cbuf_word_cache.find(k); it != env.cbuf_word_cache.end())
+        return it->second;
     const u32 v = env.ReadCbufValue(index, offset);
     env.cbuf_word_cache.emplace(k, v);
     return v;
 }
 
 static inline u32 GetTextureHandleCached(Environment& env, const ConstBufferAddr& cbuf) {
-    const u32 sec_idx  = cbuf.has_secondary ? cbuf.secondary_index  : cbuf.index;
-    const u32 sec_off  = cbuf.has_secondary ? cbuf.secondary_offset : cbuf.offset;
-    const HandleKey hk{cbuf.index, cbuf.offset, cbuf.shift_left,
-                        sec_idx, sec_off, cbuf.secondary_shift_left, cbuf.has_secondary};
-    if (auto it = env.handle_cache.find(hk); it != env.handle_cache.end()) return it->second;
-
+    // Must all be uniquely different variables
+    // If has secondary, then it will be cbuf.secondary_{index|offset}, else its 0.
+    // So we can just hand it out the raw variable without using sec_idx or sec_off
+    // because comparing 0 against 0 will yield true.
+    const HandleKey hk{cbuf.index, cbuf.offset, cbuf.shift_left, cbuf.secondary_index, cbuf.secondary_offset, cbuf.secondary_shift_left, cbuf.count, cbuf.has_secondary};
+    if (auto it = env.handle_cache.find(hk); it != env.handle_cache.end())
+        return it->second;
+    const u32 sec_idx = cbuf.has_secondary ? cbuf.secondary_index  : cbuf.index;
+    const u32 sec_off = cbuf.has_secondary ? cbuf.secondary_offset : cbuf.offset;
     const u32 lhs = ReadCbufCached(env, cbuf.index, cbuf.offset) << cbuf.shift_left;
-    const u32 rhs = ReadCbufCached(env, sec_idx,   sec_off)      << cbuf.secondary_shift_left;
+    const u32 rhs = ReadCbufCached(env, sec_idx, sec_off) << cbuf.secondary_shift_left;
     const u32 handle = lhs | rhs;
     env.handle_cache.emplace(hk, handle);
     return handle;
@@ -304,21 +299,23 @@ static inline bool IsTexturePixelFormatIntegerCached(Environment& env,
 }
 
 
-std::optional<ConstBufferAddr> Track(const IR::Value& value, Environment& env);
-static inline std::optional<ConstBufferAddr> TrackCached(const IR::Value& v, Environment& env) {
+std::optional<ConstBufferAddr> Track(const IR::Value& value, Environment& env, const HostTranslateInfo& host_info);
+static inline std::optional<ConstBufferAddr> TrackCached(const IR::Value& v, Environment& env, const HostTranslateInfo& host_info) {
     if (const IR::Inst* key = v.InstRecursive()) {
         if (auto it = env.track_cache.find(key); it != env.track_cache.end()) return it->second;
-        auto found = Track(v, env);
+        auto found = Track(v, env, host_info);
         if (found) env.track_cache.emplace(key, *found);
         return found;
     }
-    return Track(v, env);
+    return Track(v, env, host_info);
 }
 
-std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environment& env);
+std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environment& env, const HostTranslateInfo& host_info);
 
-std::optional<ConstBufferAddr> Track(const IR::Value& value, Environment& env) {
-    return IR::BreadthFirstSearch(value, [&env](const IR::Inst* inst) { return TryGetConstBuffer(inst, env); });
+std::optional<ConstBufferAddr> Track(const IR::Value& value, Environment& env, const HostTranslateInfo& host_info) {
+    return IR::BreadthFirstSearch(value, [&env, &host_info](const IR::Inst* inst) {
+        return TryGetConstBuffer(inst, env, host_info);
+    });
 }
 
 std::optional<u32> TryGetConstant(IR::Value& value, Environment& env) {
@@ -342,13 +339,13 @@ std::optional<u32> TryGetConstant(IR::Value& value, Environment& env) {
     return ReadCbufCached(env, index_number, offset_number);
 }
 
-std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environment& env) {
+std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environment& env, const HostTranslateInfo& host_info) {
     switch (inst->GetOpcode()) {
     default:
         return std::nullopt;
     case IR::Opcode::BitwiseOr32: {
-        std::optional lhs{TrackCached(inst->Arg(0), env)};
-        std::optional rhs{TrackCached(inst->Arg(1), env)};
+        std::optional lhs{TrackCached(inst->Arg(0), env, host_info)};
+        std::optional rhs{TrackCached(inst->Arg(1), env, host_info)};
         if (!lhs || !rhs) {
             return std::nullopt;
         }
@@ -378,12 +375,11 @@ std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environme
         if (!shift.IsImmediate()) {
             return std::nullopt;
         }
-        std::optional lhs{TrackCached(inst->Arg(0), env)};
+        std::optional lhs{TrackCached(inst->Arg(0), env, host_info)};
         if (lhs) {
             lhs->shift_left = shift.U32();
         }
         return lhs;
-        break;
     }
     case IR::Opcode::BitwiseAnd32: {
         IR::Value op1{inst->Arg(0)};
@@ -407,7 +403,7 @@ std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environme
                 return std::nullopt;
             } while (false);
         }
-        std::optional lhs{TrackCached(op1, env)};
+        std::optional lhs{TrackCached(op1, env, host_info)};
         if (lhs) {
             lhs->shift_left = static_cast<u32>(std::countr_zero(op2.U32()));
         }
@@ -453,7 +449,10 @@ std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environme
     } else {
         return std::nullopt;
     }
-    const u32 size_shift{DynamicDescriptorSizeShift(dynamic_offset)};
+    auto const size_shift = DynamicDescriptorSizeShift(dynamic_offset);
+    auto const sampled_limit = (std::max)(1U, (std::min)(host_info.max_per_stage_descriptor_sampled_images,
+                                                         host_info.max_descriptor_set_sampled_images));
+    auto const resource_limit = (std::max)(1U, host_info.max_per_stage_resources);
     return ConstBufferAddr{
         .index = index.U32(),
         .offset = base_offset,
@@ -462,15 +461,15 @@ std::optional<ConstBufferAddr> TryGetConstBuffer(const IR::Inst* inst, Environme
         .secondary_offset = 0,
         .secondary_shift_left = 0,
         .dynamic_offset = dynamic_offset,
-        .count = DynamicDescriptorCount(base_offset, size_shift),
+        .count = DynamicDescriptorCount(base_offset, size_shift, (std::min)({DESCRIPTOR_MAX_COUNT, sampled_limit, resource_limit})),
         .has_secondary = false,
     };
 }
 
-TextureInst MakeInst(Environment& env, IR::Block* block, IR::Inst& inst) {
+TextureInst MakeInst(Environment& env, IR::Block* block, IR::Inst& inst, const HostTranslateInfo& host_info) {
     ConstBufferAddr addr;
     if (IsBindless(inst)) {
-        const std::optional<ConstBufferAddr> track_addr{TrackCached(inst.Arg(0), env)};
+        const std::optional<ConstBufferAddr> track_addr{TrackCached(inst.Arg(0), env, host_info)};
 
         if (!track_addr) {
             throw NotImplementedException("Failed to track bindless texture constant buffer");
@@ -506,15 +505,15 @@ u32 GetTextureHandle(Environment& env, const ConstBufferAddr& cbuf) {
     return lhs_raw | rhs_raw;
 }
 
-    [[maybe_unused]]TextureType ReadTextureType(Environment& env, const ConstBufferAddr& cbuf) {
+[[maybe_unused]] TextureType ReadTextureType(Environment& env, const ConstBufferAddr& cbuf) {
     return env.ReadTextureType(GetTextureHandle(env, cbuf));
 }
 
-    [[maybe_unused]]TexturePixelFormat ReadTexturePixelFormat(Environment& env, const ConstBufferAddr& cbuf) {
+[[maybe_unused]] TexturePixelFormat ReadTexturePixelFormat(Environment& env, const ConstBufferAddr& cbuf) {
     return env.ReadTexturePixelFormat(GetTextureHandle(env, cbuf));
 }
 
-    [[maybe_unused]]bool IsTexturePixelFormatInteger(Environment& env, const ConstBufferAddr& cbuf) {
+[[maybe_unused]] bool IsTexturePixelFormatInteger(Environment& env, const ConstBufferAddr& cbuf) {
     return env.IsTexturePixelFormatInteger(GetTextureHandle(env, cbuf));
 }
 
@@ -567,6 +566,7 @@ public:
         })};
         // TODO: Read this from TIC
         texture_descriptors[index].is_multisample |= desc.is_multisample;
+        texture_descriptors[index].is_integer |= desc.is_integer;
         return index;
     }
 
@@ -675,7 +675,7 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
             if (!IsTextureInstruction(inst)) {
                 continue;
             }
-            to_replace.push_back(MakeInst(env, block, inst));
+            to_replace.push_back(MakeInst(env, block, inst, host_info));
         }
     }
     // Sort instructions to visit textures by constant buffer index, then by offset
@@ -689,8 +689,22 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
         program.info.texture_descriptors,
         program.info.image_descriptors,
     };
-    const u32 sampled_dynamic_cap{
-        DynamicSampledTextureCap(program.info, host_info, DynamicSampledTextureArrayCount(to_replace))};
+    const u32 sampled_dynamic_cap = DynamicSampledTextureCap(program.info, host_info, DynamicSampledTextureArrayCount(to_replace));
+    bool has_last_is_integer{false};
+    u32 last_cbuf_index{};
+    u32 last_cbuf_offset{};
+    bool last_is_integer{false};
+    const auto is_texture_pixel_format_integer{[&](const ConstBufferAddr& cbuf_addr) {
+        if (has_last_is_integer && last_cbuf_index == cbuf_addr.index &&
+            last_cbuf_offset == cbuf_addr.offset) {
+            return last_is_integer;
+        }
+        last_is_integer = IsTexturePixelFormatIntegerCached(env, cbuf_addr);
+        last_cbuf_index = cbuf_addr.index;
+        last_cbuf_offset = cbuf_addr.offset;
+        has_last_is_integer = true;
+        return last_is_integer;
+    }};
     for (TextureInst& texture_inst : to_replace) {
         // TODO: Handle arrays
         IR::Inst* const inst{texture_inst.inst};
@@ -755,7 +769,7 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
             }
             const bool is_written{inst->GetOpcode() != IR::Opcode::ImageRead};
             const bool is_read{inst->GetOpcode() != IR::Opcode::ImageWrite};
-            const bool is_integer{IsTexturePixelFormatIntegerCached(env, cbuf)};
+            const bool is_integer{is_texture_pixel_format_integer(cbuf)};
             if (flags.type == TextureType::Buffer) {
                 index = descriptors.Add(ImageBufferDescriptor{
                     .format = flags.image_format,
@@ -797,10 +811,12 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
                 });
             } else {
                 count = std::min(count, sampled_dynamic_cap);
+                const bool is_integer{is_texture_pixel_format_integer(cbuf)};
                 index = descriptors.Add(TextureDescriptor{
                     .type = flags.type,
                     .is_depth = flags.is_depth != 0,
                     .is_multisample = is_multisample,
+                    .is_integer = is_integer,
                     .has_secondary = cbuf.has_secondary,
                     .cbuf_index = cbuf.index,
                     .cbuf_offset = cbuf.offset,
@@ -811,6 +827,7 @@ void TexturePass(Environment& env, IR::Program& program, const HostTranslateInfo
                     .count = count,
                     .size_shift = size_shift,
                 });
+                flags.is_integer.Assign(is_integer ? 1 : 0);
             }
             break;
         }

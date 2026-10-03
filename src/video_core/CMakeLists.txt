@@ -20,6 +20,7 @@ add_library(video_core STATIC
     buffer_cache/buffer_cache.h
     buffer_cache/memory_tracker_base.h
     buffer_cache/usage_tracker.h
+    buffer_cache/virtual_range_cache.h
     buffer_cache/word_manager.h
     cache_types.h
     capture.h
@@ -158,12 +159,16 @@ add_library(video_core STATIC
     renderer_vulkan/vk_compute_pass.h
     renderer_vulkan/vk_compute_pipeline.cpp
     renderer_vulkan/vk_compute_pipeline.h
+    renderer_vulkan/vk_descriptor_buffer.cpp
+    renderer_vulkan/vk_descriptor_buffer.h
     renderer_vulkan/vk_descriptor_pool.cpp
     renderer_vulkan/vk_descriptor_pool.h
     renderer_vulkan/vk_fence_manager.cpp
     renderer_vulkan/vk_fence_manager.h
     renderer_vulkan/vk_graphics_pipeline.cpp
     renderer_vulkan/vk_graphics_pipeline.h
+    renderer_vulkan/vk_multi_range_buffer.cpp
+    renderer_vulkan/vk_multi_range_buffer.h
     renderer_vulkan/vk_master_semaphore.cpp
     renderer_vulkan/vk_master_semaphore.h
     renderer_vulkan/vk_pipeline_cache.cpp
@@ -265,6 +270,82 @@ add_library(video_core STATIC
     video_core.h
 )
 
+if (ENABLE_LSFG)
+    target_sources(video_core PRIVATE
+        frame_gen/lossless_dll.cpp
+        frame_gen/lossless_dll.h
+        frame_gen/lsfg_translate.cpp
+        frame_gen/lsfg_translate.h
+        renderer_vulkan/present/frame_gen.cpp
+        renderer_vulkan/present/frame_gen.h
+        renderer_vulkan/present/frame_gen_pacer.cpp
+        renderer_vulkan/present/frame_gen_pacer.h
+        renderer_vulkan/present/lsfg_alpha.cpp
+        renderer_vulkan/present/lsfg_alpha.h
+        renderer_vulkan/present/lsfg_beta.cpp
+        renderer_vulkan/present/lsfg_beta.h
+        renderer_vulkan/present/lsfg_chain.cpp
+        renderer_vulkan/present/lsfg_chain.h
+        renderer_vulkan/present/lsfg_common.cpp
+        renderer_vulkan/present/lsfg_common.h
+        renderer_vulkan/present/lsfg_delta.cpp
+        renderer_vulkan/present/lsfg_delta.h
+        renderer_vulkan/present/lsfg_gamma.cpp
+        renderer_vulkan/present/lsfg_gamma.h
+        renderer_vulkan/present/lsfg_generate.cpp
+        renderer_vulkan/present/lsfg_generate.h
+        renderer_vulkan/present/lsfg_mipmaps.cpp
+        renderer_vulkan/present/lsfg_mipmaps.h
+        renderer_vulkan/present/lsfg_shaders.cpp
+        renderer_vulkan/present/lsfg_shaders.h
+    )
+    target_compile_definitions(video_core PUBLIC HAS_LSFG)
+endif()
+
+if (ENABLE_RESHADE)
+    set(BUNDLED_FX_DIR ${CMAKE_SOURCE_DIR}/dist/post_shaders)
+    set(BUNDLED_FX_HEADER ${CMAKE_CURRENT_BINARY_DIR}/bundled_fx_effects.h)
+    file(GLOB BUNDLED_FX_FILES ${BUNDLED_FX_DIR}/*.fx)
+
+    add_custom_command(
+        OUTPUT ${BUNDLED_FX_HEADER}
+        COMMAND ${CMAKE_COMMAND} -P
+            ${CMAKE_CURRENT_SOURCE_DIR}/post_processing/GenerateBundledEffects.cmake
+            ${BUNDLED_FX_DIR} ${BUNDLED_FX_HEADER}
+        DEPENDS ${BUNDLED_FX_FILES}
+    )
+
+    set(BUNDLED_PRESET_DIR ${CMAKE_SOURCE_DIR}/dist/post_presets)
+    set(BUNDLED_PRESET_HEADER ${CMAKE_CURRENT_BINARY_DIR}/bundled_fx_presets.h)
+    file(GLOB BUNDLED_PRESET_FILES ${BUNDLED_PRESET_DIR}/*.fxp)
+
+    add_custom_command(
+        OUTPUT ${BUNDLED_PRESET_HEADER}
+        COMMAND ${CMAKE_COMMAND} -P
+            ${CMAKE_CURRENT_SOURCE_DIR}/post_processing/GenerateBundledPresets.cmake
+            ${BUNDLED_PRESET_DIR} ${BUNDLED_PRESET_HEADER}
+        DEPENDS ${BUNDLED_PRESET_FILES}
+    )
+
+    target_sources(video_core PRIVATE
+        post_processing/fx_chain.cpp
+        post_processing/fx_chain.h
+        post_processing/fx_compile.cpp
+        post_processing/fx_compile.h
+        post_processing/fx_effect.cpp
+        post_processing/fx_effect.h
+        post_processing/fx_preset.cpp
+        post_processing/fx_preset.h
+        renderer_vulkan/present/post_process.cpp
+        renderer_vulkan/present/post_process.h
+        ${BUNDLED_FX_HEADER}
+        ${BUNDLED_PRESET_HEADER}
+    )
+    target_include_directories(video_core PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_link_libraries(video_core PRIVATE reshadefx::reshadefx)
+    target_compile_definitions(video_core PUBLIC HAS_RESHADE)
+endif()
+
 if (ENABLE_OPENGL)
     target_sources(video_core PRIVATE
         renderer_opengl/present/filters.cpp
@@ -334,7 +415,7 @@ if (YUZU_USE_EXTERNAL_FFMPEG)
     add_dependencies(video_core ffmpeg-build)
 endif()
 
-target_include_directories(video_core PRIVATE ${FFmpeg_INCLUDE_DIR})
+target_include_directories(video_core PUBLIC ${FFmpeg_INCLUDE_DIR})
 
 target_link_libraries(video_core PRIVATE ${FFmpeg_LIBRARIES})
 target_link_options(video_core PRIVATE ${FFmpeg_LDFLAGS})
@@ -371,7 +452,7 @@ else()
             $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-shadow>
             $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-unused-local-typedef>)
     else()
-        target_compile_options(video_core PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-Werror=conversion>)
+        target_compile_options(video_core PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-Wconversion>)
     endif()
 
     target_compile_options(video_core PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:-Wno-sign-conversion>)

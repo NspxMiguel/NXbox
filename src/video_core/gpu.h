@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
@@ -168,6 +168,8 @@ public:
 
     void WaitForSyncOperation(u64 fence);
 
+    void WaitForIdle();
+
     /// Tick pending requests within the GPU.
     void TickWork();
 
@@ -218,6 +220,8 @@ public:
     void RequestComposite(std::vector<Tegra::FramebufferConfig>&& layers,
                           std::vector<Service::Nvidia::NvFence>&& fences);
 
+    void WaitForComposite();
+
     std::vector<u8> GetAppletCaptureBuffer();
 
     /// Performs any additional setup necessary in order to begin GPU emulation.
@@ -244,7 +248,7 @@ public:
     void FlushRegion(DAddr addr, u64 size);
 
     /// Notify rasterizer that any caches of the specified region should be invalidated
-    void InvalidateRegion(DAddr addr, u64 size);
+    void InvalidateRegion(DAddr addr, u64 size, bool preserve_gpu_writes = false);
 
     /// Notify rasterizer that CPU is trying to write this area. It returns true if the area is
     /// sensible, false otherwise, addr and size must be a valid combination

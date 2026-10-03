@@ -10,12 +10,18 @@
 
 namespace Shader {
 
+enum class Stage : u32;
+
 struct Profile {
     u32 supported_spirv{0x00010000};
     bool unified_descriptor_binding{};
     bool support_descriptor_aliasing{};
     bool support_int8{};
+    bool support_uniform_and_storage_buffer_8bit{};
+    bool support_storage_buffer_8bit{};
     bool support_int16{};
+    bool support_uniform_and_storage_buffer_16bit{};
+    bool support_storage_buffer_16bit{};
     bool support_int64{};
     bool support_vertex_instance_id{};
     bool support_float_controls{};
@@ -29,12 +35,18 @@ struct Profile {
     bool support_fp32_signed_zero_nan_preserve{};
     bool support_fp64_signed_zero_nan_preserve{};
     bool support_explicit_workgroup_layout{};
+    bool support_workgroup_layout_8bit_access{};
+    bool support_workgroup_layout_16bit_access{};
+    bool support_shader_quad_control{};
+    bool support_quad_shuffles{};
     bool support_vote{};
+    u32 supported_subgroup_stages{0x7F};
     bool support_viewport_index_layer_non_geometry{};
     bool support_viewport_mask{};
     bool support_typeless_image_loads{};
     bool support_demote_to_helper_invocation{};
     bool support_int64_atomics{};
+    bool support_shared_int64_atomics{};
     bool support_derivative_control{};
     bool support_geometry_shader_passthrough{};
     bool support_native_ndc{};
@@ -49,6 +61,9 @@ struct Profile {
     bool support_multi_viewport{};
     bool support_geometry_streams{};
     bool support_sampled_image_array_nonuniform_indexing{};
+    bool support_storage_image_array_nonuniform_indexing{};
+    bool support_uniform_texel_buffer_array_nonuniform_indexing{};
+    bool support_storage_texel_buffer_array_nonuniform_indexing{};
 
     bool warp_size_potentially_larger_than_guest{};
 
@@ -73,6 +88,8 @@ struct Profile {
     bool has_broken_signed_operations{};
     /// Float controls break when fp16 is enabled
     bool has_broken_fp16_float_controls{};
+    /// Declaring fp32 denorm flush to zero miscompiles on some drivers
+    bool has_broken_fp32_denorm_flush{};
     /// Dynamic vec4 indexing is broken on some OpenGL drivers
     bool has_gl_component_indexing_bug{};
     /// The precise type qualifier is broken in the fragment stage of some drivers
@@ -92,8 +109,11 @@ struct Profile {
     bool has_broken_robust{};
 
     u64 min_ssbo_alignment{};
-
     u32 max_user_clip_distances{};
+
+    bool SupportsSubgroupStage(Stage stage) const {
+        return (supported_subgroup_stages & (1u << static_cast<u32>(stage))) != 0;
+    }
 };
 
 } // namespace Shader

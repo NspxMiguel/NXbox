@@ -36,17 +36,22 @@
 #include <frontend_common/content_manager.h>
 #include <jni.h>
 
+extern "C" {
+#include <libavcodec/jni.h>
+}
+
 #include "common/android/multiplayer/multiplayer.h"
 #include "common/android/android_common.h"
 #include "common/android/id_cache.h"
-#include "common/detached_tasks.h"
 #include "common/dynamic_library.h"
+#include "common/fs/fs_util.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
 #include "common/scm_rev.h"
 #include "common/scope_exit.h"
 #include "common/settings.h"
 #include "common/string_util.h"
+#include "common/thread.h"
 #include "frontend_common/play_time_manager.h"
 #include "core/constants.h"
 #include "core/core.h"
@@ -71,6 +76,7 @@
 #include "core/frontend/applets/software_keyboard.h"
 #include "core/frontend/applets/web_browser.h"
 #include "common/android/applets/web_browser.h"
+#include "core/file_sys/common_funcs.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/am/frontend/applets.h"
 #include "core/hle/service/filesystem/filesystem.h"
@@ -86,6 +92,7 @@
 #include "hid_core/hid_types.h"
 #include "input_common/drivers/virtual_amiibo.h"
 #include "jni/native.h"
+#include "video_core/frame_gen/lossless_dll.h"
 #include "video_core/renderer_base.h"
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #include "video_core/capture.h"
@@ -305,11 +312,23 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     ConfigureFilesystemProvider(filepath);
 
     // Load the ROM.
+    const u64 previous_program_id =
+        program_index != 0 && m_next_program_id.load() >
+                                  static_cast<u64>(Service::AM::AppletProgramId::MaxProgramId)
+            ? m_next_program_id.load()
+            : 0;
+
     Service::AM::FrontendAppletParameters params{
+        .program_id = previous_program_id,
         .applet_id = static_cast<Service::AM::AppletId>(m_applet_id),
         .launch_type = frontend_initiated ? Service::AM::LaunchType::FrontendInitiated
                                           : Service::AM::LaunchType::ApplicationInitiated,
         .program_index = static_cast<s32>(program_index),
+        .previous_program_index =
+            previous_program_id != 0
+                ? static_cast<s32>(previous_program_id -
+                                   FileSys::GetBaseTitleID(previous_program_id))
+                : -1,
     };
 
     m_load_result = m_system.Load(EmulationSession::GetInstance().Window(), filepath, params);
@@ -322,8 +341,12 @@ Core::SystemResultStatus EmulationSession::InitializeEmulation(const std::string
     m_system.GetCpuManager().OnGpuReady();
     m_system.RegisterExitCallback([&] { HaltEmulation(); });
 
+    m_system.RegisterApplicationChangedCallback(
+        [&](u64 changed_program_id) { RequestDiskShaderCacheReload(changed_program_id); });
+
     // Register an ExecuteProgram callback such that Core can execute a sub-program
     m_system.RegisterExecuteProgramCallback([&](std::size_t program_index_) {
+        m_next_program_id = m_system.GetApplicationProcessProgramID();
         m_next_program_index = program_index_;
         EmulationSession::GetInstance().HaltEmulation();
     });
@@ -352,7 +375,6 @@ void EmulationSession::ShutdownEmulation() {
     if (m_load_result == Core::SystemResultStatus::Success) {
         m_system.DetachDebugger();
         m_system.ShutdownMainProcess();
-        m_detached_tasks.WaitForAllTasks();
         m_load_result = Core::SystemResultStatus::ErrorNotInitialized;
         m_window.reset();
         OnEmulationStopped(Core::SystemResultStatus::Success);
@@ -402,18 +424,56 @@ void EmulationSession::RunEmulation() {
     }
 
     while (true) {
+        std::optional<u64> reload_title;
         {
             [[maybe_unused]] std::unique_lock lock(m_mutex);
-            if (m_cv.wait_for(lock, std::chrono::milliseconds(800),
-                              [&]() { return !m_is_running; })) {
-                // Emulation halted.
-                break;
+            if (m_cv.wait_for(lock, std::chrono::milliseconds(800), [&]() {
+                    return !m_is_running || m_pending_shader_cache_title.has_value();
+                })) {
+                if (!m_is_running) {
+                    break;
+                }
+                reload_title = std::exchange(m_pending_shader_cache_title, std::nullopt);
             }
         }
+
+        if (reload_title.has_value())
+            ReloadDiskShaderCache(*reload_title);
     }
 
     // Reset current applet ID.
     m_applet_id = static_cast<int>(Service::AM::AppletId::Application);
+}
+
+void EmulationSession::RequestDiskShaderCacheReload(u64 program_id) {
+    {
+        std::scoped_lock lock(m_mutex);
+        m_pending_shader_cache_title = program_id;
+    }
+    m_cv.notify_one();
+}
+
+void EmulationSession::ReloadDiskShaderCache(u64 program_id) {
+    if (!Settings::values.use_disk_shader_cache.GetValue())
+        return;
+
+    LOG_INFO(Frontend, "Reloading disk shader cache for {:016X}", program_id);
+
+    const bool was_paused = m_is_paused;
+
+    m_system.Pause();
+    m_system.GPU().WaitForIdle();
+    m_system.GPU().ObtainContext();
+
+    LoadDiskCacheProgress(VideoCore::LoadCallbackStage::Prepare, 0, 0);
+    m_system.Renderer().ReadRasterizer()->LoadDiskResources(program_id, std::stop_token{},
+                                                            LoadDiskCacheProgress);
+    LoadDiskCacheProgress(VideoCore::LoadCallbackStage::Complete, 0, 0);
+
+    m_system.GPU().ReleaseContext();
+
+    if (!was_paused)
+        m_system.Run();
 }
 
 Common::Android::SoftwareKeyboard::AndroidKeyboard* EmulationSession::SoftwareKeyboard() {
@@ -681,6 +741,13 @@ const char* fallback_cpu_detection() {
 } // namespace
 
 extern "C" {
+jint InitFFmpegOnLoad(JavaVM* vm) {
+    av_jni_set_java_vm(vm, nullptr);
+    return 0;
+}
+}
+
+extern "C" {
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_surfaceChanged(JNIEnv* env, jobject instance,
                                                           [[maybe_unused]] jobject surf) {
@@ -721,7 +788,7 @@ int Java_org_yuzu_yuzu_1emu_NativeLibrary_installFileToNand(JNIEnv* env, jobject
 jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* env, jobject jobj,
                                                                       jstring jprogramId,
                                                                       jstring jupdatePath) {
-    u64 program_id = EmulationSession::GetProgramId(env, jprogramId);
+    const u64 program_id = FileSys::GetBaseTitleID(EmulationSession::GetProgramId(env, jprogramId));
     std::string updatePath = Common::Android::GetJString(env, jupdatePath);
     std::shared_ptr<FileSys::NSP> nsp = std::make_shared<FileSys::NSP>(
         EmulationSession::GetInstance().System().GetFilesystem()->OpenFile(
@@ -729,7 +796,7 @@ jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_doesUpdateMatchProgram(JNIEnv* en
     for (const auto& item : nsp->GetNCAs()) {
         for (const auto& nca_details : item.second) {
             if (nca_details.second->GetName().ends_with(".cnmt.nca")) {
-                auto update_id = nca_details.second->GetTitleId() & ~0xFFFULL;
+                const auto update_id = FileSys::GetBaseTitleID(nca_details.second->GetTitleId());
                 if (update_id == program_id) {
                     return true;
                 }
@@ -988,7 +1055,7 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getCpuSummary(JNIEnv* env, jobject
         FILE* f = std::fopen(CPUINFO_PATH, "r");
         if (!f) return Common::Android::ToJString(env, result);
 
-        char buf[512];
+        char buf[4096];
 
         if (f) {
             std::set<std::string> feature_set;
@@ -1019,7 +1086,13 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getCpuSummary(JNIEnv* env, jobject
             bool has_dotprod = feature_set.count("asimddp") || feature_set.count("dotprod");
             bool has_i8mm = feature_set.count("i8mm");
             bool has_bf16 = feature_set.count("bf16");
+            bool has_fp16 = feature_set.count("fphp") || feature_set.count("asimdhp");
             bool has_atomics = feature_set.count("atomics") || feature_set.count("lse");
+            bool has_lse2 = feature_set.count("uscat");
+            bool has_rcpc = feature_set.count("lrcpc");
+            bool has_rcpc2 = feature_set.count("ilrcpc");
+            bool has_flagm = feature_set.count("flagm");
+            bool has_flagm2 = feature_set.count("flagm2");
 
             std::string features;
             if (has_neon || has_fp) {
@@ -1027,6 +1100,7 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getCpuSummary(JNIEnv* env, jobject
                 if (has_dotprod) features += "+DP";
                 if (has_i8mm) features += "+I8MM";
                 if (has_bf16) features += "+BF16";
+                if (has_fp16) features += "+FP16";
             }
 
             if (has_sve) {
@@ -1043,6 +1117,19 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getCpuSummary(JNIEnv* env, jobject
             if (has_atomics) {
                 if (!features.empty()) features += " | ";
                 features += "LSE";
+                if (has_lse2) features += "2";
+            }
+
+            if (has_rcpc) {
+                if (!features.empty()) features += " | ";
+                features += "RCpc";
+                if (has_rcpc2) features += "2";
+            }
+
+            if (has_flagm) {
+                if (!features.empty()) features += " | ";
+                features += "FlagM";
+                if (has_flagm2) features += "2";
             }
 
             if (!features.empty()) {
@@ -1079,6 +1166,38 @@ VkPhysicalDeviceProperties GetVulkanDeviceProperties() {
 
     const Vulkan::vk::PhysicalDevice physical_device(physical_devices[0], dld);
     return physical_device.GetProperties();
+}
+
+bool GetFrameGenerationSupport() {
+    Common::DynamicLibrary library;
+    if (!library.Open("libvulkan.so")) {
+        return false;
+    }
+
+    Vulkan::vk::InstanceDispatch dld;
+    const auto instance = Vulkan::CreateInstance(library, dld, VK_API_VERSION_1_1);
+    const auto physical_devices = instance.EnumeratePhysicalDevices();
+    if (physical_devices.empty()) {
+        return false;
+    }
+
+    const Vulkan::vk::PhysicalDevice physical_device(physical_devices[0], dld);
+
+    VkPhysicalDeviceShaderFloat16Int8Features float16_int8{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_FLOAT16_INT8_FEATURES,
+        .pNext = nullptr,
+    };
+    VkPhysicalDeviceVulkanMemoryModelFeatures memory_model{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_MEMORY_MODEL_FEATURES,
+        .pNext = &float16_int8,
+    };
+    VkPhysicalDeviceFeatures2 features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &memory_model,
+    };
+    physical_device.GetFeatures2(features);
+
+    return memory_model.vulkanMemoryModel == VK_TRUE && float16_int8.shaderFloat16 == VK_TRUE;
 }
 } // namespace
 
@@ -1155,6 +1274,14 @@ jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getVulkanApiVersion(JNIEnv* env, j
     }
 }
 
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_supportsFrameGeneration(JNIEnv* env, jobject jobj) {
+    try {
+        return static_cast<jboolean>(GetFrameGenerationSupport());
+    } catch (...) {
+        return static_cast<jboolean>(false);
+    }
+}
+
 jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getGpuModel(JNIEnv* env, jobject jobj) {
     const auto props = GetVulkanDeviceProperties();
     if (props.deviceID == 0) {
@@ -1173,8 +1300,12 @@ void Java_org_yuzu_yuzu_1emu_NativeLibrary_logSettings(JNIEnv* env, jobject jobj
     Settings::LogSettings();
 }
 
-jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_getDebugKnobAt(JNIEnv* env, jobject jobj, jint index) {
-    return static_cast<jboolean>(Settings::getDebugKnobAt(static_cast<u8>(index)));
+void Java_org_yuzu_yuzu_1emu_NativeLibrary_refreshThreadPolicies(JNIEnv* env, jobject jobj) {
+    Common::RefreshThreadPolicies();
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_GetDebugKnobAt(JNIEnv* env, jobject jobj, jint index) {
+    return static_cast<jboolean>(Settings::GetDebugKnobAt(static_cast<u8>(index)));
 }
 
 void Java_org_yuzu_yuzu_1emu_NativeLibrary_setTurboSpeedLimit(JNIEnv *env, jobject jobj, jboolean enabled) {
@@ -1376,6 +1507,39 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_installKeys(JNIEnv* env, jclass clazz
     return static_cast<int>(FirmwareManager::InstallKeys(path, ext));
 }
 
+jstring Java_org_yuzu_yuzu_1emu_NativeLibrary_getLosslessDllPath(JNIEnv* env, jclass clazz) {
+#ifdef HAS_LSFG
+    const auto path = VideoCore::FrameGen::GetLosslessDllPath();
+    return Common::Android::ToJString(env, Common::FS::PathToUTF8String(path));
+#else
+    return Common::Android::ToJString(env, "");
+#endif
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_validateLosslessDll(JNIEnv* env, jclass clazz) {
+#ifdef HAS_LSFG
+    return static_cast<jint>(VideoCore::FrameGen::GetInstalledLosslessStatus());
+#else
+    return static_cast<jint>(VideoCore::FrameGen::LosslessStatus::NotInstalled);
+#endif
+}
+
+jint Java_org_yuzu_yuzu_1emu_NativeLibrary_prepareLosslessDll(JNIEnv* env, jclass clazz) {
+#ifdef HAS_LSFG
+    return static_cast<jint>(VideoCore::FrameGen::BuildShaderCache());
+#else
+    return static_cast<jint>(VideoCore::FrameGen::LosslessStatus::NotInstalled);
+#endif
+}
+
+jboolean Java_org_yuzu_yuzu_1emu_NativeLibrary_removeLosslessDll(JNIEnv* env, jclass clazz) {
+#ifdef HAS_LSFG
+    return static_cast<jboolean>(VideoCore::FrameGen::RemoveInstalledLosslessDll());
+#else
+    return static_cast<jboolean>(false);
+#endif
+}
+
 jobjectArray Java_org_yuzu_yuzu_1emu_NativeLibrary_getPatchesForFile(JNIEnv* env, jobject jobj,
                                                                      jstring jpath,
                                                                      jstring jprogramId) {
@@ -1568,6 +1732,15 @@ jint Java_org_yuzu_yuzu_1emu_NativeLibrary_loadAmiibo(JNIEnv* env, jobject jobj,
     const auto info =
         virtual_amiibo->LoadAmiibo(std::span<u8>(bytes.data(), bytes.size()));
     return static_cast<jint>(info);
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_org_yuzu_yuzu_1emu_NativeLibrary_initJvm(JNIEnv *env, jclass clazz) {
+    JavaVM *vm;
+    if (env->GetJavaVM(&vm) != JNI_OK)
+        return;
+
+    Common::Android::Initialize(vm, env);
 }
 
 JNIEXPORT void JNICALL

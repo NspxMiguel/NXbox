@@ -10,7 +10,7 @@
 #include <memory>
 #include <span>
 #include <type_traits>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <utility>
 #include <vector>
 #include "video_core/renderer_vulkan/vk_texture_cache.h"
@@ -41,8 +41,8 @@ class SamplesQueryBank : public VideoCommon::BankBase {
 public:
     static constexpr size_t BANK_SIZE = 256;
     static constexpr size_t QUERY_SIZE = 8;
-    explicit SamplesQueryBank(const Device& device_, size_t index_)
-        : BankBase(BANK_SIZE), device{device_}, index{index_} {
+    explicit SamplesQueryBank(const Device& device_, Scheduler& scheduler_, size_t index_)
+        : BankBase(BANK_SIZE), device{device_}, scheduler{scheduler_}, index{index_} {
         const auto& dev = device.GetLogical();
         query_pool = dev.CreateQueryPool({
             .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
@@ -60,10 +60,26 @@ public:
     void Reset() override {
         ASSERT(references == 0);
         VideoCommon::BankBase::Reset();
-        const auto& dev = device.GetLogical();
-        dev.ResetQueryPool(*query_pool, 0, BANK_SIZE);
+        if (device.IsHostQueryResetSupported()) {
+            const auto& dev = device.GetLogical();
+            dev.ResetQueryPool(*query_pool, 0, BANK_SIZE);
+        } else {
+            scheduler.RequestOutsideRenderPassOperationContext();
+            scheduler.Record([pool = *query_pool](vk::CommandBuffer cmdbuf) {
+                cmdbuf.ResetQueryPool(pool, 0, BANK_SIZE);
+            });
+        }
         host_results.fill(0ULL);
         next_bank = 0;
+    }
+
+    void AddReference(size_t how_many = 1) {
+        BankBase::AddReference(how_many);
+        last_used_tick = scheduler.CurrentTick();
+    }
+
+    [[nodiscard]] bool IsDead() const {
+        return BankBase::IsDead() && scheduler.IsFree(last_used_tick);
     }
 
     void Sync(size_t start, size_t size) {
@@ -98,9 +114,11 @@ public:
 
 private:
     const Device& device;
+    Scheduler& scheduler;
     const size_t index;
     vk::QueryPool query_pool;
     std::array<u64, BANK_SIZE> host_results;
+    u64 last_used_tick{};
 };
 
 using BaseStreamer = VideoCommon::SimpleStreamer<VideoCommon::HostQueryBase>;
@@ -126,16 +144,14 @@ public:
         current_query = nullptr;
         amend_value = 0;
         accumulation_value = 0;
-        queries_prefix_scan_pass = std::make_unique<QueriesPrefixScanPass>(
-            device, scheduler, descriptor_pool, compute_pass_descriptor_queue);
+        queries_prefix_scan_pass.emplace(device, scheduler, descriptor_pool, compute_pass_descriptor_queue);
 
         const VkBufferCreateInfo buffer_ci = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .size = 8,
-            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-                     VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
             .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
             .queueFamilyIndexCount = 0,
             .pQueueFamilyIndices = nullptr,
@@ -230,7 +246,7 @@ public:
         sync_values_stash.emplace_back();
         std::vector<HostSyncValues>* sync_values = &sync_values_stash.back();
         sync_values->reserve(num_slots_used);
-        ankerl::unordered_dense::map<size_t, std::pair<size_t, size_t>> offsets;
+        ::Common::unordered_map<size_t, std::pair<size_t, size_t>> offsets;
         resolve_buffers.clear();
         size_t resolve_buffer_index = ObtainBuffer<true>(num_slots_used);
         resolve_buffers.push_back(resolve_buffer_index);
@@ -412,7 +428,7 @@ private:
     template <bool is_ordered, typename Func>
     void ApplyBanksWideOp(std::vector<size_t>& queries, Func&& func) {
         std::conditional_t<is_ordered, std::map<size_t, std::pair<size_t, size_t>>,
-                           ankerl::unordered_dense::map<size_t, std::pair<size_t, size_t>>>
+                           ::Common::unordered_map<size_t, std::pair<size_t, size_t>>>
             indexer;
         for (auto q : queries) {
             auto* query = GetQuery(q);
@@ -434,7 +450,7 @@ private:
     void ReserveBank() {
         current_bank_id =
             bank_pool.ReserveBank([this](std::deque<SamplesQueryBank>& queue, size_t index) {
-                queue.emplace_back(device, index);
+                queue.emplace_back(device, scheduler, index);
             });
         if (current_bank) {
             current_bank->next_bank = current_bank_id + 1;
@@ -529,7 +545,7 @@ private:
 
     template <bool is_resolve>
     size_t ObtainBuffer(size_t num_needed) {
-        const size_t log_2 = std::max<size_t>(11U, Common::Log2Ceil64(num_needed));
+        const size_t log_2 = std::max<size_t>(11U, Common::Log2Ceil(num_needed));
         if constexpr (is_resolve) {
             if (resolve_table[log_2] != 0) {
                 return resolve_table[log_2] - 1;
@@ -592,8 +608,7 @@ private:
     VideoCommon::HostQueryBase* current_query;
     bool has_started{};
     std::mutex flush_guard;
-
-    std::unique_ptr<QueriesPrefixScanPass> queries_prefix_scan_pass;
+    std::optional<QueriesPrefixScanPass> queries_prefix_scan_pass;
 };
 
 // Transform feedback queries
@@ -624,6 +639,15 @@ public:
         VideoCommon::BankBase::Reset();
     }
 
+    void AddReference(size_t how_many = 1) {
+        BankBase::AddReference(how_many);
+        last_used_tick = scheduler.CurrentTick();
+    }
+
+    [[nodiscard]] bool IsDead() const {
+        return BankBase::IsDead() && scheduler.IsFree(last_used_tick);
+    }
+
     void Sync(StagingBufferRef& stagging_buffer, size_t extra_offset, size_t start, size_t size) {
         scheduler.RequestOutsideRenderPassOperationContext();
         scheduler.Record([this, dst_buffer = stagging_buffer.buffer, extra_offset, start,
@@ -649,6 +673,7 @@ private:
     Scheduler& scheduler;
     const size_t index;
     vk::Buffer buffer;
+    u64 last_used_tick{};
 };
 
 class PrimitivesSucceededStreamer;
@@ -732,7 +757,7 @@ public:
 
     void SyncWrites() override {
         CloseCounter();
-        ankerl::unordered_dense::map<size_t, std::vector<HostSyncValues>> sync_values_stash;
+        ::Common::unordered_map<size_t, std::vector<HostSyncValues>> sync_values_stash;
         for (auto q : pending_sync) {
             auto* query = GetQuery(q);
             if (True(query->flags & VideoCommon::QueryFlagBits::IsRewritten)) {
@@ -926,7 +951,7 @@ private:
             return;
         }
         has_flushed_end_pending = false;
-                                                               
+
         // Refresh buffer state before ending transform feedback to ensure counters_count is up-to-date.
         UpdateBuffers();
         if (buffers_count == 0) {
@@ -1194,7 +1219,7 @@ public:
             // Protect against stride == 0 (avoid divide-by-zero). Use fallback stride=1 and warn.
             u64 safe_stride = query->stride == 0 ? 1 : query->stride;
             if (query->stride == 0) {
-                LOG_WARNING(Render_Vulkan, "TransformFeedback query has stride 0; using 1 to avoid div-by-zero (addr=0x{:x})", query->dependant_address);
+                LOG_WARNING(Render_Vulkan, "TransformFeedback query has stride 0; using 1 to avoid div-by-zero (addr={:#x})", query->dependant_address);
             }
             if (query->dependant_manage) {
                 auto* dependant_query = tfb_streamer.GetQuery(query->dependant_index);
@@ -1266,41 +1291,23 @@ private:
 } // namespace
 
 struct QueryCacheRuntimeImpl {
-    QueryCacheRuntimeImpl(QueryCacheRuntime& runtime, VideoCore::RasterizerInterface* rasterizer_,
-                          Tegra::MaxwellDeviceMemoryManager& device_memory_,
-                          Vulkan::BufferCache& buffer_cache_, const Device& device_,
-                          const MemoryAllocator& memory_allocator_, Scheduler& scheduler_,
-                          StagingBufferPool& staging_pool_,
-                          ComputePassDescriptorQueue& compute_pass_descriptor_queue,
-                          DescriptorPool& descriptor_pool, TextureCache& texture_cache_)
-        : rasterizer{rasterizer_}, device_memory{device_memory_}, buffer_cache{buffer_cache_},
-          device{device_}, memory_allocator{memory_allocator_}, scheduler{scheduler_},
-          staging_pool{staging_pool_}, guest_streamer(0, runtime),
-          sample_streamer(static_cast<size_t>(QueryType::ZPassPixelCount64), runtime, rasterizer,
-                          texture_cache_, device, scheduler, memory_allocator,
-                          compute_pass_descriptor_queue, descriptor_pool),
-          tfb_streamer(static_cast<size_t>(QueryType::StreamingByteCount), runtime, device,
-                       scheduler, memory_allocator, staging_pool),
-          primitives_succeeded_streamer(
-              static_cast<size_t>(QueryType::StreamingPrimitivesSucceeded), runtime, tfb_streamer,
-              device_memory_),
-          primitives_needed_minus_succeeded_streamer(
-              static_cast<size_t>(QueryType::StreamingPrimitivesNeededMinusSucceeded), runtime, 0u),
-          hcr_setup{}, hcr_is_set{}, is_hcr_running{}, maxwell3d{} {
+    QueryCacheRuntimeImpl(QueryCacheRuntime& runtime, VideoCore::RasterizerInterface* rasterizer_, Tegra::MaxwellDeviceMemoryManager& device_memory_, Vulkan::BufferCache& buffer_cache_, const Device& device_, const MemoryAllocator& memory_allocator_, Scheduler& scheduler_, StagingBufferPool& staging_pool_, ComputePassDescriptorQueue& compute_pass_descriptor_queue, DescriptorPool& descriptor_pool, TextureCache& texture_cache_)
+        : rasterizer{rasterizer_}, device_memory{device_memory_}, buffer_cache{buffer_cache_}
+        , device{device_}, memory_allocator{memory_allocator_}, scheduler{scheduler_}
+        , staging_pool{staging_pool_}, guest_streamer(0, runtime)
+        , sample_streamer(size_t(QueryType::ZPassPixelCount64), runtime, rasterizer, texture_cache_, device, scheduler, memory_allocator, compute_pass_descriptor_queue, descriptor_pool)
+        , tfb_streamer(size_t(QueryType::StreamingByteCount), runtime, device, scheduler, memory_allocator, staging_pool)
+        , primitives_succeeded_streamer(size_t(QueryType::StreamingPrimitivesSucceeded), runtime, tfb_streamer, device_memory_)
+        , primitives_needed_minus_succeeded_streamer(size_t(QueryType::StreamingPrimitivesNeededMinusSucceeded), runtime, 0u)
+        , hcr_setup{}, hcr_is_set{}, is_hcr_running{}, maxwell3d{} {
 
         hcr_setup.sType = VK_STRUCTURE_TYPE_CONDITIONAL_RENDERING_BEGIN_INFO_EXT;
         hcr_setup.pNext = nullptr;
         hcr_setup.flags = 0;
 
-        const bool has_conditional_rendering = device.IsExtConditionalRendering();
-        if (has_conditional_rendering) {
-            conditional_resolve_pass = std::make_unique<ConditionalRenderingResolvePass>(
-                device, scheduler, descriptor_pool, compute_pass_descriptor_queue);
-        }
-
-        VkBufferUsageFlags hcr_buffer_usage =
-            VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
-        if (has_conditional_rendering) {
+        VkBufferUsageFlags hcr_buffer_usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        if (device.IsExtConditionalRendering()) {
+            conditional_resolve_pass.emplace(device, scheduler, descriptor_pool, compute_pass_descriptor_queue);
             hcr_buffer_usage |= VK_BUFFER_USAGE_CONDITIONAL_RENDERING_BIT_EXT;
         }
 
@@ -1339,7 +1346,7 @@ struct QueryCacheRuntimeImpl {
     std::vector<std::vector<VkBufferCopy>> copies_setup;
 
     // Host conditional rendering data
-    std::unique_ptr<ConditionalRenderingResolvePass> conditional_resolve_pass;
+    std::optional<ConditionalRenderingResolvePass> conditional_resolve_pass;
     vk::Buffer hcr_resolve_buffer;
     VkConditionalRenderingBeginInfoEXT hcr_setup;
     VkBuffer hcr_buffer;
@@ -1351,13 +1358,7 @@ struct QueryCacheRuntimeImpl {
     Maxwell3D* maxwell3d;
 };
 
-QueryCacheRuntime::QueryCacheRuntime(VideoCore::RasterizerInterface* rasterizer,
-                                     Tegra::MaxwellDeviceMemoryManager& device_memory_,
-                                     Vulkan::BufferCache& buffer_cache_, const Device& device_,
-                                     const MemoryAllocator& memory_allocator_,
-                                     Scheduler& scheduler_, StagingBufferPool& staging_pool_,
-                                     ComputePassDescriptorQueue& compute_pass_descriptor_queue,
-                                     DescriptorPool& descriptor_pool, TextureCache& texture_cache_) {
+QueryCacheRuntime::QueryCacheRuntime(VideoCore::RasterizerInterface* rasterizer, Tegra::MaxwellDeviceMemoryManager& device_memory_, Vulkan::BufferCache& buffer_cache_, const Device& device_, const MemoryAllocator& memory_allocator_, Scheduler& scheduler_, StagingBufferPool& staging_pool_, ComputePassDescriptorQueue& compute_pass_descriptor_queue, DescriptorPool& descriptor_pool, TextureCache& texture_cache_) {
     impl = std::make_unique<QueryCacheRuntimeImpl>(
         *this, rasterizer, device_memory_, buffer_cache_, device_, memory_allocator_, scheduler_,
         staging_pool_, compute_pass_descriptor_queue, descriptor_pool, texture_cache_);
@@ -1520,7 +1521,7 @@ bool QueryCacheRuntime::HostConditionalRenderingCompareValues(VideoCommon::Looku
     auto driver_id = impl->device.GetDriverID();
     const bool is_gpu_high = Settings::IsGPULevelHigh();
 
-    if ((!is_gpu_high && driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) || driver_id == VK_DRIVER_ID_ARM_PROPRIETARY || driver_id == VK_DRIVER_ID_MESA_TURNIP) {
+    if ((!is_gpu_high && driver_id == VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS) || driver_id == VK_DRIVER_ID_QUALCOMM_PROPRIETARY || driver_id == VK_DRIVER_ID_ARM_PROPRIETARY || driver_id == VK_DRIVER_ID_MESA_TURNIP) {
         EndHostConditionalRendering();
         return true;
     }
@@ -1686,8 +1687,7 @@ void QueryCacheRuntime::SyncValues(std::span<SyncValuesType> values, VkBuffer ba
     }
 
     impl->scheduler.RequestOutsideRenderPassOperationContext();
-    impl->scheduler.Record([src_buffer, dst_buffers = std::move(impl->buffers_to_upload_to),
-                            vk_copies = std::move(impl->copies_setup)](vk::CommandBuffer cmdbuf) {
+    impl->scheduler.Record([src_buffer, dst_buffers = std::move(impl->buffers_to_upload_to), vk_copies = std::move(impl->copies_setup)](vk::CommandBuffer cmdbuf) {
         size_t size = dst_buffers.size();
         for (size_t i = 0; i < size; i++) {
             cmdbuf.CopyBuffer(src_buffer, dst_buffers[i].first, vk_copies[i]);

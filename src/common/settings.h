@@ -260,10 +260,10 @@ struct Values {
                                                     Category::Cpu};
     SwitchableSetting<CpuAccuracy, true> cpu_accuracy{linkage, CpuAccuracy::Auto,
                                                       "cpu_accuracy", Category::Cpu};
-    SwitchableSetting<CpuClock> fast_cpu_time{linkage,
-                                              CpuClock::Off,
+    SwitchableSetting<CpuClock> cpu_clock{linkage,
+                                              CpuClock::Normal,
                                               "fast_cpu_time",
-                                              Category::Cpu,
+                                              Category::System,
                                               Specialization::Default,
                                               true,
                                               true};
@@ -336,7 +336,7 @@ struct Values {
         RendererBackend::Vulkan,
 #endif
         "backend", Category::Renderer};
-    SwitchableSetting<int> vulkan_device{linkage, 0, "vulkan_device", Category::Renderer, Specialization::RuntimeList};
+    SwitchableSetting<u32> vulkan_device{linkage, 0, "vulkan_device", Category::Renderer, Specialization::RuntimeList};
 
     // Graphics Settings
     ResolutionScalingInfo resolution_info{};
@@ -352,7 +352,7 @@ struct Values {
                                                   true};
 
     SwitchableSetting<ScalingFilter> scaling_filter{linkage,
-                                                    ScalingFilter::Bilinear,
+                                                    ScalingFilter::NearestNeighbor,
                                                     "scaling_filter",
                                                     Category::Renderer,
                                                     Specialization::Default,
@@ -388,6 +388,90 @@ struct Values {
                                                   true,
                                                   true};
 
+    SwitchableSetting<std::string> post_shader_chain{linkage,
+                                                     std::string(),
+                                                     "post_shader_chain",
+                                                     Category::Renderer,
+                                                     Specialization::Default,
+                                                     true,
+                                                     true};
+
+    SwitchableSetting<std::string> post_shader_preset{linkage,
+                                                      std::string(),
+                                                      "post_shader_preset",
+                                                      Category::Renderer,
+                                                      Specialization::Default,
+                                                      true,
+                                                      true};
+
+    SwitchableSetting<bool> post_shader_enabled{linkage,
+                                                true,
+                                                "post_shader_enabled",
+                                                Category::Renderer,
+                                                Specialization::Default,
+                                                true,
+                                                true};
+
+    SwitchableSetting<bool> frame_gen{linkage, false, "frame_gen", Category::Renderer,
+                                      Specialization::Default, true, false};
+
+    SwitchableSetting<u32, true> frame_gen_multiplier{linkage,
+                                                      2,
+                                                      2,
+                                                      4,
+                                                      "frame_gen_multiplier",
+                                                      Category::Renderer,
+                                                      Specialization::Countable,
+                                                      true,
+                                                      false,
+                                                      &frame_gen};
+
+    SwitchableSetting<u32, true> frame_gen_target_rate{linkage,
+                                                       0,
+                                                       0,
+                                                       240,
+                                                       "frame_gen_target_rate",
+                                                       Category::Renderer,
+                                                       Specialization::Countable,
+                                                       true,
+                                                       true,
+                                                       &frame_gen};
+
+    SwitchableSetting<bool> frame_gen_flow_scale_auto{linkage,
+                                                      true,
+                                                      "frame_gen_flow_scale_auto",
+                                                      Category::Renderer,
+                                                      Specialization::Default,
+                                                      true,
+                                                      false,
+                                                      &frame_gen};
+
+    SwitchableSetting<u32, true> frame_gen_flow_scale{linkage,
+                                                      75,
+                                                      25,
+                                                      100,
+                                                      "frame_gen_flow_scale",
+                                                      Category::Renderer,
+                                                      Specialization::Countable |
+                                                          Specialization::Percentage,
+                                                      true,
+                                                      true,
+                                                      &frame_gen};
+
+    SwitchableSetting<u32, true> frame_gen_queue_target{linkage,
+                                                        0,
+                                                        0,
+                                                        2,
+                                                        "frame_gen_queue_target",
+                                                        Category::Renderer,
+                                                        Specialization::Countable,
+                                                        true,
+                                                        false,
+                                                        &frame_gen};
+
+    SwitchableSetting<bool> frame_gen_dump_flow{linkage, false, "frame_gen_dump_flow",
+                                                Category::Renderer};
+
     SwitchableSetting<bool> use_asynchronous_gpu_emulation{linkage,
 #ifdef __ANDROID__
         false,
@@ -420,7 +504,7 @@ struct Values {
 #ifdef __ANDROID__
                                                       GpuAccuracy::Low,
 #else
-                                                      GpuAccuracy::Medium,
+                                                      GpuAccuracy::High,
 #endif
                                                       "gpu_accuracy",
                                                       Category::RendererAdvanced,
@@ -428,7 +512,7 @@ struct Values {
                                                       true,
                                                       true};
 
-    GpuAccuracy current_gpu_accuracy{GpuAccuracy::Medium};
+    GpuAccuracy current_gpu_accuracy{GpuAccuracy::High};
 
     SwitchableSetting<DmaAccuracy, true> dma_accuracy{linkage,
                                                       DmaAccuracy::Default,
@@ -437,6 +521,16 @@ struct Values {
                                                       Specialization::Default,
                                                       true,
                                                       true};
+
+    SwitchableSetting<GpuFenceBehavior, true> gpu_fence_behavior{linkage,
+                                                                 GpuFenceBehavior::Default,
+                                                                 GpuFenceBehavior::Default,
+                                                                 GpuFenceBehavior::Accurate,
+                                                                 "gpu_fence_behavior",
+                                                                 Category::RendererAdvanced,
+                                                                 Specialization::Default,
+                                                                 true,
+                                                                 true};
 
     SwitchableSetting<VramUsageMode, true> vram_usage_mode{linkage,
                                                            VramUsageMode::Conservative,
@@ -530,13 +624,13 @@ struct Values {
 #endif
 
     // Renderer Hacks //
-    SwitchableSetting<GpuOverclock> fast_gpu_time{linkage,
-                                                  GpuOverclock::Medium,
-                                                  "fast_gpu_time",
-                                                  Category::RendererHacks,
-                                                  Specialization::Default,
-                                                        true,
-                                                        true};
+    SwitchableSetting<GpuClock> gpu_clock{linkage,
+                                          GpuClock::Boost,
+                                          "fast_gpu_time",
+                                          Category::System,
+                                          Specialization::Default,
+                                          true,
+                                          true};
 
     SwitchableSetting<bool> skip_cpu_inner_invalidation{linkage,
                                                         false,
@@ -545,13 +639,6 @@ struct Values {
                                                         Specialization::Default,
                                                         true,
                                                         true};
-    SwitchableSetting<bool> antiflicker{linkage,
-                                        false,
-                                        "antiflicker",
-                                        Category::RendererHacks,
-                                        Specialization::Default,
-                                        true,
-                                        true};
     SwitchableSetting<bool> async_presentation{linkage,
 #ifdef __ANDROID__
                                                false,
@@ -566,13 +653,8 @@ struct Values {
     SwitchableSetting<bool> emulate_bgr565{linkage, false, "emulate_bgr565",
                                             Category::RendererHacks};
 
-    SwitchableSetting<bool> rescale_hack{linkage,
-#ifdef __ANDROID__
-        true,
-#else
-        false,
-#endif
-        "rescale_hack", Category::RendererHacks};
+    SwitchableSetting<bool> rescale_hack{linkage, false, "rescale_hack",
+                                         Category::RendererHacks};
 
     SwitchableSetting<bool> use_asynchronous_shaders{linkage, false, "use_asynchronous_shaders",
                                                      Category::RendererHacks};
@@ -661,8 +743,8 @@ struct Values {
                                       false,   true, &custom_rtc_enabled};
     SwitchableSetting<s64, true> custom_rtc_offset{linkage,
                                                    0,
-                                                   (std::numeric_limits<int>::min)(),
-                                                   (std::numeric_limits<int>::max)(),
+                                                   (std::numeric_limits<s64>::min)(),
+                                                   (std::numeric_limits<s64>::max)(),
                                                    "custom_rtc_offset",
                                                    Category::System,
                                                    Specialization::Countable,
@@ -692,7 +774,15 @@ struct Values {
 
     // Controls
     InputSetting<std::array<PlayerInput, 10>> players;
-
+    Setting<bool> disable_wgi_xinput{
+        linkage, false, "disable_wgi_xinput", Category::Controls, Specialization::Default,
+// Only read/write disable_wgi_xinput on Windows platforms
+#ifdef _WIN32
+        true
+#else
+        false
+#endif
+    };
     Setting<bool> enable_raw_input{
         linkage, false, "enable_raw_input", Category::Controls, Specialization::Default,
 // Only read/write enable_raw_input on Windows platforms
@@ -751,7 +841,7 @@ struct Values {
 
     Setting<std::string> touch_device{linkage, "min_x:100,min_y:50,max_x:1800,max_y:850",
                                       "touch_device", Category::Controls};
-    Setting<int> touch_from_button_map_index{linkage, 0, "touch_from_button_map",
+    Setting<u32> touch_from_button_map_index{linkage, 0, "touch_from_button_map",
                                              Category::Controls};
     std::vector<TouchFromButtonMap> touch_from_button_maps;
 
@@ -779,11 +869,17 @@ struct Values {
     bool record_frame_times;
     Setting<bool> use_gdbstub{linkage, false, "use_gdbstub", Category::Debugging};
     Setting<u16> gdbstub_port{linkage, 6543, "gdbstub_port", Category::Debugging};
-    Setting<std::string> program_args{linkage, std::string(), "program_args", Category::Debugging};
+    SwitchableSetting<std::string> program_args{linkage,
+                                                std::string(),
+                                                "program_args",
+                                                Category::Debugging,
+                                                Specialization::Default,
+                                                true,    // save_ - persist in config file
+                                                false};  // runtime_modifiable_ - startup-only
     Setting<bool> dump_exefs{linkage, false, "dump_exefs", Category::Debugging};
     Setting<bool> dump_nso{linkage, false, "dump_nso", Category::Debugging};
-    Setting<bool> dump_shaders{
-                               linkage, false, "dump_shaders", Category::DebuggingGraphics, Specialization::Default,
+    Setting<bool> dump_guest_shaders{
+                               linkage, false, "dump_guest_shaders", Category::DebuggingGraphics, Specialization::Default,
                                false};
     Setting<bool> dump_macros{
                               linkage, false, "dump_macros", Category::DebuggingGraphics, Specialization::Default, false};
@@ -807,9 +903,8 @@ struct Values {
     Setting<bool> disable_web_applet{linkage, true, "disable_web_applet", Category::Debugging};
 
     // GPU Logging
-    Setting<bool> gpu_logging_enabled{linkage, false, "gpu_logging_enabled", Category::Debugging};
-    SwitchableSetting<GpuLogLevel> gpu_log_level{linkage, GpuLogLevel::Standard, "gpu_log_level",
-                                                   Category::Debugging};
+    Setting<GpuLogLevel> gpu_log_level{linkage, GpuLogLevel::Off, "gpu_log_level",
+                                       Category::Debugging};
     Setting<bool> gpu_log_vulkan_calls{linkage, true, "gpu_log_vulkan_calls", Category::Debugging};
     Setting<bool> gpu_log_shader_dumps{linkage, false, "gpu_log_shader_dumps", Category::Debugging};
     Setting<bool> gpu_log_memory_tracking{linkage, true, "gpu_log_memory_tracking",
@@ -852,23 +947,38 @@ struct Values {
 
     // Per-game overrides
     bool use_squashed_iterated_blend;
+
 };
 
 extern Values values;
 
-bool getDebugKnobAt(u8 i);
+constexpr u32 MIN_FRAME_GEN_MULTIPLIER = 2;
+constexpr u32 MAX_FRAME_GEN_MULTIPLIER = 4;
+
+[[nodiscard]] u32 FrameGenMultiplier();
+
+[[nodiscard]] size_t FrameGenGenerations();
+
+[[nodiscard]] size_t FrameGenMaxGenerations();
+
+bool GetDebugKnobAt(u8 i);
 
 void UpdateGPUAccuracy();
-bool IsGPULevelLow();
-bool IsGPULevelMedium();
 bool IsGPULevelHigh();
 
 bool IsDMALevelDefault();
 bool IsDMALevelSafe();
 
+bool IsGPUFenceBehaviorDefault();
+bool IsGPUFenceBehaviorBalanced();
+bool IsGPUFenceBehaviorAccurate();
+
 bool IsFastmemEnabled();
 void SetNceEnabled(bool is_64bit);
 bool IsNceEnabled();
+
+void SetCurrentProgramID(u64 program_id);
+u64 GetCurrentProgramID();
 
 bool IsOpenGL();
 

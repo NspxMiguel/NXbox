@@ -1,6 +1,10 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cctype>
 #include "core/core.h"
 #include "core/debugger/debugger.h"
 #include "core/hle/kernel/k_process.h"
@@ -38,7 +42,7 @@ void Break(Core::System& system, BreakReason reason, u64 info1, u64 info2) {
             std::string hexdump;
             for (std::size_t i = 0; i < debug_buffer.size(); i++) {
                 hexdump += fmt::format("{:02X} ", debug_buffer[i]);
-                if (i != 0 && i % 16 == 0) {
+                if ((i + 1) % 32 == 0) {
                     hexdump += '\n';
                 }
             }
@@ -48,35 +52,35 @@ void Break(Core::System& system, BreakReason reason, u64 info1, u64 info2) {
     };
     switch (break_reason) {
     case BreakReason::Panic:
-        LOG_CRITICAL(Debug_Emulated, "Userspace PANIC! info1=0x{:016X}, info2=0x{:016X}", info1,
+        LOG_CRITICAL(Debug_Emulated, "Userspace PANIC! info1={:#016x}, info2={:#016x}", info1,
                      info2);
         handle_debug_buffer(info1, info2);
         break;
     case BreakReason::Assert:
-        LOG_CRITICAL(Debug_Emulated, "Userspace Assertion failed! info1=0x{:016X}, info2=0x{:016X}",
+        LOG_CRITICAL(Debug_Emulated, "Userspace Assertion failed! info1={:#016x}, info2={:#016x}",
                      info1, info2);
         handle_debug_buffer(info1, info2);
         break;
     case BreakReason::User:
-        LOG_WARNING(Debug_Emulated, "Userspace Break! 0x{:016X} with size 0x{:016X}", info1, info2);
+        LOG_WARNING(Debug_Emulated, "Userspace Break! {:#016x} with size {:#016x}", info1, info2);
         handle_debug_buffer(info1, info2);
         break;
     case BreakReason::PreLoadDll:
         LOG_INFO(Debug_Emulated,
-                 "Userspace Attempting to load an NRO at 0x{:016X} with size 0x{:016X}", info1,
+                 "Userspace Attempting to load an NRO at {:#016x} with size {:#016x}", info1,
                  info2);
         break;
     case BreakReason::PostLoadDll:
-        LOG_INFO(Debug_Emulated, "Userspace Loaded an NRO at 0x{:016X} with size 0x{:016X}", info1,
+        LOG_INFO(Debug_Emulated, "Userspace Loaded an NRO at {:#016x} with size {:#016x}", info1,
                  info2);
         break;
     case BreakReason::PreUnloadDll:
         LOG_INFO(Debug_Emulated,
-                 "Userspace Attempting to unload an NRO at 0x{:016X} with size 0x{:016X}", info1,
+                 "Userspace Attempting to unload an NRO at {:#016x} with size {:#016x}", info1,
                  info2);
         break;
     case BreakReason::PostUnloadDll:
-        LOG_INFO(Debug_Emulated, "Userspace Unloaded an NRO at 0x{:016X} with size 0x{:016X}",
+        LOG_INFO(Debug_Emulated, "Userspace Unloaded an NRO at {:#016x} with size {:#016x}",
                  info1, info2);
         break;
     case BreakReason::CppException:
@@ -85,7 +89,7 @@ void Break(Core::System& system, BreakReason reason, u64 info1, u64 info2) {
     default:
         LOG_WARNING(
             Debug_Emulated,
-            "Signalling debugger, Unknown break reason {:#X}, info1=0x{:016X}, info2=0x{:016X}",
+            "Signalling debugger, Unknown break reason {:#x}, info1={:#016x}, info2={:#016x}",
             reason, info1, info2);
         handle_debug_buffer(info1, info2);
         break;
@@ -98,21 +102,19 @@ void Break(Core::System& system, BreakReason reason, u64 info1, u64 info2) {
     if (!notification_only) {
         LOG_CRITICAL(
             Debug_Emulated,
-            "Emulated program broke execution! reason=0x{:016X}, info1=0x{:016X}, info2=0x{:016X}",
+            "Emulated program broke execution! reason={:#016x}, info1={:#016x}, info2={:#016x}",
             reason, info1, info2);
 
         handle_debug_buffer(info1, info2);
 
-        system.CurrentPhysicalCore().LogBacktrace();
+        system.CurrentPhysicalCore().LogBacktrace(system.Kernel());
     }
 
-    const bool is_hbl = GetCurrentProcess(system.Kernel()).IsHbl();
-    const bool should_break = is_hbl || !notification_only;
-
+    const bool should_break = !notification_only;
     if (system.DebuggerEnabled() && should_break) {
         auto* thread = system.Kernel().GetCurrentEmuThread();
         system.GetDebugger().NotifyThreadStopped(thread);
-        thread->RequestSuspend(Kernel::SuspendType::Debug);
+        thread->RequestSuspend(system.Kernel(), Kernel::SuspendType::Debug);
     }
 }
 

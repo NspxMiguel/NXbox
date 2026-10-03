@@ -22,6 +22,7 @@
 #include "video_core/vulkan_common/vulkan_device.h"
 #include "video_core/vulkan_common/vulkan_wrapper.h"
 #include "video_core/gpu_logging/gpu_logging.h"
+#include "common/logging.h"
 #include "common/settings.h"
 
 namespace Vulkan {
@@ -30,34 +31,55 @@ using Shader::ImageBufferDescriptor;
 using Shader::Backend::SPIRV::RESCALING_LAYOUT_WORDS_OFFSET;
 using Tegra::Texture::TexturePair;
 
-ComputePipeline::ComputePipeline(const Device& device_, vk::PipelineCache& pipeline_cache_,
+ComputePipeline::ComputePipeline(const Device& device_, Scheduler& scheduler, vk::PipelineCache& pipeline_cache_,
                                  DescriptorPool& descriptor_pool,
                                  GuestDescriptorQueue& guest_descriptor_queue_,
+                                 DescriptorBufferRing& descriptor_buffer_ring_,
                                  Common::ThreadWorker* thread_worker,
                                  PipelineStatistics* pipeline_statistics,
                                  VideoCore::ShaderNotify* shader_notify, const Shader::Info& info_,
-                                 vk::ShaderModule spv_module_)
+                                 vk::ShaderModule spv_module_, u64 shader_hash_)
     : device{device_},
-      pipeline_cache(pipeline_cache_), guest_descriptor_queue{guest_descriptor_queue_}, info{info_},
-      spv_module(std::move(spv_module_)) {
+      pipeline_cache(pipeline_cache_), guest_descriptor_queue{guest_descriptor_queue_},
+      descriptor_buffer_ring{descriptor_buffer_ring_}, info{info_},
+      shader_hash{shader_hash_}, spv_module(std::move(spv_module_)) {
     if (shader_notify) {
         shader_notify->MarkShaderBuilding();
     }
     std::copy_n(info.constant_buffer_used_sizes.begin(), uniform_buffer_sizes.size(),
                 uniform_buffer_sizes.begin());
+    num_descriptor_entries = NumDescriptorEntries(info);
 
-    auto func{[this, &descriptor_pool, shader_notify, pipeline_statistics] {
-        DescriptorLayoutBuilder builder{device};
-        builder.Add(info, VK_SHADER_STAGE_COMPUTE_BIT);
+    DescriptorLayoutBuilder builder{device};
+    builder.Add(info, VK_SHADER_STAGE_COMPUTE_BIT);
 
-        uses_push_descriptor = builder.CanUsePushDescriptor();
-        descriptor_set_layout = builder.CreateDescriptorSetLayout(uses_push_descriptor);
-        pipeline_layout = builder.CreatePipelineLayout(*descriptor_set_layout);
+    uses_push_descriptor = builder.CanUsePushDescriptor();
+    uses_descriptor_buffer = builder.CanUseDescriptorBuffer() && descriptor_buffer_ring.IsValid();
+    descriptor_set_layout =
+        builder.CreateDescriptorSetLayout(uses_push_descriptor, uses_descriptor_buffer);
+    if (uses_descriptor_buffer) {
+        descriptor_buffer_layout = builder.MakeDescriptorBufferLayout(*descriptor_set_layout);
+        if (!descriptor_buffer_ring.CanAllocate(descriptor_buffer_layout.size)) {
+            LOG_DEBUG(Render_Vulkan,
+                        "Compute shader {:016X} needs {} descriptor bytes per dispatch, falling "
+                        "back to sets",
+                        shader_hash, descriptor_buffer_layout.size);
+            uses_descriptor_buffer = false;
+            descriptor_buffer_layout = {};
+            descriptor_set_layout = builder.CreateDescriptorSetLayout(false);
+        }
+    }
+    pipeline_layout = builder.CreatePipelineLayout(*descriptor_set_layout);
+    if (!uses_descriptor_buffer) {
         descriptor_update_template =
             builder.CreateTemplate(*descriptor_set_layout, *pipeline_layout, uses_push_descriptor);
         if (!uses_push_descriptor) {
-            descriptor_allocator = descriptor_pool.Allocator(*descriptor_set_layout, info);
+            descriptor_allocator =
+                descriptor_pool.Allocator(device, scheduler, *descriptor_set_layout, info);
         }
+    }
+
+    auto func{[this, shader_notify, pipeline_statistics] {
         const VkPipelineShaderStageRequiredSubgroupSizeCreateInfoEXT subgroup_size_ci{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO_EXT,
             .pNext = nullptr,
@@ -67,7 +89,10 @@ ComputePipeline::ComputePipeline(const Device& device_, vk::PipelineCache& pipel
         if (device.IsKhrPipelineExecutablePropertiesEnabled() && Settings::values.renderer_debug.GetValue()) {
             flags |= VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;
         }
-        pipeline = device.GetLogical().CreateComputePipeline(VkComputePipelineCreateInfo{
+        if (uses_descriptor_buffer) {
+            flags |= VK_PIPELINE_CREATE_DESCRIPTOR_BUFFER_BIT_EXT;
+        }
+        const VkComputePipelineCreateInfo compute_ci{
             .sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
             .pNext = nullptr,
             .flags = flags,
@@ -84,17 +109,30 @@ ComputePipeline::ComputePipeline(const Device& device_, vk::PipelineCache& pipel
             .layout = *pipeline_layout,
             .basePipelineHandle = 0,
             .basePipelineIndex = 0,
-        }, *pipeline_cache);
+        };
+        try {
+            pipeline = device.GetLogical().CreateComputePipeline(compute_ci, *pipeline_cache);
+        } catch (const vk::Exception& exception) {
+            LOG_CRITICAL(Render_Vulkan, "Adreno rejected compute shader {:016X}: {}", shader_hash,
+                         exception.what());
+            std::scoped_lock lock{build_mutex};
+            is_built = true;
+            build_condvar.notify_one();
+            if (shader_notify) {
+                shader_notify->MarkShaderComplete();
+            }
+            return;
+        }
 
         // Log compute pipeline creation
-        if (Settings::values.gpu_logging_enabled.GetValue()) {
+        if (GPU::Logging::IsActive()) {
             GPU::Logging::GPULogger::GetInstance().LogPipelineStateChange(
                 "ComputePipeline created"
             );
         }
 
         if (pipeline_statistics) {
-            pipeline_statistics->Collect(*pipeline);
+            pipeline_statistics->Collect(device, *pipeline);
         }
         std::scoped_lock lock{build_mutex};
         is_built = true;
@@ -110,10 +148,10 @@ ComputePipeline::ComputePipeline(const Device& device_, vk::PipelineCache& pipel
     }
 }
 
-void ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
+bool ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                 Tegra::MemoryManager& gpu_memory, Scheduler& scheduler,
                                 BufferCache& buffer_cache, TextureCache& texture_cache) {
-    guest_descriptor_queue.Acquire();
+    guest_descriptor_queue.Acquire(scheduler, num_descriptor_entries, uses_descriptor_buffer);
 
     buffer_cache.SetComputeUniformBufferState(info.constant_buffer_mask, &uniform_buffer_sizes);
     buffer_cache.UnbindComputeStorageBuffers();
@@ -192,8 +230,14 @@ void ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                 is_written = desc.is_written;
             }
             ImageView& image_view = texture_cache.GetImageView(views[index].id);
+            PixelFormat format{image_view.format};
+            if constexpr (is_image) {
+                if (const auto explicit_format{PixelFormatFromImageFormat(desc.format)}) {
+                    format = *explicit_format;
+                }
+            }
             buffer_cache.BindComputeTextureBuffer(index, image_view.GpuAddr(),
-                                                  image_view.BufferSize(), image_view.format,
+                                                  image_view.BufferSize(), format,
                                                   is_written, is_image);
             ++index;
         }
@@ -223,15 +267,41 @@ void ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
     }
 
     // Log compute pipeline binding
-    if (Settings::values.gpu_logging_enabled.GetValue() &&
+    if (GPU::Logging::IsActive() &&
         Settings::values.gpu_log_vulkan_calls.GetValue()) {
         GPU::Logging::GPULogger::GetInstance().LogPipelineBind(true, "compute pipeline");
     }
 
-    const void* const descriptor_data{guest_descriptor_queue.UpdateData()};
+    const DescriptorUpdateEntry* const descriptor_data{guest_descriptor_queue.UpdateData()};
+    VkDeviceSize descriptor_buffer_offset{};
+    u32 descriptor_buffer_chunk{};
+    if (uses_descriptor_buffer) {
+        const DescriptorBufferRing::Allocation alloc{
+            descriptor_buffer_ring.Allocate(scheduler, descriptor_buffer_layout.size)};
+        if (!alloc.host) {
+            LOG_DEBUG(Render_Vulkan, "Failed to reserve descriptor memory, skipping dispatch");
+            return false;
+        }
+        WriteDescriptorBuffer(device, descriptor_buffer_layout, descriptor_data, alloc.host);
+        descriptor_buffer_offset = alloc.offset;
+        descriptor_buffer_chunk = alloc.chunk;
+    }
+
+    const bool bind_descriptor_buffer{
+        uses_descriptor_buffer && scheduler.UpdateDescriptorBufferChunk(descriptor_buffer_chunk)};
+
     const bool is_rescaling = !info.texture_descriptors.empty() || !info.image_descriptors.empty();
-    scheduler.Record([this, descriptor_data, is_rescaling,
+    scheduler.Record([this, descriptor_data, is_rescaling, descriptor_buffer_offset,
+                      descriptor_buffer_chunk, bind_descriptor_buffer,
                       rescaling_data = rescaling.Data()](vk::CommandBuffer cmdbuf) {
+        if (bind_descriptor_buffer) {
+            const VkDescriptorBufferBindingInfoEXT binding_info{
+                descriptor_buffer_ring.BindingInfo(descriptor_buffer_chunk)};
+            cmdbuf.BindDescriptorBuffersEXT(binding_info);
+        }
+        if (!pipeline) {
+            return;
+        }
         cmdbuf.BindPipeline(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline);
         if (!descriptor_set_layout) {
             return;
@@ -241,7 +311,11 @@ void ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                  RESCALING_LAYOUT_WORDS_OFFSET, sizeof(rescaling_data),
                                  rescaling_data.data());
         }
-        if (uses_push_descriptor) {
+        if (uses_descriptor_buffer) {
+            const u32 buffer_index{};
+            cmdbuf.SetDescriptorBufferOffsetsEXT(VK_PIPELINE_BIND_POINT_COMPUTE, *pipeline_layout,
+                                                 0, buffer_index, descriptor_buffer_offset);
+        } else if (uses_push_descriptor) {
             cmdbuf.PushDescriptorSetWithTemplateKHR(*descriptor_update_template, *pipeline_layout,
                                                     0, descriptor_data);
         } else {
@@ -252,6 +326,7 @@ void ComputePipeline::Configure(Tegra::Engines::KeplerCompute& kepler_compute,
                                       descriptor_set, nullptr);
         }
     });
+    return true;
 }
 
 } // namespace Vulkan

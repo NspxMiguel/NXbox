@@ -24,7 +24,6 @@
 #include "qt_common/config/qt_config.h"
 #include "qt_common/qt_common.h"
 #include "qt_common/util/game.h"
-#include "yuzu/compatibility_list.h"
 #include "yuzu/hotkeys.h"
 #include "yuzu/user_data_migration.h"
 
@@ -57,6 +56,9 @@ class QSlider;
 class QHBoxLayout;
 class WaitTreeWidget;
 class PerformanceOverlay;
+#ifdef HAS_RESHADE
+class ConfigurePostProcessing;
+#endif
 enum class GameListOpenTarget;
 enum class DumpRomFSTarget;
 class GameListPlaceholder;
@@ -337,8 +339,7 @@ private slots:
     void OnPrepareForSleep(bool prepare_sleep);
     void OnMenuReportCompatibility();
     void OnOpenModsPage();
-    void OnOpenQuickstartGuide();
-    void OnOpenFAQ();
+    void OnOpenUserHandbook();
 
     /// Called whenever a user selects a game in the game list widget.
     void OnGameListLoadFile(QString game_path, u64 program_id);
@@ -352,8 +353,6 @@ private slots:
     void OnGameListDumpRomFS(u64 program_id, const std::string& game_path, DumpRomFSTarget target);
     void OnGameListVerifyIntegrity(const std::string& game_path);
     void OnGameListCopyTID(u64 program_id);
-    void OnGameListNavigateToGamedbEntry(u64 program_id,
-                                         const CompatibilityList& compatibility_list);
     void OnGameListCreateShortcut(u64 program_id, const std::string& game_path,
                                   const QtCommon::Game::ShortcutTarget target);
     void OnGameListOpenDirectory(const QString& directory);
@@ -395,6 +394,9 @@ private slots:
     void OnToggleFilterBar();
     void OnToggleStatusBar();
     void OnTogglePerfOverlay();
+#ifdef HAS_RESHADE
+    void OnPostProcessingShaders();
+#endif
     void OnGameListRefresh();
     void InitializeHotkeys();
     void ToggleFullscreen();
@@ -410,6 +412,7 @@ private slots:
     void SetGameListMode(Settings::GameListMode mode);
     void SetGridView();
     void SetTreeView();
+    void SetCarouselView();
 
     void CheckIconSize();
     void ToggleShowGameName();
@@ -440,10 +443,12 @@ private:
     ContentManager::InstallResult InstallNCA(const QString& filename);
     void UpdateWindowTitle(std::string_view title_name = {}, std::string_view title_version = {},
                            std::string_view gpu_vendor = {});
+    void OnApplicationChanged(u64 program_id);
     void UpdateDockedButton();
     void UpdateAPIText();
     void UpdateFilterText();
     void UpdateAAText();
+    void UpdatePostShaderText();
     void UpdateVolumeUI();
     void UpdateStatusBar();
     void UpdateGPUAccuracyButton();
@@ -497,6 +502,9 @@ private:
     QTimer shutdown_timer;
     OverlayDialog* shutdown_dialog{};
     PerformanceOverlay* perf_overlay = nullptr;
+#ifdef HAS_RESHADE
+    ConfigurePostProcessing* post_processing_dialog = nullptr;
+#endif
 
     GameListPlaceholder* game_list_placeholder = nullptr;
 
@@ -517,6 +525,7 @@ private:
     QPushButton* dock_status_button = nullptr;
     QPushButton* filter_status_button = nullptr;
     QPushButton* aa_status_button = nullptr;
+    QPushButton* post_shader_status_button = nullptr;
     VolumeButton* volume_button = nullptr;
     QWidget* volume_popup = nullptr;
     QSlider* volume_slider = nullptr;

@@ -494,7 +494,7 @@ void TouchResource::ReadTouchInput() {
             has_moved |= (delta_x > 1 || delta_y > 1);
         }
         if (has_moved) {
-            input_event->Signal();
+            input_event->Signal(system.Kernel());
         }
     }
 }
@@ -548,9 +548,18 @@ void TouchResource::OnTouchUpdate(s64 timestamp) {
             }
 
             auto& touch_shared = applet_data->shared_memory_format->touch_screen;
-            StorePreviousTouchState(previous_touch_state, data.finger_map, current_touch_state,
-                                    applet_data->flag.enable_touchscreen.As<bool>());
-            touch_shared.touch_screen_lifo.WriteNextEntry(current_touch_state);
+
+            if (applet_data->flag.enable_touchscreen) {
+                StorePreviousTouchState(previous_touch_state, data.finger_map, current_touch_state, true);
+                touch_shared.touch_screen_lifo.WriteNextEntry(current_touch_state);
+            } else {
+                TouchScreenState denied{};
+                denied.sampling_number = current_touch_state.sampling_number;
+                denied.entry_count = 0;
+                data.finger_map.finger_count = 0;
+                data.finger_map.finger_ids = {};
+                touch_shared.touch_screen_lifo.WriteNextEntry(denied);
+            }
         }
     }
 }

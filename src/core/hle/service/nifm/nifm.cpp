@@ -23,7 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <common/settings.h>
 
 #ifdef _WIN32
@@ -275,19 +275,9 @@ private:
         }
 
         state.store(State::Processing);
-        evt_processing->Signal();
+        evt_processing->Signal(system.Kernel());
 
-        worker = std::thread([this]() {
-            using namespace std::chrono_literals;
-            scan_results = Network::ScanWifiNetworks(3s);
-            {
-                std::scoped_lock lk{g_scan_mtx};
-                g_last_scan_results = scan_results;
-            }
-            // choose result code
-            const bool ok = !scan_results.empty();
-            Finish(ok ? ResultSuccess : ResultPendingConnection);
-        });
+        worker = std::thread(&IScanRequest::WorkerThread, this);
         IPC::ResponseBuilder{ctx, 2}.Push(ResultSuccess);
     }
 
@@ -307,7 +297,7 @@ private:
     void GetSystemEventReadableHandle(HLERequestContext& ctx) {
         IPC::ResponseBuilder rb{ctx, 2, 2};
         rb.Push(ResultSuccess);
-        rb.PushCopyObjects(evt_scan_complete->GetReadableEvent(),
+        rb.PushCopyObjects(ctx, evt_scan_complete->GetReadableEvent(),
                            evt_processing->GetReadableEvent());
     }
 
@@ -318,10 +308,25 @@ private:
 
     enum class State { Idle, Processing, Finished };
 
+    void WorkerThread() {
+        using namespace std::chrono_literals;
+
+        scan_results = Network::ScanWifiNetworks(3s);
+
+        {
+            std::scoped_lock lk{g_scan_mtx};
+            g_last_scan_results = scan_results;
+        }
+
+        // choose result code
+        const bool ok = !scan_results.empty();
+        Finish(ok ? ResultSuccess : ResultPendingConnection);
+    }
+
     void Finish(Result rc) {
         worker_result.store(rc);
         state.store(State::Finished);
-        evt_scan_complete->Signal();
+        evt_scan_complete->Signal(system.Kernel());
     }
 
     KernelHelpers::ServiceContext svc_ctx;
@@ -452,7 +457,7 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 2};
         rb.Push(ResultSuccess);
-        rb.PushCopyObjects(event1->GetReadableEvent(), event2->GetReadableEvent());
+        rb.PushCopyObjects(ctx, event1->GetReadableEvent(), event2->GetReadableEvent());
     }
 
     void Cancel(HLERequestContext& ctx) {
@@ -486,7 +491,7 @@ private:
     void UpdateState(RequestState new_state) {
         LOG_DEBUG(Service_NIFM, "(STUBBED) called");
         state = new_state;
-        event1->Signal();
+        event1->Signal(system.Kernel());
     }
 
     KernelHelpers::ServiceContext service_context;
@@ -528,7 +533,7 @@ void IGeneralService::CreateScanRequest(HLERequestContext& ctx) {
     IPC::ResponseBuilder rb{ctx, 2, 0, 1};
 
     rb.Push(ResultSuccess);
-    rb.PushIpcInterface<IScanRequest>(system);
+    rb.PushIpcInterface<IScanRequest>(ctx, system);
 }
 
 void IGeneralService::CreateRequest(HLERequestContext& ctx) {
@@ -537,7 +542,7 @@ void IGeneralService::CreateRequest(HLERequestContext& ctx) {
     IPC::ResponseBuilder rb{ctx, 2, 0, 1};
 
     rb.Push(ResultSuccess);
-    rb.PushIpcInterface<IRequest>(system);
+    rb.PushIpcInterface<IRequest>(ctx, system);
 }
 
 void IGeneralService::GetCurrentNetworkProfile(HLERequestContext& ctx) {
@@ -716,7 +721,7 @@ void IGeneralService::GetNetworkProfile(HLERequestContext& ctx) {
 
     IPC::ResponseBuilder rb{ctx, 2};
     rb.Push(ResultSuccess);
-    rb.PushIpcInterface<INetworkProfile>(system);
+    rb.PushIpcInterface<INetworkProfile>(ctx, system);
 }
 
 void IGeneralService::SetNetworkProfile(HLERequestContext& ctx) {
@@ -869,7 +874,7 @@ void IGeneralService::CreateTemporaryNetworkProfile(HLERequestContext& ctx) {
     IPC::ResponseBuilder rb{ctx, 6, 0, 1};
 
     rb.Push(ResultSuccess);
-    rb.PushIpcInterface<INetworkProfile>(system);
+    rb.PushIpcInterface<INetworkProfile>(ctx, system);
     rb.PushRaw<u128>(uuid);
 }
 
@@ -1124,7 +1129,7 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IGeneralService>(system);
+        rb.PushIpcInterface<IGeneralService>(ctx, system);
     }
 
     void CreateGeneralService(HLERequestContext& ctx) {
@@ -1132,19 +1137,16 @@ private:
 
         IPC::ResponseBuilder rb{ctx, 2, 0, 1};
         rb.Push(ResultSuccess);
-        rb.PushIpcInterface<IGeneralService>(system);
+        rb.PushIpcInterface<IGeneralService>(ctx, system);
     }
 };
 
 void LoopProcess(Core::System& system) {
     auto server_manager = std::make_unique<ServerManager>(system);
 
-    server_manager->RegisterNamedService("nifm:a",
-                                         std::make_shared<NetworkInterface>("nifm:a", system));
-    server_manager->RegisterNamedService("nifm:s",
-                                         std::make_shared<NetworkInterface>("nifm:s", system));
-    server_manager->RegisterNamedService("nifm:u",
-                                         std::make_shared<NetworkInterface>("nifm:u", system));
+    server_manager->RegisterNamedService("nifm:a", std::make_shared<NetworkInterface>("nifm:a", system), 2);
+    server_manager->RegisterNamedService("nifm:s", std::make_shared<NetworkInterface>("nifm:s", system), 16);
+    server_manager->RegisterNamedService("nifm:u", std::make_shared<NetworkInterface>("nifm:u", system), 5);
     ServerManager::RunServer(std::move(server_manager));
 }
 

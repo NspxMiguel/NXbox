@@ -15,14 +15,13 @@
 #include <QVBoxLayout>
 #include <QVector>
 #include <QWidget>
-#include <qabstractitemview.h>
 
 #include "common/common_types.h"
 #include "core/core.h"
 #include "frontend_common/play_time_manager.h"
 #include "qt_common/config/uisettings.h"
+#include "qt_common/game_list/model.h"
 #include "qt_common/util/game.h"
-#include "yuzu/compatibility_list.h"
 
 class QVariantAnimation;
 
@@ -38,6 +37,9 @@ class MainWindow;
 enum class AmLaunchType;
 enum class StartGameType;
 
+class GameCarousel;
+
+class QAbstractItemView;
 namespace Core {
 class System;
 }
@@ -73,7 +75,6 @@ public:
     void SetFilterVisible(bool visibility);
     bool IsEmpty() const;
 
-    void LoadCompatibilityList();
     void PopulateAsync(QVector<UISettings::GameDir>& game_dirs);
 
     void SaveInterfaceLayout();
@@ -89,6 +90,8 @@ public:
 public slots:
     void RefreshGameDirectory();
     void RefreshExternalContent();
+    void UpdateIconSizes();
+    void OnPopulate();
 
 signals:
     void BootGame(const QString& game_path, StartGameType type);
@@ -106,8 +109,6 @@ signals:
     void CopyTIDRequested(u64 program_id);
     void CreateShortcut(u64 program_id, const std::string& game_path,
                         const QtCommon::Game::ShortcutTarget target);
-    void NavigateToGamedbEntryRequested(u64 program_id,
-                                        const CompatibilityList& compatibility_list);
     void OpenPerGameGeneralRequested(const std::string& file);
     void LinkToRyujinxRequested(const u64& program_id);
     void OpenDirectory(const QString& directory);
@@ -119,7 +120,6 @@ signals:
 private slots:
     void OnTextChanged(const QString& new_text);
     void OnFilterCloseClicked();
-    void OnUpdateThemedIcons();
     void OnPopulatingCompleted(const QStringList& watch_list);
 
 private:
@@ -150,7 +150,9 @@ private:
 
     GameTree* tree_view = nullptr;
     GameGrid* grid_view = nullptr;
+    GameCarousel* carousel_view = nullptr;
     GameListModel* item_model = nullptr;
+    Settings::GameListMode game_list_mode;
 
     ControllerNavigation* controller_navigation = nullptr;
 
@@ -174,9 +176,6 @@ public:
 
 signals:
     void AddDirectory();
-
-private slots:
-    void onUpdateThemedIcons();
 
 protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;

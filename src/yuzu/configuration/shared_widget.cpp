@@ -140,7 +140,12 @@ QWidget* Widget::CreateCombobox(std::function<std::string()>& serializer,
     if (combobox_enumerations.contains(type)) {
         enumeration = &combobox_enumerations.at(type);
         for (const auto& [id, name] : *enumeration) {
-            combobox->addItem(name);
+            if (type == Settings::EnumMetadata<Settings::AppletMode>::Index() &&
+                id == static_cast<u32>(Settings::AppletMode::Disabled) &&
+                setting.Id() != Settings::values.controller_applet_mode.Id()) {
+                continue;
+            }
+            combobox->addItem(name, id);
         }
     } else {
         return combobox;
@@ -158,9 +163,8 @@ QWidget* Widget::CreateCombobox(std::function<std::string()>& serializer,
     const u32 setting_value = std::strtoul(setting.ToString().c_str(), nullptr, 0);
     combobox->setCurrentIndex(find_index(setting_value));
 
-    serializer = [this, enumeration]() {
-        int current = combobox->currentIndex();
-        return std::to_string(enumeration->at(current).first);
+    serializer = [this]() {
+        return std::to_string(combobox->currentData().toUInt());
     };
 
     restore_func = [this, find_index]() {
@@ -772,10 +776,19 @@ Builder::Builder(QWidget* parent_, bool runtime_lock_)
 
 Builder::~Builder() = default;
 
+static bool IsAndroidOnly(const Settings::BasicSetting& setting) {
+    const std::string& label = setting.GetLabel();
+    return label.starts_with("frame_gen") || label == "emulate_bgr565";
+}
+
 Widget* Builder::BuildWidget(Settings::BasicSetting* setting,
                              std::vector<std::function<void(bool)>>& apply_funcs,
                              RequestType request, bool managed, float multiplier,
                              Settings::BasicSetting* other_setting, const QString& suffix) const {
+    if (IsAndroidOnly(*setting)) {
+        return nullptr;
+    }
+
     if (!Settings::IsConfiguringGlobal() && !setting->Switchable()) {
         return nullptr;
     }

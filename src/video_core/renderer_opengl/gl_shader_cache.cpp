@@ -235,6 +235,7 @@ ShaderCache::ShaderCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
           .has_broken_unsigned_image_offsets = true,
           .has_broken_signed_operations = true,
           .has_broken_fp16_float_controls = false,
+          .has_broken_fp32_denorm_flush = false,
           .has_gl_component_indexing_bug = device.HasComponentIndexingBug(),
           .has_gl_precise_bug = device.HasPreciseBug(),
           .has_gl_cbuf_ftou_bug = device.HasCbufFtouBug(),
@@ -242,19 +243,38 @@ ShaderCache::ShaderCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
           .ignore_nan_fp_comparisons = true,
           .gl_max_compute_smem_size = device.GetMaxComputeSharedMemorySize(),
           .min_ssbo_alignment = device.GetShaderStorageBufferAlignment(),
-          .max_user_clip_distances = 8,
+          // Use the host limit, but never more than the guest can produce. Maxwell exposes 8 clip
+          // distances and the SPIR-V output array is sized for at most 8, so clamping here keeps a
+          // host that reports a different count from under- or over-running that array.
+          .max_user_clip_distances =
+              std::min<u32>(device.GetMaxUserClipDistances(), Maxwell::Regs::NumClipDistances),
       },
       host_info{
-          .support_float64 = true,
-          .support_float16 = false,
-          .support_int64 = device.HasShaderInt64(),
-          .needs_demote_reorder = device.IsAmd(),
-          .support_snorm_render_buffer = false,
-          .support_viewport_index_layer = device.HasVertexViewportLayer(),
-          .min_ssbo_alignment = static_cast<u32>(device.GetShaderStorageBufferAlignment()),
-          .support_geometry_shader_passthrough = device.HasGeometryShaderPassthrough(),
-          .support_conditional_barrier = device.SupportsConditionalBarriers(),
+        .min_ssbo_alignment = static_cast<u32>(device.GetShaderStorageBufferAlignment()),
+        .max_per_stage_descriptor_sampled_images =
+            Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_per_stage_resources = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_samplers = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_uniform_buffers = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_uniform_buffers_dynamic =
+            Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_storage_buffers = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_storage_buffers_dynamic =
+            Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_sampled_images = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_storage_images = Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .max_descriptor_set_input_attachements =
+            Shader::HostTranslateInfo::DEFAULT_DESCRIPTOR_LIMIT,
+        .support_float64 = true,
+        .support_float16 = false,
+        .support_int64 = device.HasShaderInt64(),
+        .needs_demote_reorder = device.IsAmd(),
+        .support_snorm_render_buffer = false,
+        .support_viewport_index_layer = device.HasVertexViewportLayer(),
+        .support_geometry_shader_passthrough = device.HasGeometryShaderPassthrough(),
+        .support_conditional_barrier = device.SupportsConditionalBarriers(),
       } {
+    host_info.ApplyDescriptorLimitPolicy();
     if (use_asynchronous_shaders) {
         workers = CreateWorkers();
     }
@@ -543,7 +563,7 @@ std::unique_ptr<GraphicsPipeline> ShaderCache::CreateGraphicsPipeline(
     bool force_context_flush) try {
     NxboxStall::Scope stall_scope{NxboxStall::Kind::Shader};
     auto hash = key.Hash();
-    LOG_INFO(Render_OpenGL, "0x{:016x}", hash);
+    LOG_INFO(Render_OpenGL, "{:#016x}", hash);
     size_t env_index{};
     u32 total_storage_buffers{};
     std::array<Shader::IR::Program, Maxwell::MaxShaderProgram> programs;
@@ -571,7 +591,7 @@ std::unique_ptr<GraphicsPipeline> ShaderCache::CreateGraphicsPipeline(
         const u32 cfg_offset = u32(env.StartAddress() + sizeof(Shader::ProgramHeader));
         Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
 
-        if (Settings::values.dump_shaders) {
+        if (Settings::values.dump_guest_shaders) {
             env.Dump(hash, key.unique_hashes[index]);
         }
 
@@ -665,11 +685,11 @@ std::unique_ptr<ComputePipeline> ShaderCache::CreateComputePipeline(
     bool force_context_flush) try {
     NxboxStall::Scope stall_scope{NxboxStall::Kind::Shader};
     auto hash = key.Hash();
-    LOG_INFO(Render_OpenGL, "0x{:016x}", hash);
+    LOG_INFO(Render_OpenGL, "{:#016x}", hash);
 
     Shader::Maxwell::Flow::CFG cfg{env, pools.flow_block, env.StartAddress()};
 
-    if (Settings::values.dump_shaders) {
+    if (Settings::values.dump_guest_shaders) {
         env.Dump(hash, key.unique_hash);
     }
 

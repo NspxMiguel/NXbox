@@ -19,6 +19,10 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
     RENDERER_ASTC_DECODE_METHOD("accelerate_astc"),
     RENDERER_ACCURACY("gpu_accuracy"),
     RENDERER_RESOLUTION("resolution_setup"),
+    RENDERER_FRAME_GEN_MULTIPLIER("frame_gen_multiplier"),
+    RENDERER_FRAME_GEN_TARGET_RATE("frame_gen_target_rate"),
+    RENDERER_FRAME_GEN_QUEUE_TARGET("frame_gen_queue_target"),
+    RENDERER_FRAME_GEN_FLOW_SCALE("frame_gen_flow_scale"),
     RENDERER_VSYNC("use_vsync"),
     RENDERER_SCALING_FILTER("scaling_filter"),
     RENDERER_ANTI_ALIASING("anti_aliasing"),
@@ -27,6 +31,7 @@ enum class IntSetting(override val key: String) : AbstractIntSetting {
 
     RENDERER_DYNA_STATE("dyna_state"),
     DMA_ACCURACY("dma_accuracy"),
+    GPU_FENCE_BEHAVIOR("gpu_fence_behavior"),
     FRAME_PACING_MODE("frame_pacing_mode"),
     AUDIO_OUTPUT_ENGINE("output_engine"),
     MAX_ANISOTROPY("max_anisotropy"),

@@ -8,15 +8,18 @@
 #include <cstring>
 #include "dedicated_room/yuzu_room.h"
 #endif
-
-#include <common/detached_tasks.h>
-
 #ifdef __unix__
 #include "qt_common/gui_settings.h"
 #endif
 
 #ifndef _WIN32
 #include <sys/resource.h>
+#endif
+
+#if defined(__APPLE__)
+#include <climits>
+#include <cstdlib>
+#include <cstring>
 #endif
 
 #include "main_window.h"
@@ -104,8 +107,6 @@ int main(int argc, char* argv[]) {
     Breakpad::InstallCrashHandler();
 #endif
 
-    Common::DetachedTasks detached_tasks;
-
     // Init settings params
     QCoreApplication::setOrganizationName(QStringLiteral("eden"));
     QCoreApplication::setApplicationName(QStringLiteral("eden"));
@@ -131,6 +132,16 @@ int main(int argc, char* argv[]) {
 #endif // _WIN32
 
 #if defined(__APPLE__)
+    // Convert the relative path to an absolute path before the chdir
+    char resolved[PATH_MAX];
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "-u") == 0 || strcmp(argv[i], "-input-profile") == 0) {
+            ++i;
+        } else if (argv[i][0] != '-' && argv[i][0] != '/' && realpath(argv[i], resolved)) {
+            argv[i] = strdup(resolved);
+        }
+    }
+
     // If you start a bundle (binary) on OSX without the Terminal, the working directory is "/".
     // But since we require the working directory to be the executable path for the location of
     // the user folder in the Qt Frontend, we need to cd into that working directory
@@ -193,10 +204,6 @@ int main(int argc, char* argv[]) {
     // After settings have been loaded by GMainWindow, apply the filter
     main_window.show();
 
-    app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window,
-                &MainWindow::OnAppFocusStateChanged);
-
-    int result = app.exec();
-    detached_tasks.WaitForAllTasks();
-    return result;
+    app.connect(&app, &QGuiApplication::applicationStateChanged, &main_window, &MainWindow::OnAppFocusStateChanged);
+    return app.exec();
 }

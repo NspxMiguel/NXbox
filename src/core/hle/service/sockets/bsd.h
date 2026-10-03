@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -8,9 +8,9 @@
 #include <memory>
 #include <span>
 #include <vector>
+#include <variant>
 
 #include "common/common_types.h"
-#include "common/expected.h"
 #include "common/socket_types.h"
 #include "core/hle/service/service.h"
 #include "core/hle/service/sockets/sockets.h"
@@ -27,15 +27,15 @@ class Socket;
 
 namespace Service::Sockets {
 
-class BSD final : public ServiceFramework<BSD> {
+class BSD_USA final : public ServiceFramework<BSD_USA> {
 public:
-    explicit BSD(Core::System& system_, const char* name);
-    ~BSD() override;
+    explicit BSD_USA(Core::System& system_, const char* name, bool is_user);
+    ~BSD_USA() override;
 
     // These methods are called from SSL; the first two are also called from
     // this class for the corresponding IPC methods.
     // On the real device, the SSL service makes IPC calls to this service.
-    Common::Expected<s32, Errno> DuplicateSocketImpl(s32 fd);
+    std::variant<s32, Errno> DuplicateSocketImpl(s32 fd);
     Errno CloseImpl(s32 fd);
     std::optional<std::shared_ptr<Network::SocketBase>> GetSocket(s32 fd);
 
@@ -50,7 +50,7 @@ private:
     };
 
     struct PollWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 nfds;
@@ -62,7 +62,7 @@ private:
     };
 
     struct AcceptWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -72,7 +72,7 @@ private:
     };
 
     struct ConnectWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -81,7 +81,7 @@ private:
     };
 
     struct RecvWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -92,7 +92,7 @@ private:
     };
 
     struct RecvFromWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -104,7 +104,7 @@ private:
     };
 
     struct SendWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -115,7 +115,7 @@ private:
     };
 
     struct SendToWork {
-        void Execute(BSD* bsd);
+        void Execute(BSD_USA* bsd);
         void Response(HLERequestContext& ctx);
 
         s32 fd;
@@ -129,6 +129,7 @@ private:
     void RegisterClient(HLERequestContext& ctx);
     void StartMonitoring(HLERequestContext& ctx);
     void Socket(HLERequestContext& ctx);
+    void SocketExempt(HLERequestContext& ctx);
     void Select(HLERequestContext& ctx);
     void Poll(HLERequestContext& ctx);
     void Accept(HLERequestContext& ctx);
@@ -155,8 +156,7 @@ private:
     void ExecuteWork(HLERequestContext& ctx, Work work);
 
     std::pair<s32, Errno> SocketImpl(Domain domain, Type type, Protocol protocol);
-    std::pair<s32, Errno> PollImpl(std::vector<u8>& write_buffer, std::span<const u8> read_buffer,
-                                   s32 nfds, s32 timeout);
+    std::pair<s32, Errno> PollImpl(std::vector<u8>& write_buffer, std::span<const u8> read_buffer, s32 nfds, s32 timeout);
     std::pair<s32, Errno> AcceptImpl(s32 fd, std::vector<u8>& write_buffer);
     Errno BindImpl(s32 fd, std::span<const u8> addr);
     Errno ConnectImpl(s32 fd, std::span<const u8> addr);
@@ -189,12 +189,19 @@ private:
 
 protected:
     std::unique_lock<std::mutex> LockService() noexcept override;
+    bool is_user = false;
 };
 
 class BSDCFG final : public ServiceFramework<BSDCFG> {
 public:
-    explicit BSDCFG(Core::System& system_);
+    explicit BSDCFG(Core::System& system_, const char *name);
     ~BSDCFG() override;
+};
+
+class BSD_NU final : public ServiceFramework<BSD_NU> {
+public:
+    explicit BSD_NU(Core::System& system_);
+    ~BSD_NU() override;
 };
 
 } // namespace Service::Sockets

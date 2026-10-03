@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">Este programa serve para rodar jogos do Nintendo Switch. Nenhum jogo ou chaves do sistema são inclusos<br /><br />Antes de começar, localize o seu <![CDATA[<b> prod.keys </b>]]> salvo no seu sistema.<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">Saiba mais</a>]]></string>
     <string name="notice_notification_channel_name">Notificações e erros</string>
     <string name="notice_notification_channel_description">Mostra notificações quando acontecer um erro.</string>
     <string name="notification_permission_not_granted">Acesso às notificações não foi permitido!</string>
@@ -91,7 +90,6 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">Decodificação de Vídeo (NVDEC)</string>
-    <string name="nvdec_emulation_description">Selecione como a decodificação de vídeo é realizada durante cutscenes e intros.</string>
     <string name="nvdec_emulation_none">Nenhum</string>
 
     <!-- Optimize SPIRV output -->
@@ -409,8 +407,6 @@
     <string name="use_custom_rtc_description">Permite a você configurar um relógio em tempo real separado do relógio do seu dispositivo.</string>
     <string name="set_custom_rtc">Definir um relógio em tempo real personalizado</string>
 
-    <!-- CPU -->
-    <string name="fast_cpu_time">Overclock da CPU</string>
     <string name="custom_cpu_ticks">Ciclos da CPU Personalizados</string>
     <string name="custom_cpu_ticks_description">Defina um valor personalizado de ciclos da CPU. Valores mais altos podem aumentar o desempenho, mas também podem fazer o jogo travar. Recomenda-se usar valores entre 77 e 21000.</string>
     <string name="cpu_ticks">Ciclos</string>
@@ -485,7 +481,6 @@
     <string name="log">Registro</string>
     <string name="flush_by_line">Liberar logs de depuração por linha</string>
     <string name="flush_by_line_description">Libera logs de depuração em cada linha escrita, facilitando a depuração em casos de travamento ou congelamento.</string>
-
     <string name="general">Geral</string>
 
     <!-- Audio settings strings -->
@@ -721,8 +716,6 @@
     <string name="loader_error_file_not_found">O arquivo ROM não existe</string>
 
     <string name="loader_requires_firmware">O jogo requer firmware</string>
-    <string name="loader_requires_firmware_description"><![CDATA[O jogo que você está tentando iniciar requer firmware para inicializar ou passar do menu de abertura. Por favor <a href=\"https://yuzu-mirror.github.io/help/quickstart\"> faça dump e instale o firmware</a>, ou pressione \"OK\" para continuar mesmo assim.]]></string>
-
     <!-- Intent Launch strings -->
     <string name="searching_for_game">Procurando jogo...</string>
     <string name="game_not_found_for_title_id">Jogo não encontrado para o ID do Título: %1$s</string>
@@ -821,10 +814,6 @@
     <string name="memory_6gb">6GB (Inseguro)</string>
     <string name="memory_8gb">8GB (Inseguro)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">Boost (1700MHz)</string>
-    <string name="clock_fast">Rápido (2000MHz)</string>
-
     <!-- Temperature Units -->
     <string name="temperature_celsius">Celsius</string>
     <string name="temperature_fahrenheit">Fahrenheit</string>
@@ -840,7 +829,6 @@
 
     <string name="renderer_none">Nenhum</string>
 
-    <string name="renderer_accuracy_medium">Média</string>
     <string name="renderer_accuracy_high">Alta</string>
 
     <!-- DMA Accuracy -->
@@ -897,8 +885,6 @@
     <string name="theme_mode_follow_system">Igual ao Sistema</string>
     <string name="theme_mode_light">Claro</string>
     <string name="theme_mode_dark">Escuro</string>
-
-    <string name="multiplier_none">Nenhum</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">Planos de fundo pretos</string>

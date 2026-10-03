@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
@@ -12,6 +12,7 @@
 
 #include "shader_recompiler/shader_info.h"
 #include "video_core/renderer_vulkan/vk_compute_pass.h"
+#include "video_core/renderer_vulkan/vk_render_pass_cache.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/texture_cache/image_view_base.h"
 #include "video_core/vulkan_common/vulkan_memory_allocator.h"
@@ -59,13 +60,19 @@ public:
 
     void TickFrame();
 
+    void FlushDeferredClear();
+
     u64 GetDeviceLocalMemory() const;
 
     u64 GetDeviceMemoryUsage() const;
 
     bool CanReportMemoryUsage() const;
 
-    std::optional<size_t> GetSamplerHeapBudget() const;
+    bool CanDownloadMsaa(const VideoCommon::ImageInfo& info) const;
+
+    [[nodiscard]] VkImage AcquireMsaaScratchImage(const VkImageCreateInfo& image_ci);
+
+    void ReleaseMsaaScratchImage(VkImage image);
 
     void BlitImage(Framebuffer* dst_framebuffer, ImageView& dst, ImageView& src,
                    const Region2D& dst_region, const Region2D& src_region,
@@ -87,7 +94,7 @@ public:
     }
 
     bool CanUploadMSAA() const noexcept {
-        return msaa_copy_pass.operator bool();
+        return true;
     }
 
     void AccelerateImageUpload(Image&, const StagingBufferRef&,
@@ -110,6 +117,28 @@ public:
 
     [[nodiscard]] VkBuffer GetTemporaryBuffer(size_t needed_size);
 
+    struct ResolveShadow {
+        vk::Image image;
+        vk::ImageView view;
+        VkFormat format = VK_FORMAT_UNDEFINED;
+        VkExtent2D extent{};
+        u32 layers = 0;
+        VkImageAspectFlags aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT;
+        bool up_to_date = false;
+    };
+
+    [[nodiscard]] VkImageView GetOrCreateResolveShadow(VkImage msaa_image, VkFormat format,
+                                                       VkExtent2D extent, u32 layers,
+                                                       VkImageAspectFlags aspect_mask);
+
+    [[nodiscard]] const ResolveShadow* GetValidResolveShadow(VkImage msaa_image) const;
+
+    void InvalidateResolveShadow(VkImage msaa_image);
+
+    void MarkResolveShadowUpToDate(VkImage msaa_image);
+
+    void EraseResolveShadow(VkImage msaa_image);
+
     std::span<const VkFormat> ViewFormats(PixelFormat format) {
         return view_formats[static_cast<std::size_t>(format)];
     }
@@ -130,15 +159,35 @@ public:
     std::optional<ASTCDecoderPass> astc_decoder_pass;
 
     std::optional<BlockLinearUnswizzle3DPass> bl3d_unswizzle_pass;
-    vk::Buffer swizzle_table_buffer;
-    VkDeviceSize swizzle_table_size = 0;
-
-    std::optional<MSAACopyPass> msaa_copy_pass;
     const Settings::ResolutionScalingInfo& resolution;
     std::array<std::vector<VkFormat>, VideoCore::Surface::MaxPixelFormat> view_formats;
 
     static constexpr size_t indexing_slots = 8 * sizeof(size_t);
     std::array<vk::Buffer, indexing_slots> buffers{};
+    struct MsaaScratchKey {
+        VkFormat format;
+        VkImageType type;
+        u32 width;
+        u32 height;
+        u32 depth;
+        u32 levels;
+        u32 layers;
+        VkImageUsageFlags usage;
+        VkImageCreateFlags flags;
+
+        bool operator==(const MsaaScratchKey&) const noexcept = default;
+    };
+
+    struct MsaaScratchImage {
+        MsaaScratchKey key;
+        vk::Image image;
+        u64 tick;
+        u32 unused_frames;
+    };
+
+    std::vector<MsaaScratchImage> msaa_scratch_images;
+    ::Common::unordered_map<VkImage, ResolveShadow> resolve_shadows;
+    std::vector<std::pair<u64, ResolveShadow>> pending_resolve_shadows;
 };
 
 class Framebuffer {
@@ -168,6 +217,14 @@ public:
     [[nodiscard]] VkRenderPass RenderPass() const noexcept {
         return renderpass;
     }
+
+    [[nodiscard]] const RenderPassKey& RenderPassKeyBase() const noexcept {
+        return render_pass_key;
+    }
+
+    [[nodiscard]] VkRenderPass RenderPassVariant(u32 color_clear_mask, bool depth_stencil_clear,
+                                                 u32 color_discard_mask,
+                                                 bool depth_stencil_discard) const;
 
     [[nodiscard]] VkExtent2D RenderArea() const noexcept {
         return render_area;
@@ -209,7 +266,21 @@ public:
         return is_rescaled;
     }
 
+    [[nodiscard]] bool DiscardsMsaaColor() const noexcept {
+        return discard_msaa_color;
+    }
+
+    [[nodiscard]] bool DiscardsMsaaDepthStencil() const noexcept {
+        return discard_msaa_depth_stencil;
+    }
+
+    /// Records that a render pass has begun, so its resolve attachments will hold valid contents
+    /// once it ends.
+    void MarkResolveShadowsUpToDate() const;
+
 private:
+    static constexpr size_t NUM_MEMOIZED_RENDER_PASS_VARIANTS = 8;
+
     vk::Framebuffer framebuffer;
     VkRenderPass renderpass{};
     VkExtent2D render_area{};
@@ -222,6 +293,16 @@ private:
     bool has_depth{};
     bool has_stencil{};
     bool is_rescaled{};
+    std::array<VkImage, 9> resolve_shadow_images{};
+    u32 num_resolve_shadows = 0;
+    TextureCacheRuntime* runtime_ptr{nullptr};
+    RenderPassKey render_pass_key{};
+    RenderPassCache* render_pass_cache{nullptr};
+    bool discard_msaa_color{};
+    bool discard_msaa_depth_stencil{};
+    mutable std::array<u32, NUM_MEMOIZED_RENDER_PASS_VARIANTS> variant_keys{};
+    mutable std::array<VkRenderPass, NUM_MEMOIZED_RENDER_PASS_VARIANTS> variant_render_passes{};
+    mutable u32 num_memoized_variants{};
 };
 
 class Image : public VideoCommon::ImageBase {
@@ -359,6 +440,26 @@ public:
         return samples;
     }
 
+    [[nodiscard]] bool SupportsDepthComparison() const noexcept {
+        return supports_depth_comparison;
+    }
+
+    [[nodiscard]] bool RequiresBorderColorFormat() const noexcept {
+        return requires_border_color_format;
+    }
+
+    [[nodiscard]] bool SupportsMinmaxFilter() const noexcept {
+        return supports_minmax_filter;
+    }
+
+    [[nodiscard]] const VkComponentMapping& Swizzle() const noexcept {
+        return swizzle_mapping;
+    }
+
+    [[nodiscard]] bool HasIdentitySwizzle() const noexcept {
+        return has_identity_swizzle;
+    }
+
     [[nodiscard]] GPUVAddr GpuAddr() const noexcept {
         return gpu_addr;
     }
@@ -373,13 +474,15 @@ private:
         std::array<vk::ImageView, Shader::NUM_TEXTURE_TYPES> unsigneds;
     };
 
-    [[nodiscard]] vk::ImageView MakeView(VkFormat vk_format, VkImageAspectFlags aspect_mask);
+    [[nodiscard]] vk::ImageView MakeView(VkFormat vk_format, VkImageAspectFlags aspect_mask,
+                                         std::optional<Shader::TextureType> texture_type = std::nullopt);
 
     const Device* device = nullptr;
     const SlotVector<Image>* slot_images = nullptr;
 
     std::array<vk::ImageView, Shader::NUM_TEXTURE_TYPES> image_views;
     std::optional<StorageViews> storage_views;
+    vk::ImageView typeless_storage_view;
     vk::ImageView depth_view;
     vk::ImageView stencil_view;
     vk::ImageView color_view;
@@ -388,29 +491,91 @@ private:
     VkImageView render_target = VK_NULL_HANDLE;
     VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
     u32 buffer_size = 0;
+
+    VkComponentMapping swizzle_mapping{};
+
+    bool supports_depth_comparison = false;
+    bool requires_border_color_format = false;
+    bool supports_minmax_filter = false;
+    bool has_identity_swizzle = true;
 };
 
 class ImageAlloc : public VideoCommon::ImageAllocBase {};
+
+class CustomBorderColorBudget {
+public:
+    CustomBorderColorBudget() = default;
+    ~CustomBorderColorBudget();
+
+    CustomBorderColorBudget(const CustomBorderColorBudget&) = delete;
+    CustomBorderColorBudget& operator=(const CustomBorderColorBudget&) = delete;
+
+    CustomBorderColorBudget(CustomBorderColorBudget&& rhs) noexcept;
+    CustomBorderColorBudget& operator=(CustomBorderColorBudget&& rhs) noexcept;
+
+    bool TryAcquire(const Device& device, size_t count);
+
+private:
+    void Release() noexcept;
+
+    const Device* device_ptr = nullptr;
+    size_t held = 0;
+};
 
 class Sampler {
 public:
     explicit Sampler(TextureCacheRuntime&, const Tegra::Texture::TSCEntry&);
 
     [[nodiscard]] VkSampler Handle() const noexcept {
-        return *sampler;
+        return *variants.front().sampler;
     }
 
-    [[nodiscard]] VkSampler HandleWithDefaultAnisotropy() const noexcept {
-        return *sampler_default_anisotropy;
-    }
-
-    [[nodiscard]] bool HasAddedAnisotropy() const noexcept {
-        return static_cast<bool>(sampler_default_anisotropy);
-    }
+    [[nodiscard]] VkSampler HandleFor(const ImageView& image_view, bool is_depth);
 
 private:
-    vk::Sampler sampler;
-    vk::Sampler sampler_default_anisotropy;
+    struct VariantKey {
+        bool reduce_anisotropy;
+        bool force_nearest;
+        bool drop_reduction;
+        bool drop_custom_border;
+        bool srgb_border;
+        std::array<VkComponentSwizzle, 4> swizzle;
+
+        bool operator==(const VariantKey&) const noexcept = default;
+
+        [[nodiscard]] bool HasSwizzle() const noexcept {
+            return swizzle != std::array<VkComponentSwizzle, 4>{};
+        }
+    };
+
+    struct Variant {
+        VariantKey key;
+        vk::Sampler sampler;
+    };
+
+    static constexpr size_t MAX_VARIANTS = 32;
+
+    [[nodiscard]] VariantKey MakeKey(const ImageView& image_view, bool is_depth) const noexcept;
+    [[nodiscard]] VkSampler Find(const VariantKey& key) const noexcept;
+    VkSampler Emplace(VariantKey key);
+
+    CustomBorderColorBudget custom_border_color_budget;
+    std::vector<Variant> variants;
+
+    const Device* device_ptr{nullptr};
+    VkSamplerCreateInfo base_ci{};
+    VkSamplerReductionModeEXT reduction_mode{VK_SAMPLER_REDUCTION_MODE_WEIGHTED_AVERAGE_EXT};
+    std::array<float, 4> border_color{};
+    std::array<float, 4> srgb_border_color{};
+    f32 default_anisotropy{1.0f};
+
+    bool has_added_anisotropy{};
+    bool has_linear_filtering{};
+    bool has_depth_comparison{};
+    bool has_minmax_reduction{};
+    bool has_custom_border_colors{};
+    bool has_srgb_border_color{};
+    bool needs_swizzle_mapping{};
 };
 
 struct TextureCacheParams {
@@ -419,6 +584,7 @@ struct TextureCacheParams {
     static constexpr bool HAS_EMULATED_COPIES = false;
     static constexpr bool HAS_DEVICE_MEMORY_INFO = true;
     static constexpr bool IMPLEMENTS_ASYNC_DOWNLOADS = true;
+    static constexpr bool HAS_MSAA_DOWNLOADS = true;
 
     using Runtime = Vulkan::TextureCacheRuntime;
     using Image = Vulkan::Image;

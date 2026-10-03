@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -15,7 +15,9 @@
 
 namespace Service::HID {
 
-NpadAbstractSixAxisHandler::NpadAbstractSixAxisHandler() {}
+NpadAbstractSixAxisHandler::NpadAbstractSixAxisHandler(Kernel::KernelCore& kernel_)
+    : kernel{kernel_}
+{}
 
 NpadAbstractSixAxisHandler::~NpadAbstractSixAxisHandler() = default;
 
@@ -64,8 +66,7 @@ Result NpadAbstractSixAxisHandler::UpdateSixAxisState() {
             continue;
         }
         auto& npad_entry = data->shared_memory_format->npad.npad_entry[NpadIdTypeToIndex(npad_id)];
-        UpdateSixaxisInternalState(npad_entry, data->aruid,
-                                   data->flag.enable_six_axis_sensor.As<bool>());
+        UpdateSixaxisInternalState(npad_entry, data->aruid, bool(data->flag.enable_six_axis_sensor));
     }
     return ResultSuccess;
 }
@@ -77,8 +78,7 @@ Result NpadAbstractSixAxisHandler::UpdateSixAxisState(u64 aruid) {
         return ResultSuccess;
     }
     auto& npad_entry = data->shared_memory_format->npad.npad_entry[NpadIdTypeToIndex(npad_id)];
-    UpdateSixaxisInternalState(npad_entry, data->aruid,
-                               data->flag.enable_six_axis_sensor.As<bool>());
+    UpdateSixaxisInternalState(npad_entry, data->aruid, bool(data->flag.enable_six_axis_sensor));
     return ResultSuccess;
 }
 
@@ -89,8 +89,7 @@ Result NpadAbstractSixAxisHandler::UpdateSixAxisState2(u64 aruid) {
         return ResultSuccess;
     }
     auto& npad_internal_state = aruid_data->shared_memory_format->npad.npad_entry[npad_index];
-    UpdateSixaxisInternalState(npad_internal_state, aruid,
-                               aruid_data->flag.enable_six_axis_sensor.As<bool>());
+    UpdateSixaxisInternalState(npad_internal_state, aruid, bool(aruid_data->flag.enable_six_axis_sensor));
     return ResultSuccess;
 }
 

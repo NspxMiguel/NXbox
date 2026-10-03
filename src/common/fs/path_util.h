@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -23,8 +23,11 @@ enum class EdenPath {
     KeysDir,        // Where key files are stored.
     LoadDir,        // Where cheat/mod files are stored.
     LogDir,         // Where log files are stored.
+    LosslessDir,    // Where the user-supplied Lossless Scaling library is stored.
     NANDDir,        // Where the emulated NAND is stored.
     PlayTimeDir,    // Where play time data is stored.
+    PostPresetDir,
+    PostShaderDir,  // Where user post-processing shaders are stored.
     SaveDir,        // Where save data is stored.
     ScreenshotsDir, // Where yuzu screenshots are stored.
     SDMCDir,        // Where the emulated SDMC is stored.
@@ -344,8 +347,9 @@ enum class DirectorySeparator {
 // i.e. "C:\Users\Yuzu\Documents\save.bin" becomes {"C:", "Users", "Yuzu", "Documents", "save.bin" }
 [[nodiscard]] std::vector<std::string> SplitPathComponentsCopy(std::string_view filename);
 
-// Removes trailing slash, makes all '\\' into '/', and removes duplicate '/'. Makes '/' into '\\'
-// depending if directory_separator is BackwardSlash or PlatformDefault and running on windows
+// Normalizes directory separators, removes duplicate and non-root trailing separators, and resolves
+// '.' and '..' components without traversing above the path root. Windows drive and UNC roots are
+// preserved.
 [[nodiscard]] std::string SanitizePath(
     std::string_view path,
     DirectorySeparator directory_separator = DirectorySeparator::ForwardSlash);

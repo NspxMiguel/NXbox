@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator
@@ -52,31 +52,31 @@ void Applet::UpdateSuspensionStateLocked(bool force_message) {
 
     // Signal if the focus state was changed or the process state was changed.
     if (update_requested_focus_state || was_changed || force_message) {
-        lifecycle_manager.SignalSystemEventIfNeeded();
+        lifecycle_manager.SignalSystemEventIfNeeded(context.kernel);
     }
 }
 
-void Applet::SetInteractibleLocked(bool interactible) {
-    if (is_interactible == interactible) {
+void Applet::SetInteractibleLocked(bool pad_interactible, bool touch_interactible) {
+    if (is_pad_interactible == pad_interactible && is_touch_interactible == touch_interactible) {
         return;
     }
 
-    is_interactible = interactible;
+    is_pad_interactible = pad_interactible;
+    is_touch_interactible = touch_interactible;
 
     const bool exit_requested = lifecycle_manager.GetExitRequested();
-    const bool input_enabled = interactible && !exit_requested;
+    const bool pad_enabled = pad_interactible && !exit_requested;
+    const bool touch_enabled = touch_interactible && !exit_requested;
 
-    if (applet_id == AppletId::OverlayDisplay || applet_id == AppletId::Application) {
-        LOG_DEBUG(Service_AM, "called, applet={} interactible={} exit_requested={} input_enabled={} overlay_in_foreground={}",
-                 static_cast<u32>(applet_id), interactible, exit_requested, input_enabled, overlay_in_foreground);
-    }
+    LOG_DEBUG(Service_AM, "applet={} pad={} touch={} exit_requested={}",
+              static_cast<u32>(applet_id), pad_enabled, touch_enabled, exit_requested);
 
-    hid_registration.EnableAppletToGetInput(input_enabled);
+    hid_registration.EnableAppletToGetInput(pad_enabled, touch_enabled);
 }
 
 void Applet::OnProcessTerminatedLocked() {
     is_completed = true;
-    state_changed_event.Signal();
+    state_changed_event.Signal(context.kernel);
 }
 
 } // namespace Service::AM

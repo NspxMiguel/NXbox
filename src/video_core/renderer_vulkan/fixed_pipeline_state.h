@@ -21,6 +21,8 @@ namespace Vulkan {
 using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 
 struct DynamicFeatures {
+    u32 driver_id;
+    u32 driver_version;
     bool has_extended_dynamic_state;
     bool has_extended_dynamic_state_2;
     bool has_extended_dynamic_state_2_logic_op;
@@ -31,6 +33,7 @@ struct DynamicFeatures {
     bool has_dynamic_state3_logic_op_enable;
     bool has_dynamic_state3_line_stipple_enable;
     bool has_dynamic_vertex_input;
+    bool has_color_write_enable;
     bool has_provoking_vertex;
     bool has_provoking_vertex_first_mode;
     bool has_provoking_vertex_last_mode;
@@ -208,6 +211,9 @@ struct FixedPipelineState {
         BitField<12, 2, u32> tessellation_spacing;
         BitField<14, 1, u32> tessellation_clockwise;
         BitField<15, 5, u32> patch_control_points_minus_one;
+        BitField<20, 1, u32> color_write_enable_dynamic;
+
+        BitField<21, 1, u32> attachment0_dual_source_blend;
 
         BitField<24, 4, Maxwell::PrimitiveTopology> topology;
         BitField<28, 4, Tegra::Texture::MsaaMode> msaa_mode;
@@ -228,6 +234,8 @@ struct FixedPipelineState {
     };
     std::array<u8, Maxwell::NumRenderTargets> color_formats;
 
+    u32 driver_id;
+    u32 driver_version;
     u32 alpha_test_ref;
     u32 point_size;
 

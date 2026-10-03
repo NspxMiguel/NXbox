@@ -45,7 +45,7 @@
      <x>0</x>
      <y>0</y>
      <width>1280</width>
-     <height>22</height>
+     <height>23</height>
     </rect>
    </property>
    <widget class="QMenu" name="menu_File">
@@ -111,6 +111,7 @@
      </property>
      <addaction name="action_Tree_View"/>
      <addaction name="action_Grid_View"/>
+     <addaction name="action_Carousel_View"/>
     </widget>
     <widget class="QMenu" name="menuGame_Icon_Size">
      <property name="title">
@@ -147,6 +148,7 @@
     <addaction name="action_Show_Filter_Bar"/>
     <addaction name="action_Show_Status_Bar"/>
     <addaction name="action_Show_Performance_Overlay"/>
+    <addaction name="action_Post_Processing_Shaders"/>
     <addaction name="separator"/>
     <addaction name="menu_Reset_Window_Size"/>
     <addaction name="menu_View_Debugging"/>
@@ -232,8 +234,7 @@
     </property>
     <addaction name="action_Report_Compatibility"/>
     <addaction name="action_Open_Mods_Page"/>
-    <addaction name="action_Open_Quickstart_Guide"/>
-    <addaction name="action_Open_FAQ"/>
+    <addaction name="action_Open_UserHandbook"/>
     <addaction name="separator"/>
     <addaction name="action_About"/>
     <addaction name="action_Eden_Dependencies"/>
@@ -401,30 +402,14 @@
     <string>Load/Remove &amp;Amiibo...</string>
    </property>
   </action>
-  <action name="action_Report_Compatibility">
-   <property name="enabled">
-    <bool>false</bool>
-   </property>
-   <property name="text">
-    <string>&amp;Report Compatibility</string>
-   </property>
-   <property name="visible">
-    <bool>false</bool>
-   </property>
-  </action>
   <action name="action_Open_Mods_Page">
    <property name="text">
     <string>Open &amp;Mods Page</string>
    </property>
   </action>
-  <action name="action_Open_Quickstart_Guide">
+  <action name="action_Open_UserHandbook">
    <property name="text">
-    <string>Open &amp;Quickstart Guide</string>
-   </property>
-  </action>
-  <action name="action_Open_FAQ">
-   <property name="text">
-    <string>&amp;FAQ</string>
+    <string>&amp;User Handbook</string>
    </property>
   </action>
   <action name="action_Capture_Screenshot">
@@ -618,6 +603,19 @@
    </property>
    <property name="text">
     <string>Show &amp;Performance Overlay</string>
+   </property>
+  </action>
+  <action name="action_Post_Processing_Shaders">
+   <property name="text">
+    <string>Post-Processing &amp;Shaders...</string>
+   </property>
+  </action>
+  <action name="action_Carousel_View">
+   <property name="checkable">
+    <bool>true</bool>
+   </property>
+   <property name="text">
+    <string>&amp;Carousel View</string>
    </property>
   </action>
  </widget>

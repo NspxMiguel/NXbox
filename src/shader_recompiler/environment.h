@@ -7,7 +7,7 @@
 #pragma once
 
 #include <array>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 
 #include "common/common_types.h"
 #include "shader_recompiler/program_header.h"
@@ -38,10 +38,11 @@ struct CbufWordKeyHash {
 struct HandleKey {
     u32 index, offset, shift_left;
     u32 sec_index, sec_offset, sec_shift_left;
+    u32 count;
     bool has_secondary;
     constexpr bool operator==(const HandleKey& o) const noexcept {
-        return std::tie(index, offset, shift_left, sec_index, sec_offset, sec_shift_left, has_secondary)
-            == std::tie(o.index, o.offset, o.shift_left, o.sec_index, o.sec_offset, o.sec_shift_left, o.has_secondary);
+        return std::tie(index, offset, shift_left, sec_index, sec_offset, sec_shift_left, count, has_secondary)
+            == std::tie(o.index, o.offset, o.shift_left, o.sec_index, o.sec_offset, o.sec_shift_left, o.count, o.has_secondary);
     }
 };
 struct HandleKeyHash {
@@ -50,8 +51,8 @@ struct HandleKeyHash {
         h ^= (size_t(k.shift_left) << 1);
         h ^= (size_t(k.sec_index) << 33) ^ (size_t(k.sec_offset) << 2);
         h ^= (size_t(k.sec_shift_left) << 3);
-        h ^= k.has_secondary ? 0x9e3779b97f4a7c15ULL : 0ULL;
-        return h;
+        h ^= (size_t(k.count) << 7);
+        return h ^ (k.has_secondary ? 0x9e3779b97f4a7c15ULL : 0ULL);
     }
 };
 
@@ -125,9 +126,9 @@ protected:
     u32 start_address{};
     bool is_proprietary_driver{};
 public:
-    ankerl::unordered_dense::map<CbufWordKey, u32, CbufWordKeyHash> cbuf_word_cache;
-    ankerl::unordered_dense::map<HandleKey,  u32, HandleKeyHash> handle_cache;
-    ankerl::unordered_dense::map<const IR::Inst*, ConstBufferAddr> track_cache;
+    ::Common::unordered_map<CbufWordKey, u32, CbufWordKeyHash> cbuf_word_cache;
+    ::Common::unordered_map<HandleKey,  u32, HandleKeyHash> handle_cache;
+    ::Common::unordered_map<const IR::Inst*, ConstBufferAddr> track_cache;
 };
 
 } // namespace Shader

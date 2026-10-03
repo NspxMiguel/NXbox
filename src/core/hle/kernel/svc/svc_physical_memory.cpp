@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
@@ -6,13 +6,14 @@
 
 #include "core/core.h"
 #include "core/hle/kernel/k_process.h"
+#include "core/hle/kernel/k_resource_limit.h"
 #include "core/hle/kernel/svc.h"
 
 namespace Kernel::Svc {
 
 /// Set the process heap to a given Size. It can both extend and shrink the heap.
-Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
-    LOG_TRACE(Kernel_SVC, "called, heap_size={:#X}", size);
+static Result SetHeapSizeImpl(Core::System& system, u64* out_address, u64 size) {
+    LOG_TRACE(Kernel_SVC, "called, heap_size={:#x}", size);
 
     // Validate size.
     R_UNLESS(Common::IsAligned(size, HeapSizeAlignment), ResultInvalidSize);
@@ -29,16 +30,34 @@ Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
     R_SUCCEED();
 }
 
-/// Maps memory at a desired address
-Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
-    LOG_DEBUG(Kernel_SVC, "called, addr=0x{:016X}, size={:#X}", addr, size);
+Result SetHeapSize(Core::System& system, u64* out_address, u64 size) {
+    const Result result = SetHeapSizeImpl(system, out_address, size);
+#ifdef NXBOX_UWP
+    auto& process = GetCurrentProcess(system.Kernel());
+    auto* limit = process.GetResourceLimit();
+    if (result.IsError()) {
+        LOG_ERROR(Kernel_SVC,
+                  "NXBOX MEM_SVC SetHeapSize size={:#x} result={:#x} used={:#x} limit={:#x}", size,
+                  result.raw, limit->GetCurrentValue(LimitableResource::PhysicalMemoryMax),
+                  limit->GetLimitValue(LimitableResource::PhysicalMemoryMax));
+    } else {
+        LOG_INFO(Kernel_SVC, "NXBOX MEM_SVC SetHeapSize base={:#x} size={:#x} end={:#x} result=0",
+                 *out_address, size, *out_address + size);
+    }
+#endif
+    R_RETURN(result);
+}
 
-    if (!Common::Is4KBAligned(addr)) {
-        LOG_ERROR(Kernel_SVC, "Address is not aligned to 4KB, 0x{:016X}", addr);
+/// Maps memory at a desired address
+static Result MapPhysicalMemoryImpl(Core::System& system, u64 addr, u64 size) {
+    LOG_DEBUG(Kernel_SVC, "called, addr={:#016x}, size={:#x}", addr, size);
+
+    if (!Common::IsAligned(addr, Core::Memory::YUZU_PAGESIZE)) {
+        LOG_ERROR(Kernel_SVC, "Address is not aligned to 4KB, {:#016X}", addr);
         R_THROW(ResultInvalidAddress);
     }
 
-    if (!Common::Is4KBAligned(size)) {
+    if (!Common::IsAligned(size, Core::Memory::YUZU_PAGESIZE)) {
         LOG_ERROR(Kernel_SVC, "Size is not aligned to 4KB, {:#X}", size);
         R_THROW(ResultInvalidSize);
     }
@@ -63,14 +82,14 @@ Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
 
     if (!page_table.Contains(addr, size)) {
         LOG_ERROR(Kernel_SVC,
-                  "Address is not within the address space, addr=0x{:016X}, size=0x{:016X}", addr,
+                  "Address is not within the address space, addr={:#016x}, size={:#016x}", addr,
                   size);
         R_THROW(ResultInvalidMemoryRegion);
     }
 
     if (!page_table.IsInAliasRegion(addr, size)) {
         LOG_ERROR(Kernel_SVC,
-                  "Address is not within the alias region, addr=0x{:016X}, size=0x{:016X}", addr,
+                  "Address is not within the alias region, addr={:#016x}, size={:#016x}", addr,
                   size);
         R_THROW(ResultInvalidMemoryRegion);
     }
@@ -78,16 +97,34 @@ Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
     R_RETURN(page_table.MapPhysicalMemory(addr, size));
 }
 
+Result MapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
+    const Result result = MapPhysicalMemoryImpl(system, addr, size);
+#ifdef NXBOX_UWP
+    if (result.IsError()) {
+        auto& process = GetCurrentProcess(system.Kernel());
+        auto* limit = process.GetResourceLimit();
+        LOG_ERROR(Kernel_SVC,
+                  "NXBOX MEM_SVC MapPhysicalMemory addr={:#x} size={:#x} result={:#x} "
+                  "used={:#x} limit={:#x} system_resource={:#x}",
+                  addr, size, result.raw,
+                  limit->GetCurrentValue(LimitableResource::PhysicalMemoryMax),
+                  limit->GetLimitValue(LimitableResource::PhysicalMemoryMax),
+                  process.GetTotalSystemResourceSize());
+    }
+#endif
+    R_RETURN(result);
+}
+
 /// Unmaps memory previously mapped via MapPhysicalMemory
 Result UnmapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
-    LOG_DEBUG(Kernel_SVC, "called, addr=0x{:016X}, size={:#X}", addr, size);
+    LOG_DEBUG(Kernel_SVC, "called, addr={:#016x}, size={:#x}", addr, size);
 
-    if (!Common::Is4KBAligned(addr)) {
-        LOG_ERROR(Kernel_SVC, "Address is not aligned to 4KB, 0x{:016X}", addr);
+    if (!Common::IsAligned(addr, Core::Memory::YUZU_PAGESIZE)) {
+        LOG_ERROR(Kernel_SVC, "Address is not aligned to 4KB, {:#016X}", addr);
         R_THROW(ResultInvalidAddress);
     }
 
-    if (!Common::Is4KBAligned(size)) {
+    if (!Common::IsAligned(size, Core::Memory::YUZU_PAGESIZE)) {
         LOG_ERROR(Kernel_SVC, "Size is not aligned to 4KB, {:#X}", size);
         R_THROW(ResultInvalidSize);
     }
@@ -112,14 +149,14 @@ Result UnmapPhysicalMemory(Core::System& system, u64 addr, u64 size) {
 
     if (!page_table.Contains(addr, size)) {
         LOG_ERROR(Kernel_SVC,
-                  "Address is not within the address space, addr=0x{:016X}, size=0x{:016X}", addr,
+                  "Address is not within the address space, addr={:#016x}, size={:#016x}", addr,
                   size);
         R_THROW(ResultInvalidMemoryRegion);
     }
 
     if (!page_table.IsInAliasRegion(addr, size)) {
         LOG_ERROR(Kernel_SVC,
-                  "Address is not within the alias region, addr=0x{:016X}, size=0x{:016X}", addr,
+                  "Address is not within the alias region, addr={:#016x}, size={:#016x}", addr,
                   size);
         R_THROW(ResultInvalidMemoryRegion);
     }

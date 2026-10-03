@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2018 yuzu Emulator Project
@@ -51,24 +51,41 @@ StandardVmCallbacks::StandardVmCallbacks(System& system_, const CheatProcessMeta
 
 StandardVmCallbacks::~StandardVmCallbacks() = default;
 
+Kernel::KProcess* StandardVmCallbacks::GetProcess() const {
+    if (cached_process != nullptr && cached_process_id == metadata.process_id) {
+        return cached_process;
+    }
+
+    auto process = system.Kernel().GetProcessByProcessId(metadata.process_id);
+    cached_process = process.IsNull() ? nullptr : process.GetPointerUnsafe();
+    cached_process_id = metadata.process_id;
+    return cached_process;
+}
+
 void StandardVmCallbacks::MemoryReadUnsafe(VAddr address, void* data, u64 size) {
+    auto* const process = this->GetProcess();
+
     // Return zero on invalid address
-    if (!IsAddressInRange(address) || !system.ApplicationMemory().IsValidVirtualAddress(address)) {
+    if (process == nullptr || !IsAddressInRange(address) ||
+        !process->GetMemory().IsValidVirtualAddress(address)) {
         std::memset(data, 0, size);
         return;
     }
 
-    system.ApplicationMemory().ReadBlock(address, data, size);
+    process->GetMemory().ReadBlock(address, data, size);
 }
 
 void StandardVmCallbacks::MemoryWriteUnsafe(VAddr address, const void* data, u64 size) {
+    auto* const process = this->GetProcess();
+
     // Skip invalid memory write address
-    if (!IsAddressInRange(address) || !system.ApplicationMemory().IsValidVirtualAddress(address)) {
+    if (process == nullptr || !IsAddressInRange(address) ||
+        !process->GetMemory().IsValidVirtualAddress(address)) {
         return;
     }
 
-    if (system.ApplicationMemory().WriteBlock(address, data, size)) {
-        Core::InvalidateInstructionCacheRange(system.ApplicationProcess(), address, size);
+    if (process->GetMemory().WriteBlock(address, data, size)) {
+        Core::InvalidateInstructionCacheRange(process, address, size);
     }
 }
 
@@ -91,17 +108,17 @@ u64 StandardVmCallbacks::HidKeysDown() {
 }
 
 void StandardVmCallbacks::PauseProcess() {
-    if (system.ApplicationProcess()->IsSuspended()) {
-        return;
+    auto* const process = this->GetProcess();
+    if (process != nullptr && !process->IsSuspended()) {
+        process->SetActivity(system.Kernel(), Kernel::Svc::ProcessActivity::Paused);
     }
-    system.ApplicationProcess()->SetActivity(Kernel::Svc::ProcessActivity::Paused);
 }
 
 void StandardVmCallbacks::ResumeProcess() {
-    if (!system.ApplicationProcess()->IsSuspended()) {
-        return;
+    auto* const process = this->GetProcess();
+    if (process != nullptr && process->IsSuspended()) {
+        process->SetActivity(system.Kernel(), Kernel::Svc::ProcessActivity::Runnable);
     }
-    system.ApplicationProcess()->SetActivity(Kernel::Svc::ProcessActivity::Runnable);
 }
 
 void StandardVmCallbacks::DebugLog(u8 id, u64 value) {

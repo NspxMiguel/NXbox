@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
@@ -7,7 +7,9 @@
 #pragma once
 
 #include <thread>
+#include <chrono>
 
+#include "common/steady_clock.h"
 #include "common/polyfill_thread.h"
 #include "common/vector_math.h"
 #include "input_common/input_engine.h"
@@ -93,24 +95,27 @@ public:
 
     void ReleaseAllButtons();
 
+    /// @brief Notifies we changed something about the mouse state and we must update
+    void NotifyChanged();
+
     std::vector<Common::ParamPackage> GetInputDevices() const override;
     AnalogMapping GetAnalogMappingForDevice(const Common::ParamPackage& params) override;
     Common::Input::ButtonNames GetUIName(const Common::ParamPackage& params) const override;
 
 private:
-    void UpdateStickInput();
-    void UpdateMotionInput();
+    void UpdateStickInput(Common::SteadyClock::time_point timestamp);
+    void UpdateMotionInput(Common::SteadyClock::time_point timestamp);
     bool IsMousePanningEnabled();
 
     Common::Input::ButtonNames GetUIButtonName(const Common::ParamPackage& params) const;
 
-    Common::Vec2<int> mouse_origin;
-    Common::Vec2<int> last_mouse_position;
-    Common::Vec2<float> last_mouse_change;
-    Common::Vec3<float> last_motion_change;
-    Common::Vec2<int> wheel_position;
+    Common::Vec<int, 2> mouse_origin;
+    Common::Vec<int, 2> last_mouse_position;
+    Common::Vec<float, 2> last_mouse_change;
+    Common::Vec<float, 3> last_motion_change;
+    Common::Vec<int, 2> wheel_position;
+    Common::SteadyClock::time_point last_notify_timestamp{};
     bool button_pressed = false;
-    std::jthread update_thread;
 };
 
 } // namespace InputCommon

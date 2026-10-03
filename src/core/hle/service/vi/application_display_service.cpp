@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: Copyright 2025 Eden Emulator Project
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
@@ -16,6 +16,7 @@
 #include "core/hle/service/vi/manager_display_service.h"
 #include "core/hle/service/vi/system_display_service.h"
 #include "core/hle/service/vi/vi_results.h"
+#include "service_creator.h"
 
 namespace Service::VI {
 
@@ -41,6 +42,7 @@ IApplicationDisplayService::IApplicationDisplayService(Core::System& system_,
         {2031, C<&IApplicationDisplayService::DestroyStrayLayer>, "DestroyStrayLayer"},
         {2101, C<&IApplicationDisplayService::SetLayerScalingMode>, "SetLayerScalingMode"},
         {2102, C<&IApplicationDisplayService::ConvertScalingMode>, "ConvertScalingMode"},
+        {2103, C<&IApplicationDisplayService::Cmd2103>, "Cmd2103"},
         {2450, C<&IApplicationDisplayService::GetIndirectLayerImageMap>, "GetIndirectLayerImageMap"},
         {2451, nullptr, "GetIndirectLayerImageCropMap"},
         {2460, C<&IApplicationDisplayService::GetIndirectLayerImageRequiredMemoryInfo>, "GetIndirectLayerImageRequiredMemoryInfo"},
@@ -144,7 +146,7 @@ Result IApplicationDisplayService::GetDisplayResolution(Out<s64> out_width, Out<
 }
 
 Result IApplicationDisplayService::SetLayerScalingMode(NintendoScaleMode scale_mode, u64 layer_id) {
-    LOG_DEBUG(Service_VI, "called. scale_mode={}, unknown=0x{:016X}", scale_mode, layer_id);
+    LOG_DEBUG(Service_VI, "called. scale_mode={}, unknown={:#016x}", scale_mode, layer_id);
 
     if (scale_mode > NintendoScaleMode::PreserveAspectRatio) {
         LOG_ERROR(Service_VI, "Invalid scaling mode provided.");
@@ -299,6 +301,11 @@ Result IApplicationDisplayService::ConvertScalingMode(Out<ConvertedScaleMode> ou
         LOG_ERROR(Service_VI, "Invalid scaling mode specified, mode={}", mode);
         R_THROW(VI::ResultOperationFailed);
     }
+}
+
+Result IApplicationDisplayService::Cmd2103(Out<std::array<u8, 0x18>> out_unk18) {
+    LOG_WARNING(Service_VI, "(stubbed)");
+    R_SUCCEED();
 }
 
 Result IApplicationDisplayService::GetIndirectLayerImageMap(

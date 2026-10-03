@@ -59,7 +59,7 @@ void NVDRV::Ioctl1(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
     const auto fd = rp.Pop<DeviceFD>();
     const auto command = rp.PopRaw<Ioctl>();
-    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl=0x{:08X}", fd, command.raw);
+    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl={:#08x}", fd, command.raw);
 
     if (!is_initialized) {
         ServiceError(ctx, NvResult::NotInitialized);
@@ -85,7 +85,7 @@ void NVDRV::Ioctl2(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
     const auto fd = rp.Pop<DeviceFD>();
     const auto command = rp.PopRaw<Ioctl>();
-    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl=0x{:08X}", fd, command.raw);
+    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl={:#08x}", fd, command.raw);
 
     if (!is_initialized) {
         ServiceError(ctx, NvResult::NotInitialized);
@@ -112,7 +112,7 @@ void NVDRV::Ioctl3(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
     const auto fd = rp.Pop<DeviceFD>();
     const auto command = rp.PopRaw<Ioctl>();
-    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl=0x{:08X}", fd, command.raw);
+    LOG_DEBUG(Service_NVDRV, "called fd={}, ioctl={:#08x}", fd, command.raw);
 
     if (!is_initialized) {
         ServiceError(ctx, NvResult::NotInitialized);
@@ -199,7 +199,7 @@ void NVDRV::QueryEvent(HLERequestContext& ctx) {
         IPC::ResponseBuilder rb{ctx, 3, 1};
         rb.Push(ResultSuccess);
         auto& readable_event = event->GetReadableEvent();
-        rb.PushCopyObjects(readable_event);
+        rb.PushCopyObjects(ctx, readable_event);
         rb.PushEnum(NvResult::Success);
     } else {
         LOG_ERROR(Service_NVDRV, "Invalid event request!");
@@ -212,7 +212,7 @@ void NVDRV::QueryEvent(HLERequestContext& ctx) {
 void NVDRV::SetAruid(HLERequestContext& ctx) {
     IPC::RequestParser rp{ctx};
     pid = rp.Pop<u64>();
-    LOG_WARNING(Service_NVDRV, "(STUBBED) called, pid={:#X}", pid);
+    LOG_WARNING(Service_NVDRV, "(STUBBED) called, pid={:#x}", pid);
 
     IPC::ResponseBuilder rb{ctx, 3};
     rb.Push(ResultSuccess);

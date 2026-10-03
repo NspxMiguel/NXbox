@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -29,22 +32,14 @@ public:
 
 private:
     void LinkDeferred();
-    MultiWaitHolder* WaitSignaled();
+    MultiWaitHolder* WaitSignaled(std::stop_token stop_token);
     void Process(MultiWaitHolder* holder);
     bool WaitAndProcessImpl();
     void LoopProcess();
-
-private:
     void OnWakeupEvent(MultiWaitHolder* holder);
     void OnProcessEvent(ProcessHolder* holder);
-
-private:
     void DestroyAppletProcessHolderLocked(ProcessHolder* holder);
 
-private:
-    void ThreadFunc();
-
-private:
     // System reference and context.
     Core::System& m_system;
     KernelHelpers::ServiceContext m_context;
@@ -67,8 +62,7 @@ private:
     MultiWait m_deferred_wait_list;
 
     // Processing thread.
-    std::thread m_thread{};
-    std::stop_source m_stop_source{};
+    std::jthread m_thread{};
 };
 
 } // namespace Service::AM

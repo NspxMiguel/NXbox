@@ -1,7 +1,11 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2021 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/settings.h"
+#include "common/assert.h"
 #include "hid_core/frontend/emulated_console.h"
 #include "hid_core/frontend/input_converter.h"
 
@@ -96,6 +100,7 @@ void EmulatedConsole::ReloadInput() {
     motion.gyro = emulated_motion.GetGyroscope();
     motion.rotation = emulated_motion.GetRotations();
     motion.orientation = emulated_motion.GetOrientation();
+    motion.quaternion = emulated_motion.GetQuaternion();
     motion.is_at_rest = !emulated_motion.IsMoving(motion_sensitivity);
 
     // Unique index for identifying touch device source
@@ -165,12 +170,12 @@ void EmulatedConsole::SetMotion(const Common::Input::CallbackStatus& callback) {
     auto& emulated = console.motion_values.emulated;
 
     raw_status = TransformToMotion(callback);
-    emulated.SetAcceleration(Common::Vec3f{
+    emulated.SetAcceleration(Common::Vec<f32, 3>{
         raw_status.accel.x.value,
         raw_status.accel.y.value,
         raw_status.accel.z.value,
     });
-    emulated.SetGyroscope(Common::Vec3f{
+    emulated.SetGyroscope(Common::Vec<f32, 3>{
         raw_status.gyro.x.value,
         raw_status.gyro.y.value,
         raw_status.gyro.z.value,
@@ -308,17 +313,15 @@ void EmulatedConsole::TriggerOnChange(ConsoleTriggerType type) {
 
 int EmulatedConsole::SetCallback(ConsoleUpdateCallback update_callback) {
     std::scoped_lock lock{callback_mutex};
+    ++last_callback_key;
     callback_list.insert_or_assign(last_callback_key, std::move(update_callback));
-    return last_callback_key++;
+    return last_callback_key;
 }
 
 void EmulatedConsole::DeleteCallback(int key) {
     std::scoped_lock lock{callback_mutex};
-    const auto& iterator = callback_list.find(key);
-    if (iterator == callback_list.end()) {
-        LOG_ERROR(Input, "Tried to delete non-existent callback {}", key);
-        return;
-    }
-    callback_list.erase(iterator);
+    auto const it = callback_list.find(key);
+    ASSERT_MSG(it != callback_list.end(), "Tried to delete non-existent callback {}", key);
+    callback_list.erase(it);
 }
 } // namespace Core::HID

@@ -13,7 +13,8 @@
 #include <set>
 #include <tuple>
 
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 
 #include "dynarmic/backend/block_range_information.h"
 #include "dynarmic/backend/x64/a32_jitstate.h"
@@ -112,7 +113,8 @@ public:
 
     // Terminal instruction emitters
     void EmitSetUpperLocationDescriptor(IR::LocationDescriptor new_location, IR::LocationDescriptor old_location);
-    void EmitTerminal(IR::Terminal terminal, IR::LocationDescriptor initial_location, bool is_single_step) noexcept override;
+    bool EmitLeafTerminal(IR::Term::LeafTerminal const& terminal, IR::LocationDescriptor initial_location, bool is_single_step) noexcept override;
+    bool EmitTerminal(IR::Term::Terminal const& terminal, IR::LocationDescriptor initial_location, bool is_single_step) noexcept override;
 
     // Patching
     void Unpatch(const IR::LocationDescriptor& target_desc) override;
@@ -125,11 +127,11 @@ public:
     RegAlloc reg_alloc; //reusable reg alloc
     BlockRangeInformation<u32> block_ranges;
     std::array<FastDispatchEntry, fast_dispatch_table_size> fast_dispatch_table;
-    ankerl::unordered_dense::map<u64, FastmemPatchInfo> fastmem_patch_info;
-    ankerl::unordered_dense::map<std::tuple<bool, size_t, int, int>, void (*)()> read_fallbacks;
-    ankerl::unordered_dense::map<std::tuple<bool, size_t, int, int>, void (*)()> write_fallbacks;
-    ankerl::unordered_dense::map<std::tuple<bool, size_t, int, int>, void (*)()> exclusive_write_fallbacks;
-    ankerl::unordered_dense::set<DoNotFastmemMarker> do_not_fastmem;
+    ::Common::unordered_map<u64, FastmemPatchInfo> fastmem_patch_info;
+    ::Common::unordered_map<std::tuple<bool, size_t, int, int>, void (*)()> read_fallbacks;
+    ::Common::unordered_map<std::tuple<bool, size_t, int, int>, void (*)()> write_fallbacks;
+    ::Common::unordered_map<std::tuple<bool, size_t, int, int>, void (*)()> exclusive_write_fallbacks;
+    ::Common::unordered_set<DoNotFastmemMarker> do_not_fastmem;
     boost::container::stable_vector<Xbyak::Label> shared_labels;
     void (*memory_read_128)() = nullptr;   // Dummy
     void (*memory_write_128)() = nullptr;  // Dummy

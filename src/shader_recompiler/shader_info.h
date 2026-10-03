@@ -209,6 +209,7 @@ struct TextureDescriptor {
     TextureType type;
     bool is_depth;
     bool is_multisample;
+    bool is_integer;
     bool has_secondary;
     u32 cbuf_index;
     u32 cbuf_offset;
@@ -251,6 +252,7 @@ struct Info {
     bool uses_is_helper_invocation{};
     bool uses_subgroup_invocation_id{};
     bool uses_subgroup_shuffles{};
+    bool uses_quad_shuffles{};
     std::array<bool, 30> uses_patches{};
 
     std::array<Interpolation, 32> interpolation{};

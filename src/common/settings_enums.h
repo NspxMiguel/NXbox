@@ -92,14 +92,14 @@ struct EnumMetadata {
 // AudioEngine must be specified discretely due to having existing but slightly different
 // canonicalizations
 // TODO (lat9nq): Remove explicit definition of AudioEngine/sink_id
-enum class AudioEngine : u32 { Auto, Cubeb, Sdl3, Null, Oboe, XAudio2, };
+enum class AudioEngine : u32 { Auto, Cubeb, Sdl3, Null, XAudio2, };
 template<>
 inline std::vector<std::pair<std::string_view, AudioEngine>> EnumMetadata<AudioEngine>::Canonicalizations() {
     return {
         {"auto", AudioEngine::Auto},
         {"cubeb", AudioEngine::Cubeb},
         {"sdl3", AudioEngine::Sdl3},
-        {"null", AudioEngine::Null}, {"oboe", AudioEngine::Oboe},
+        {"null", AudioEngine::Null},
         {"xaudio2", AudioEngine::XAudio2},
     };
 }
@@ -129,37 +129,38 @@ ENUM(TimeZone, Auto, Default, Cet, Cst6Cdt, Cuba, Eet, Egypt, Eire, Est, Est5Edt
     GmtPlusZero, GmtMinusZero, GmtZero, Greenwich, Hongkong, Hst, Iceland, Iran, Israel, Jamaica,
     Japan, Kwajalein, Libya, Met, Mst, Mst7Mdt, Navajo, Nz, NzChat, Poland, Portugal, Prc, Pst8Pdt,
     Roc, Rok, Singapore, Turkey, Uct, Universal, Utc, WSu, Wet, Zulu);
-ENUM(AnisotropyMode, Automatic, Default, X2, X4, X8, X16, X32, X64, None);
+ENUM(AnisotropyMode, Automatic, Default, X2, X4, X8, X16);
 ENUM(AstcDecodeMode, Cpu, Gpu, CpuAsynchronous);
 ENUM(AstcRecompression, Uncompressed, Bc1, Bc3);
 ENUM(FramePacingMode, Target_Auto, Target_30, Target_60, Target_90, Target_120);
 ENUM(VSyncMode, Immediate, Mailbox, Fifo, FifoRelaxed);
 ENUM(VramUsageMode, Conservative, Aggressive);
 ENUM(RendererBackend, OpenGL_GLSL, Vulkan, Null, OpenGL_GLASM, OpenGL_SPIRV);
-ENUM(GpuAccuracy, Low, Medium, High);
+ENUM(GpuAccuracy, Low, High);
 ENUM(DmaAccuracy, Default, Unsafe, Safe);
+ENUM(GpuFenceBehavior, Default, Immediate, Balanced, Accurate);
 ENUM(CpuBackend, Dynarmic, Nce);
 ENUM(CpuAccuracy, Auto, Accurate, Unsafe, Paranoid, Debugging);
-ENUM(CpuClock, Off, Boost, Fast)
+ENUM(CpuClock, Normal, Boost, Overclock)
 ENUM(MemoryLayout, Memory_4Gb, Memory_6Gb, Memory_8Gb, Memory_10Gb, Memory_12Gb);
 ENUM(ConfirmStop, Ask_Always, Ask_Based_On_Game, Ask_Never);
 ENUM(FullscreenMode, Borderless, Exclusive);
 ENUM(NvdecEmulation, Off, Cpu, Gpu);
 ENUM(ResolutionSetup, Res1_4X, Res1_2X, Res3_4X, Res1X, Res5_4X, Res3_2X, Res2X, Res3X, Res4X, Res5X, Res6X, Res7X, Res8X);
-ENUM(ScalingFilter, NearestNeighbor, Bilinear, Bicubic, Gaussian, Lanczos, ScaleForce, Fsr, Area, ZeroTangent, BSpline, Mitchell, Spline1, Mmpx, Sgsr, SgsrEdge, MaxEnum);
-ENUM(AntiAliasing, None, Fxaa, Smaa, MaxEnum);
+ENUM(ScalingFilter, NearestNeighbor, Bilinear, Bicubic, Gaussian, Lanczos, ScaleForce, Fsr, Area, ZeroTangent, BSpline, Mitchell, Spline1, Mmpx, Sgsr, SgsrEdge);
+ENUM(AntiAliasing, None, Fxaa, Smaa);
 ENUM(AspectRatio, R16_9, R4_3, R21_9, R16_10, Stretch);
 ENUM(ConsoleMode, Handheld, Docked);
-ENUM(AppletMode, HLE, LLE);
+ENUM(AppletMode, HLE, LLE, Disabled);
 ENUM(SpirvOptimizeMode, Never, OnLoad, Always);
-ENUM(GpuOverclock, Normal, Medium, High)
+ENUM(GpuClock, Normal, Boost, Overclock)
 ENUM(GpuUnswizzleSize, VerySmall, Small, Normal, Large, VeryLarge)
 ENUM(GpuUnswizzle, VeryLow, Low, Normal, Medium, High)
 ENUM(GpuUnswizzleChunk, VeryLow, Low, Normal, Medium, High)
 ENUM(TemperatureUnits, Celsius, Fahrenheit)
 ENUM(ExtendedDynamicState, Disabled, EDS1, EDS2, EDS3);
 ENUM(GpuLogLevel, Off, Errors, Standard, Verbose, All)
-ENUM(GameListMode, TreeView, GridView);
+ENUM(GameListMode, TreeView, GridView, CarouselView);
 ENUM(SpeedMode, Standard, Turbo, Slow);
 
 template <typename Type>

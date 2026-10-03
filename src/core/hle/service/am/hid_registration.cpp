@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2024 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
@@ -12,7 +15,10 @@ namespace Service::AM {
 
 HidRegistration::HidRegistration(Core::System& system, Process& process) : m_process(process) {
     m_hid_server = system.ServiceManager().GetService<HID::IHidServer>("hid", true);
+    this->RegisterCurrentProcess();
+}
 
+void HidRegistration::RegisterCurrentProcess() {
     if (m_process.IsInitialized()) {
         m_hid_server->GetResourceManager()->RegisterAppletResourceUserId(m_process.GetProcessId(),
                                                                          true);
@@ -30,12 +36,17 @@ HidRegistration::~HidRegistration() {
     }
 }
 
-void HidRegistration::EnableAppletToGetInput(bool enable) {
-    if (m_process.IsInitialized()) {
-        m_hid_server->GetResourceManager()->SetAruidValidForVibration(m_process.GetProcessId(),
-                                                                      enable);
-        m_hid_server->GetResourceManager()->EnableInput(m_process.GetProcessId(), enable);
-    }
+void HidRegistration::EnableAppletToGetInput(bool enable_pad, bool enable_touch) {
+    if (!m_process.IsInitialized())
+        return;
+
+    const auto resource_manager = m_hid_server->GetResourceManager();
+    const u64 aruid = m_process.GetProcessId();
+
+    resource_manager->EnablePadInput(aruid, enable_pad);
+    resource_manager->EnableTouchScreen(aruid, enable_touch);
+
+    resource_manager->SetAruidValidForVibration(aruid, enable_pad);
 }
 
 } // namespace Service::AM

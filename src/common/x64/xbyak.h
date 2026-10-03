@@ -22,10 +22,11 @@
 #endif
 
 // You must ensure this matches with src/common/x64/xbyak.h on root dir
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
+#include "common/container/unordered_set.h"
 #include <boost/unordered_map.hpp>
-#define XBYAK_STD_UNORDERED_SET ankerl::unordered_dense::set
-#define XBYAK_STD_UNORDERED_MAP ankerl::unordered_dense::map
+#define XBYAK_STD_UNORDERED_SET ::Common::unordered_set
+#define XBYAK_STD_UNORDERED_MAP ::Common::unordered_map
 #define XBYAK_STD_UNORDERED_MULTIMAP boost::unordered_multimap
 #include <xbyak/xbyak.h>
 #include <xbyak/xbyak_util.h>
@@ -268,8 +269,8 @@ constexpr bool IsWithin2G(uintptr_t ref, uintptr_t target) noexcept {
 }
 
 template <typename T>
+    requires std::is_pointer_v<T>
 inline void CallFarFunction(Xbyak::CodeGenerator& code, const T f) {
-    static_assert(std::is_pointer_v<T>, "Argument must be a (function) pointer.");
     uintptr_t addr = uintptr_t(f);
     if (IsWithin2G(uintptr_t(code.getCurr()), addr)) {
         code.call(f);

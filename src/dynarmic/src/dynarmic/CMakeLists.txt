@@ -363,7 +363,7 @@ elseif (APPLE)
             backend/exception_handler_macos_mig.c
         )
     endif()
-elseif (UNIX AND NOT PLATFORM_HAIKU)
+elseif (UNIX AND NOT HAIKUOS)
     # Haiku lacks <ucontext.h>
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
         target_link_libraries(dynarmic PRIVATE rt)
@@ -387,7 +387,6 @@ set_target_properties(dynarmic PROPERTIES
 
 target_compile_options(dynarmic PRIVATE ${DYNARMIC_CXX_FLAGS})
 
-target_link_libraries(dynarmic PRIVATE unordered_dense::unordered_dense)
 target_link_libraries(dynarmic PUBLIC fmt::fmt common)
 
 if (BOOST_NO_HEADERS)

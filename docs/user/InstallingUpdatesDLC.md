@@ -4,11 +4,11 @@ Use this guide when you want to install Updates or DLC for your games in Eden.
 
 <aside>
 
-***NOTE***: This applies to separate Update/DLC files, not “merged” NSP/XCI’s which include the base game and Updates/DLC applied on top of them in a single file.  These files work in Eden, but would not require the following steps.
+***NOTE***: This applies to separate Update/DLC files, not "merged" NSP/XCI's which include the base game and Updates/DLC applied on top of them in a single file.  These files work in Eden, but would not require the following steps.
 
 </aside>
 
-**Click [Here](https://evilperson1337.notion.site/Working-with-Updates-DLC-in-Eden-2b057c2edaf681dfb65dfc4dd96980c0) for a version of this guide with images & visual elements.**
+**[See here](https://evilperson1337.notion.site/Working-with-Updates-DLC-in-Eden-2b057c2edaf681dfb65dfc4dd96980c0) for an illustrated guide.**
 
 ---
 

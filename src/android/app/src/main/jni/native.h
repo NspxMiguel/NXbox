@@ -4,9 +4,10 @@
 // SPDX-FileCopyrightText: Copyright 2023 yuzu Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <optional>
+
 #include <android/native_window_jni.h>
 #include "common/android/applets/software_keyboard.h"
-#include "common/detached_tasks.h"
 #include "core/core.h"
 #include "core/file_sys/registered_cache.h"
 #include "core/hle/service/acc/profile_manager.h"
@@ -45,6 +46,7 @@ public:
     void HaltEmulation();
     void RunEmulation();
     void ShutdownEmulation();
+    void RequestDiskShaderCacheReload(u64 program_id);
 
     const Core::PerfStatsResults& PerfStats();
     int ShadersBuilding();
@@ -66,6 +68,7 @@ private:
     static void LoadDiskCacheProgress(VideoCore::LoadCallbackStage stage, int progress, int max);
     static void OnEmulationStopped(Core::SystemResultStatus result);
     static void ChangeProgram(std::size_t program_index);
+    void ReloadDiskShaderCache(u64 program_id);
 
 private:
     // Window management
@@ -75,7 +78,6 @@ private:
     // Core emulation
     Core::System m_system;
     InputCommon::InputSubsystem m_input_subsystem;
-    Common::DetachedTasks m_detached_tasks;
     Core::PerfStatsResults m_perf_stats{};
     int m_shaders_building{0};
     std::shared_ptr<FileSys::VfsFilesystem> m_vfs;
@@ -85,6 +87,7 @@ private:
     Common::Android::SoftwareKeyboard::AndroidKeyboard* m_software_keyboard{};
     std::unique_ptr<FileSys::ManualContentProvider> m_manual_provider;
     int m_applet_id{1};
+    std::optional<u64> m_pending_shader_cache_title;
 
     // GPU driver parameters
     std::shared_ptr<Common::DynamicLibrary> m_vulkan_library;
@@ -95,4 +98,5 @@ private:
 
     // Program index for next boot
     std::atomic<s32> m_next_program_index = -1;
+    std::atomic<u64> m_next_program_id = 0;
 };

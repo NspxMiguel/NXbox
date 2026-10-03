@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="MissingTranslation">
 
-    <string name="app_disclaimer">本软件可以运行Nintendo Switch游戏主机的游戏，但自身并不包含任何游戏或密钥。<br /><br />请于开始之前选定位于你的设备存储空间中的<![CDATA[<b>prod.keys</b>]]>。<br /><br /><![CDATA[<a href=\"https://yuzu-mirror.github.io/help/quickstart\">了解更多</a>]]></string>
+    <string name="app_disclaimer">本软件可以运行用于 Nintendo Switch 游戏机的游戏。不包含任何游戏或密钥。<br /><br />在您开始之前, 请定位您设备存储上的 <![CDATA[<b> prod.keys </b>]]> 文件。<br /><br /><![CDATA[<a href=\"https://git.eden-emu.dev/eden-emu/eden/src/branch/master/docs/user/QuickStart.md\">了解更多</a>]]></string>
     <string name="notice_notification_channel_name">错误与注意事项</string>
     <string name="notice_notification_channel_description">当发生错误时显示通知。</string>
     <string name="notification_permission_not_granted">未授予通知权限！</string>
@@ -29,8 +29,8 @@
     <string name="overlay_auto_hide">触控叠加层自动隐藏</string>
     <string name="overlay_auto_hide_description">在指定时间内未进行任何操作后，自动隐藏触控叠加层。</string>
     <string name="enable_input_overlay_auto_hide">启用触控叠加层自动隐藏</string>
-    <string name="hide_overlay_on_controller_input">使用控制器时隐藏触控叠加层</string>
-    <string name="hide_overlay_on_controller_input_description">在使用实体控制器时自动隐藏触控叠加层，而当控制器断开时触控叠加层则会重新显现。</string>
+    <string name="hide_overlay_on_controller_input">当使用控制器控制输入时隐藏触控叠加层</string>
+    <string name="hide_overlay_on_controller_input_description">在使用实体控制器时自动隐藏触控叠加层，而当控制器断开连接时，触控叠加层则会重新显现。</string>
     <string name="invert_confirm_back_controller_buttons">切换“确认/返回”控制器按钮功能</string>
     <string name="invert_confirm_back_controller_buttons_description">在与本应用的界面交互时，交换 Android 的“确认”与“返回”按钮的处理方式，以匹配 Switch 和 Xbox 的风格。</string>
 
@@ -67,7 +67,7 @@
     <string name="show_shaders_building">显示着色器编译信息</string>
     <string name="show_shaders_building_description">显示当前正在编译的着色器数量</string>
     <string name="pipeline_worker_cores">管线工作线程</string>
-    <string name="pipeline_worker_cores_description">管理用于构建 Vulkan 管线的核心数量，数值越高则管线编译性能越好，但温度也会随之升高。</string>
+    <string name="pipeline_worker_cores_description">管理用于构建 Vulkan 管线的核心数量，较高的值可提升管线编译性能，但温度也会随之升高。</string>
     <string name="overlay_position">叠加层位置</string>
     <string name="overlay_position_description">选择叠加层在屏幕上显示的位置</string>
     <string name="overlay_position_top_left">左上</string>
@@ -97,7 +97,7 @@
     <string name="buffer_reorder_disable_description">勾选时，禁用映射内存上传的重排序功能，允许将上传与特定绘制关联。在某些情况下可能会降低性能。</string>
 
     <string name="use_sync_core">同步核心速度</string>
-    <string name="use_sync_core_description">将核心速度与最大速度百分比同步，在不改变游戏实际速度的情况下提高性能。</string>
+    <string name="use_sync_core_description">将核心时钟周期速度与最大速度百分比同步，从而在不改变游戏实际速度的情况下提升性能。</string>
     <string name="cpuopt_unsafe_host_mmu">启用主机 MMU 模拟</string>
     <string name="cpuopt_unsafe_host_mmu_description">此优化可加速来宾程序的内存访问。启用后，来宾内存读取/写入将直接在内存中执行并利用主机的 MMU。禁用此功能将强制所有内存访问使用软件 MMU 模拟。</string>
     <string name="debug_knobs">调试开关</string>
@@ -106,7 +106,7 @@
 
     <!-- NVDEC Emulation -->
     <string name="nvdec_emulation">NVDEC模拟</string>
-    <string name="nvdec_emulation_description">播放过场与开场动画期间的视频解码处理方式（NVDEC）。</string>
+    <string name="nvdec_emulation_description">如果在过场动画中出现崩溃就切换为 CPU。</string>
     <string name="nvdec_emulation_none">禁用</string>
 
     <!-- Optimize SPIRV output -->
@@ -185,7 +185,7 @@
     <string name="multiplayer_preferred_game_name">首选游戏</string>
     <string name="multiplayer_lobby_type">游戏大厅类型</string>
     <string name="multiplayer_room_name_error">长度需为3-20个字符</string>
-    <string name="multiplayer_required">必填</string>
+    <string name="multiplayer_required">需要</string>
     <string name="multiplayer_token_required">需要Web令牌，请前往高级设置 -> 系统 -> 网络</string>
     <string name="multiplayer_ip_error">IP格式无效</string>
     <string name="multiplayer_username_error">必须为4至20个字符，且仅包含字母、数字、点号、连字符、下划线和空格</string>
@@ -248,7 +248,7 @@
     <string name="install_prod_keys">安装 prod.keys 文件</string>
     <string name="install_prod_keys_description">需要密钥文件来解密游戏</string>
     <string name="install_prod_keys_warning">跳过添加密钥文件？</string>
-    <string name="install_prod_keys_warning_description">对于商业游戏，需要有效的密钥文件才能运行。如果没有密钥文件，将只能运行自制软件。</string>
+    <string name="install_prod_keys_warning_description">模拟零售版游戏需要有效的密钥。如果选择继续，仅有自制软件可以正常运行。</string>
     <string name="install_prod_keys_warning_help">https://yuzu-mirror.github.io/help/quickstart/#guide-introduction</string>
     <string name="install_firmware_warning">跳过添加固件？</string>
     <string name="emulator_data">设置模拟器数据</string>
@@ -287,11 +287,92 @@
     <string name="warning_skip">跳过</string>
     <string name="warning_cancel">取消</string>
     <string name="install_amiibo_keys">安装 Amiibo 密钥文件</string>
-    <string name="install_amiibo_keys_description">在遊戏中使用 Amiibo 时必需</string>
+    <string name="install_amiibo_keys_description">在遊戏中使用 Amiibo 时需要</string>
     <string name="gpu_driver_fetcher">GPU驱动获取器</string>
     <string name="gpu_driver_manager">GPU 驱动管理器</string>
     <string name="install_gpu_driver_description">安装替代的驱动程序以获得更好的性能和精度</string>
-    <string name="advanced_settings">高级选项</string>
+    <string name="post_processing">后处理效果</string>
+    <string name="post_processing_description">在渲染完成后应用 ReShade FX 效果</string>
+    <string name="post_processing_per_game_description">配置此游戏的效果链</string>
+    <string name="post_processing_add">添加效果</string>
+    <string name="post_processing_remove">移除</string>
+    <string name="post_processing_open_list">打开列表</string>
+    <string name="post_processing_close_list">关闭列表</string>
+    <string name="post_processing_remove_all">移除效果</string>
+    <string name="post_processing_preset_locked">预设已激活。在开始游戏前可以在后处理效果中编辑它。</string>
+    <string name="post_processing_preset_modified">数值已从原始预设被更改。</string>
+    <string name="post_processing_presets">预设</string>
+    <string name="post_processing_preset_new">新建预设</string>
+    <string name="post_processing_preset_new_description">把您加载的效果及当前数值保存为一个预设,以便今后选用。</string>
+    <string name="post_processing_preset_name_invalid">请给预设起一个不含等号的名称。</string>
+    <string name="post_processing_preset_none">无预设</string>
+    <string name="post_processing_preset_delete">删除预设</string>
+    <string name="post_processing_preset_reset">重置预设值</string>
+    <string name="post_processing_reset">重置为默认值</string>
+    <string name="post_processing_empty">找不到效果。请在此文件中放置 .fx 文件:</string>
+    <string name="frame_gen">帧生成</string>
+    <string name="frame_gen_per_game_description">配置针对此游戏的帧生成设定</string>
+    <string name="frame_gen_description">设定要在使用无损缩放渲染的帧之间应用的插帧。启用后强制采用FIFO呈现模式 。</string>
+    <string name="frame_gen_multiplier">多帧生成</string>
+    <string name="frame_gen_multiplier_description">对于每个渲染帧，设定应显示的帧。数值越高，所消耗的 GPU 时间就越会成倍增多。如果设定超过显示器能力的帧数，将会降低模拟速度。</string>
+    <string name="frame_gen_multiplier_2x">2x</string>
+    <string name="frame_gen_multiplier_3x">3x</string>
+    <string name="frame_gen_multiplier_4x">4x</string>
+    <string name="frame_gen_target_rate">目标帧率</string>
+    <string name="frame_gen_target_rate_description">选取一个符合显示器实际能能力的帧率。增幅会自动调整以保持设定的帧率不变，并回调任何会导致游戏运行变慢的设定。</string>
+    <string name="frame_gen_target_rate_off">使用固定增幅</string>
+    <string name="frame_gen_target_rate_60">60 FPS</string>
+    <string name="frame_gen_target_rate_90">90 FPS</string>
+    <string name="frame_gen_target_rate_120">120 FPS</string>
+    <string name="frame_gen_on">开</string>
+    <string name="frame_gen_off">关</string>
+    <string name="frame_gen_fixed">固定</string>
+    <string name="frame_gen_flow_auto">自动</string>
+    <string name="frame_gen_quick_description">打开或关闭帧生成并选择帧生成倍数。</string>
+    <string name="frame_gen_target_rate_quick_description">生成帧到目标帧率。倍率会自动调整。</string>
+    <string name="frame_gen_flow_scale_quick_description">用来估算帧间运动的分辨率。较低的值可以节省 GPU 时间。</string>
+    <string name="frame_gen_queue_target">帧队列目标</string>
+    <string name="frame_gen_queue_target_description">在显示之前有多少已完成渲染的帧正在等待。较大的队列可以缓解 GPU 突发的压力，但会增加输入延迟。</string>
+    <string name="frame_gen_queue_target_0">最低延迟 (无缓冲)</string>
+    <string name="frame_gen_queue_target_1">平衡 (1 帧)</string>
+    <string name="frame_gen_queue_target_2">最平滑 (2 帧)</string>
+    <string name="frame_gen_flow_scale_auto">将运动预估与游戏匹配</string>
+    <string name="frame_gen_flow_scale_auto_description">在游戏实际渲染的分辨率下估算运动，而不是在放大后的输出上。不会影响精确性，因为放大并不会增加运动细节。</string>
+    <string name="frame_gen_flow_scale">运动预估分辨率</string>
+    <string name="frame_gen_flow_scale_description">光流通道的分辨率,以输出的比例表示。降低它是提升性能最经济的做法。</string>
+    <string name="frame_gen_unsupported">帧生成不可用</string>
+    <string name="frame_gen_unsupported_description">这个 GPU 驱动缺少 Lossless Scaling 着色器所需的 Vulkan 内存模型或半精度 (float16) 支持。</string>
+    <string name="lossless_scaling_setup_description">作为可选项。请提供您自己的 Lossless.dll 以便在之后可以启用帧生成。</string>
+    <string name="lossless_scaling_install">安装 Lossless.dll</string>
+    <string name="lossless_scaling_install_description">帧生成需要您自己从 Lossless Scaling 获得合法的 Lossless.dll 副本</string>
+    <string name="lossless_scaling_replace_description">选择其它 Lossless.dll 副本</string>
+    <string name="frame_generation_support">帧生成</string>
+    <string name="frame_generation_supported">支持</string>
+    <string name="frame_generation_unsupported">不支持 (无 Vulkan 内存模型或 float16)</string>
+    <string name="lossless_scaling">无损缩放</string>
+    <string name="lossless_scaling_description">提供您自己的 Lossless.dll 文件以启用帧生成</string>
+    <string name="lossless_scaling_installed">已安装</string>
+    <string name="lossless_scaling_not_installed">未安装</string>
+    <string name="lossless_scaling_replace">替换</string>
+    <string name="lossless_scaling_remove">移除</string>
+    <string name="lossless_scaling_remove_description">删除已安装的 Lossless.dll 及其准备好的着色器</string>
+    <string name="lossless_scaling_remove_confirmation">帧生成将停止工作,直到您重新安装 Lossless.dll。您的原始文件不会受到影响。</string>
+    <string name="lossless_scaling_missing">未安装 Lossless.dll</string>
+    <string name="lossless_scaling_missing_description">请从设置 › 无损缩放安装它以使用帧生成。</string>
+    <string name="lossless_scaling_locked">请先关闭游戏</string>
+    <string name="lossless_scaling_locked_description">无法在游戏运行时更改 Lossless.dll。</string>
+    <string name="lossless_scaling_remove_unavailable">没有可以移除的项目</string>
+    <string name="lossless_scaling_remove_unavailable_description">尚未安装 Lossless.dll。</string>
+    <string name="lossless_scaling_installing">正在准备帧生成着色器...</string>
+    <string name="lossless_scaling_install_success">已成功安装 Lossless.dll</string>
+    <string name="lossless_scaling_install_failed">无法安装 Lossless.dll </string>
+    <string name="error_lossless_copy_failed">无法复制选定的文件。</string>
+    <string name="error_lossless_unreadable">无法读取选定的文件。</string>
+    <string name="error_lossless_not_pe">选定的文件不是一个 Windows 动态链接库。请从您的 Lossless Scaling 安装目录中选择 Lossless.dll。</string>
+    <string name="error_lossless_missing_shaders">此副本的 Lossless.dll 中尚未包含帧生成着色器。请更新 Lossless Scaling 然后重试。</string>
+    <string name="error_lossless_translation_failed">无法翻译帧生成着色器。尚未支持此版本的 Lossless Scaling。</string>
+    <string name="error_lossless_cache_failed">已翻译的着色器无法写入到存储中。请确认其是否拥有足够的可用空间。</string>
+    <string name="advanced_settings">高级设置</string>
     <string name="settings_description">更改模拟器设置</string>
     <string name="search_recently_played">最近游玩</string>
     <string name="search_recently_added">最近添加</string>
@@ -418,6 +499,9 @@
     <string name="cpu_accuracy">CPU 精度</string>
     <string name="value_with_units">%1$s%2$s</string>
 
+    <string name="program_args">自制软件参数</string>
+    <string name="program_args_description">启动时传递给自制软件的命令行参数（例如 -noglsl）。</string>
+
     <!-- System settings strings -->
     <string name="device_name">设备名称</string>
     <string name="use_docked_mode">主机模式</string>
@@ -431,11 +515,11 @@
     <string name="set_custom_rtc">设置自定义系统时间</string>
 
     <!-- CPU -->
-    <string name="fast_cpu_time">CPU 超频</string>
-    <string name="fast_cpu_time_description">强制模拟的 CPU 以更高的时钟频率运行，从而解除某些 FPS 限制器。使用 Boost (1700MHz) 可让游戏以 Switch 的最高原生时钟运行，或使用 Fast (2000MHz) 以 2 倍时钟运行。</string>
-    <string name="custom_cpu_ticks">自定义CPU时钟</string>
-    <string name="custom_cpu_ticks_description">设置自定义的CPU时钟值。更高的值可能提高性能，但也可能导致游戏卡顿。建议范围为77-21000。</string>
-    <string name="cpu_ticks">时钟</string>
+    <string name="fast_cpu_time">CPU 时钟频率</string>
+    <string name="fast_cpu_time_description">提高模拟 CPU 报告的时钟频率，从而消除部分帧率限制。性能较弱的 CPU 可能会出现可见性能下降，甚至会导致某些游戏运行异常。</string>
+    <string name="custom_cpu_ticks">自定义 CPU 时钟周期</string>
+    <string name="custom_cpu_ticks_description">设定自定义的 CPU 时钟周期值。更高的值可以提升性能，但也可能导致游戏冻结卡死。建议的赋值范围为77-21000。</string>
+    <string name="cpu_ticks">时钟周期</string>
     <string name="memory_layout">内存布局</string>
     <string name="memory_layout_description">(实验性) 更改模拟内存布局。此项设置并不会提升性能，但可能有助于游戏通过  mods 来利用高分辨率。请不要在内存不大于 8GB 的手机上使用。仅适用于 Dynamic（JIT）后端。</string>
 
@@ -460,15 +544,17 @@
     <string name="advanced">高级</string>
 
     <string name="renderer_accuracy">GPU 模式</string>
-    <string name="renderer_accuracy_description">控制 GPU 模拟的精确度。大部分游戏在性能或平衡模式下可以正常渲染，但部分游戏需要设置为精确。粒子效果通常只有在精确模式下才能正确显示。</string>
+    <string name="renderer_accuracy_description">控制 GPU 模拟模式。大多数游戏在“快速”模式下渲染效果良好，但有些游戏仍需使用“精确”模式。而粒子效果通常只有在“精确”模式下才能正确渲染。</string>
     <string name="dma_accuracy">DMA 精度</string>
-    <string name="dma_accuracy_description">控制 DMA 精度。安全精度可以修复某些游戏中的问题，但在某些情况下也可能影响性能。如果不确定，请保留为“默认”。</string>
+    <string name="dma_accuracy_description">控制 DMA 的精准度。安全精度可以修复存在于某些游戏中的问题，但在某些情况下也会对性能造成影响。如不确定，请保持“默认”。</string>
+    <string name="gpu_fence_behavior">GPU 围栏行为</string>
+    <string name="gpu_fence_behavior_description">控制 GPU 围栏同步行为。“即时”是速度最快的选项，但可能会引入一些问题。“均衡”提供了更好的兼容性，可能修复某些游戏中的问题。“精确”在牺牲部分性能的前提下进一步提升兼容性。“严格”是速度最慢的选项，但可以修复那些要求更严格同步的问题。默认遵循 GPU “精确”设定。</string>
     <string name="anisotropic_filtering">各向异性过滤</string>
-    <string name="anisotropic_filtering_description">提高斜角的纹理质量</string>
+    <string name="anisotropic_filtering_description">提升斜视角下的纹理质量</string>
     <string name="vram_usage_mode">显存使用模式</string>
-    <string name="vram_usage_mode_description">控制显存分配策略</string>
+    <string name="vram_usage_mode_description">控制显存分配与释放策略</string>
     <string name="accelerate_astc">ASTC解码方式</string>
-    <string name="accelerate_astc_description">选择ASTC压缩纹理的解码方式：CPU（慢速、安全）、GPU（快速、推荐）或CPU异步（无卡顿，可能导致问题）</string>
+    <string name="accelerate_astc_description">选择渲染时使用的 ASTC 压缩纹理解码方式：CPU（缓慢，安全），GPU（快速，推荐），或 CPU 异步（无卡顿，但可能导致问题）</string>
 
     <string name="sync_memory_operations">同步内存操作</string>
     <string name="sync_memory_operations_description">确保计算和内存操作之间的数据一致性。 此选项应能修复某些游戏中的问题，但在某些情况下可能会降低性能。 使用Unreal Engine 4的游戏似乎受影响最大。</string>
@@ -477,11 +563,11 @@
     <string name="renderer_force_max_clock">强制最大时钟 (仅限 Adreno)</string>
     <string name="renderer_force_max_clock_description">强制 GPU 以最大时钟运行 (温控依然生效)。</string>
     <string name="renderer_asynchronous_gpu_emulation">GPU 异步模拟</string>
-    <string name="renderer_asynchronous_gpu_emulation_description">此技巧可通过异步运行 GPU 模拟来提升性能，但在执行与时序相关的操作时，可能引入图形问题和增加崩溃概率。</string>
+    <string name="renderer_asynchronous_gpu_emulation_description">此技巧可通过异步运行 GPU 模拟来提升性能，但在执行与时序相关的操作时，可能带来图形显示问题以及增加崩溃概率。</string>
     <string name="renderer_async_presentation">异步呈现</string>
-    <string name="renderer_async_presentation_description">此技巧通过将图形呈现移至独立的 CPU 线程来提升性能，但可能会引入图形显示问题。</string>
+    <string name="renderer_async_presentation_description">此技巧通过将图形呈现移至独立的 CPU 线程来提升性能，但可能会带来图形显示问题。</string>
     <string name="renderer_reactive_flushing">启用反应性刷新</string>
-    <string name="renderer_reactive_flushing_description">通过牺牲性能来提高某些游戏的渲染精度。</string>
+    <string name="renderer_reactive_flushing_description">通过牺牲性能来提升某些游戏的渲染精度。</string>
     <string name="enable_buffer_history">启用缓冲区历史</string>
     <string name="enable_buffer_history_description">启用对先前缓冲区状态的访问。此选项可在某些游戏中提升渲染质量并保持性能的一致性。</string>
     <string name="use_optimized_vertex_buffers">优化顶点缓冲区</string>
@@ -489,12 +575,10 @@
 
     <string name="hacks">Hacks</string>
 
-    <string name="fast_gpu_time">GPU 超频频率</string>
-    <string name="fast_gpu_time_description">强制大多数游戏以其最高原生分辨率运行。设置为 256 可获得最佳性能，设置为 512 可获得最佳画面保真度。</string>
+    <string name="fast_gpu_time">GPU 时钟频率</string>
+    <string name="fast_gpu_time_description">通过让游戏误以为 GPU 的处理速度比实际更快，以避免游戏为了适应 Switch 的时钟频率而降低分辨率和渲染距离。</string>
     <string name="skip_cpu_inner_invalidation">跳过CPU内部无效化</string>
-    <string name="skip_cpu_inner_invalidation_description">在内存更新期间跳过某些CPU端缓存无效化，减少CPU使用率并提高其性能。可能会导致某些游戏出现故障或崩溃。</string>
-    <string name="antiflicker">防闪烁</string>
-    <string name="antiflicker_description">强制 GPU 围栏回调等待已提交的 GPU 任务。配合“快速 GPU 模式”一起使用，以避免画面闪烁现象，仅会牺牲少量性能。</string>
+    <string name="skip_cpu_inner_invalidation_description">在更新内存时跳过某些 CPU 端的缓存失效操作，从而降低 CPU 占用率并提升性能。可能会在某些游戏中引发故障点或崩溃。</string>
     <string name="fix_bloom_effects">修复 Bloom 效果</string>
     <string name="fix_bloom_effects_description">减少《智慧的再现》和《众神的三角力量2》（Adreno A6XX - A7XX/ Turnip）中的 bloom 模糊，并移除《Burnout》中的 bloom 效果。警告：可能会导致在其他游戏中出现图形异常。</string>
     <string name="emulate_bgr565">模拟 BGR565</string>
@@ -502,16 +586,16 @@
     <string name="rescale_hack">启用旧版缩放处理</string>
     <string name="rescale_hack_description">启用通过使用快速缩放路径，来为游戏提供缩放配置处理的传统处理方式</string>
     <string name="renderer_asynchronous_shaders">使用异步着色器</string>
-    <string name="renderer_asynchronous_shaders_description">异步编译着色器。这可能会减少卡顿，但也可能会导致图形错误。</string>
-    <string name="gpu_unswizzle_settings">GPU 还原设置</string>
-    <string name="gpu_unswizzle_settings_description">配置基于 GPU 的纹理还原参数，或将其完全禁用。调整这些设置以平衡性能与纹理加载质量。</string>
-    <string name="gpu_unswizzle_enable">启用 GPU 还原</string>
+    <string name="renderer_asynchronous_shaders_description">以异步方式编译着色器。采用此方式或可减少卡顿，但也可能引入故障点。</string>
+    <string name="gpu_unswizzle_settings">GPU Unswizzle 设置</string>
+    <string name="gpu_unswizzle_settings_description">配置基于 GPU 的纹理 unswizzling 参数，或完全禁用该功能。通过调整这些设置，以尝试在性能与纹理加载质量之间取得平衡。</string>
+    <string name="gpu_unswizzle_enable">启用 GPU Unswizzle</string>
     <string name="gpu_unswizzle_disabled">禁用</string>
-    <string name="gpu_unswizzle_texture_size">GPU 还原最大纹理尺寸</string>
-    <string name="gpu_unswizzle_texture_size_description">设置基于 GPU 的纹理还原的最大尺寸（单位：MiB）。\n虽然 GPU 在处理中型和大型纹理时速度更快，但对于非常小的纹理，CPU 的效率可能更高。\n调整此设置，以便在 GPU 加速和 CPU 开销之间找到最佳平衡点。</string>
-    <string name="gpu_unswizzle_stream_size">GPU 还原流大小</string>
-    <string name="gpu_unswizzle_stream_size_description">设置用于 unswizzling 大型纹理时的每帧数据限制。较高的数值可以加快纹理的加载速度，但会增加帧延迟。而较低的数值可以降低 GPU 的开销，但可能会导致可见的纹理 闪现。</string>
-    <string name="gpu_unswizzle_chunk_size">GPU 还原块大小</string>
+    <string name="gpu_unswizzle_texture_size">GPU Unswizzle 最大纹理尺寸</string>
+    <string name="gpu_unswizzle_texture_size_description">设置基于 GPU 的纹理 unswizzling 的最大尺寸（MB）。虽然 GPU 处理中等和大型纹理的速度更快，但对于非常小的纹理，CPU 可能更为高效。通过调节此项设置，以平衡GPU 加速与 CPU 开销。</string>
+    <string name="gpu_unswizzle_stream_size">GPU Unswizzle 流大小</string>
+    <string name="gpu_unswizzle_stream_size_description">设置用于 unswizzling 大型纹理时的每帧数据限制。较高的数值可以加速纹理的加载过程，但会带来更高的帧延迟。而较低的数值则可以降低 GPU 的开销，但也可能会导致可见的纹理闪现。</string>
+    <string name="gpu_unswizzle_chunk_size">GPU Unswizzle 块大小</string>
     <string name="gpu_unswizzle_chunk_size_description">定义了 3D 纹理每批次处理的深度切片数量。增加此数值可在高性能 GPU 上提升吞吐效率，但在性能较弱的硬件上可能会导致卡顿或驱动超时。</string>
     <string name="gpu_unswizzle_default_button">默认</string>
 
@@ -524,7 +608,7 @@
     <string name="vertex_input_dynamic_state">顶点输入动态状态</string>
     <string name="vertex_input_dynamic_state_description">启用此功能可实现更灵活的顶点输入处理，可能减少顶点/缓冲区的管线编译时间。</string>
     <string name="sample_shading_fraction">采样着色</string>
-    <string name="sample_shading_fraction_description">允许片段着色器在多采样片段中每个样本执行一次，而不是每个片段执行一次。以提高性能为代价改善图形质量。</string>
+    <string name="sample_shading_fraction_description">允许片段着色器在多采样片段中对每个采样点执行一次操作，而非对每个片段执行一次。在提升图形显示质量的同时，会牺牲一部分性能。</string>
 
 
     <string name="display">显示</string>
@@ -539,8 +623,9 @@
 
     <!-- Debug settings strings -->
     <string name="cpu">CPU</string>
-    <string name="use_auto_stub">使用自动存根</string>
-    <string name="use_auto_stub_description">自动补全缺失的服务和功能。可提高兼容性但可能导致崩溃和稳定性问题。</string>
+    <string name="clocks">时钟频率</string>
+    <string name="use_auto_stub">使用自动占位处理</string>
+    <string name="use_auto_stub_description">自动为缺失的服务和功能生成占位代码。这可能会提高兼容性，但也可能导致崩溃和稳定性问题</string>
 
     <string name="gpu">GPU</string>
     <string name="renderer_api">API</string>
@@ -548,22 +633,28 @@
     <string name="renderer_debug_description">将图形 API 设置为较慢的调试模式。</string>
     <string name="patch_old_qcom_drivers">BCn 纹理补丁</string>
     <string name="patch_old_qcom_drivers_description">在 Adreno GPU 上覆盖自动 BCn 纹理格式检测。通常根据 Android 版本自动检测（在 API 28 及以上启用）。</string>
-    <string name="fastmem">Fastmem 内存访问</string>
+    <string name="fastmem">Fastmem</string>
 
     <string name="log">日志记录</string>
     <string name="flush_by_line">按行刷新调试日志</string>
     <string name="flush_by_line_description">在每行写入时刷新调试日志，使在崩溃或冻结时调试更容易。</string>
+    <string name="extended_logging">开启扩展日志</string>
+    <string name="extended_logging_description">将最大日志文件大小从 100 MiB 提升至 1GiB。</string>
+    <string name="log_filter">日志筛选器</string>
+    <string name="log_filter_description">控制 Eden 的日志类别。例如: *:Info Service.LM:Debug</string>
 
     <!-- GPU Logging strings -->
     <string name="gpu_logging_header">GPU 日志</string>
-    <string name="gpu_logging_enabled">启用 GPU 日志</string>
-    <string name="gpu_logging_enabled_description">将 GPU 操作记录至 eden_gpu.log 以供调试 Adreno 驱动</string>
     <string name="gpu_log_level">日志等级</string>
     <string name="gpu_log_level_description">GPU 日志的详细级别(数值越高 = 细节越多,开销越大)</string>
     <string name="gpu_log_vulkan_calls">记录 Vulkan API 调用</string>
     <string name="gpu_log_vulkan_calls_description">在环形缓冲区中跟踪所有 Vulkan API 调用</string>
-    <string name="gpu_log_shader_dumps">转储着色器</string>
-    <string name="gpu_log_shader_dumps_description">保存已编译的着色器 SPIR-V 到文件中</string>
+    <string name="gpu_log_shader_dumps">转储 SPIR-V 着色器</string>
+    <string name="gpu_log_shader_dumps_description">将经过重编译的 SPIR-V 二进制文件（.spv）保存到 dump 文件夹中。使用 spirv-dis/spirv-cross/spirv-val 进行检查。</string>
+    <string name="dump_guest_shaders">转储 Guest (Maxwell) 着色器</string>
+    <string name="dump_guest_shaders_description">将 Maxwell guest 着色器字节码文件（*.ash）保存到 dump 文件夹。使用 nvdisasm 进行检查。</string>
+    <string name="dump_macros">转储 Maxwell 宏</string>
+    <string name="dump_macros_description">将 Maxwell 宏程序文件（*.macro）保存到 dump 文件夹。使用 envydis 进行检查。</string>
     <string name="gpu_log_memory_tracking">追踪 GPU 内存</string>
     <string name="gpu_log_memory_tracking_description">监控 GPU 内存的分配和释放</string>
     <string name="gpu_log_driver_debug">驱动调试信息</string>
@@ -615,7 +706,7 @@
     <string name="unused">未使用</string>
     <string name="input_mapping_filter">输入映射过滤器</string>
     <string name="input_mapping_filter_description">选择一个设备过滤输入映射</string>
-    <string name="auto_map">控制器自动映射</string>
+    <string name="auto_map">自动映射控制器键位</string>
     <string name="auto_map_description">选择一个设备以尝试自动映射</string>
     <string name="attempted_auto_map">尝试为 %1$s 自动映射</string>
     <string name="controller_type">控制器类型</string>
@@ -661,9 +752,9 @@
     <string name="shutting_down">正在关闭…</string>
     <string name="reset_setting_confirmation">您要将此设定重置为默认值吗？</string>
     <string name="reset_to_default">恢复默认</string>
-    <string name="reset_to_default_description">重置所有高级选项</string>
+    <string name="reset_to_default_description">重置所有高级设置</string>
     <string name="reset_all_settings">重置所有设置项？</string>
-    <string name="reset_all_settings_description">所有高级选项都将被重置，此动作无法还原。</string>
+    <string name="reset_all_settings_description">所有高级设置都将重置为默认。此操作无法撤销。</string>
     <string name="settings_reset">重置设置项</string>
     <string name="close">关闭</string>
     <string name="learn_more">了解更多</string>
@@ -731,10 +822,10 @@
     <string name="preferences_audio">声音</string>
     <string name="preferences_audio_description">输出引擎及音量</string>
     <string name="preferences_controls">控制</string>
-    <string name="preferences_controls_description">使用控制器来映射输入</string>
+    <string name="preferences_controls_description">映射控制器键位输入</string>
     <string name="preferences_player">玩家 %d</string>
     <string name="preferences_debug">调试</string>
-    <string name="preferences_debug_description">CPU/GPU 调试、图形 API 及 fastmem 内存访问</string>
+    <string name="preferences_debug_description">CPU/GPU 调试、图形 API 以及 fastmem</string>
     <string name="preferences_custom_paths">自定义路径</string>
     <string name="preferences_custom_paths_description">存档目录</string>
 
@@ -790,7 +881,7 @@
     <string name="clear_shader_cache_warning_description">由于着色器缓存需要重新生成，您将遇到更多卡顿</string>
     <string name="cleared_shaders_successfully">着色器缓存清除成功</string>
     <string name="driver_shader_wipe_dialog_title">已清理着色器</string>
-    <string name="driver_shader_wipe_dialog_message">Eden 已自动清除所有着色器缓存以维护 Vulkan 管线验证。这在切换 GPU 驱动程序时是必需的,以防止崩溃和图形损坏。在着色器重建期间您可能会遇到一些卡顿。</string>
+    <string name="driver_shader_wipe_dialog_message">Eden 已自动清空所有着色器缓存，以维持 Vulkan 管线验证流程。在切换 GPU 驱动程序时，此操作是必要的，可防止崩溃和画面异常。在着色器重构期间，您可能会感受到些许卡顿。</string>
     <string name="addons_game">附加项: %1$s</string>
     <string name="save_data">保存数据</string>
     <string name="save_data_description">管理此游戏的保存数据</string>
@@ -835,7 +926,7 @@
     <string name="loader_error_file_not_found">ROM 文件不存在</string>
 
     <string name="loader_requires_firmware">游戏需要固件</string>
-    <string name="loader_requires_firmware_description"><![CDATA[您尝试启动的游戏需要固件才能引导或通过启动菜单。请<a href=\"https://yuzu-mirror.github.io/help/quickstart\">转储并安装固件</a>，或点击\"确定\"继续。]]></string>
+    <string name="loader_requires_firmware_description"><![CDATA[这个游戏可能需要固件才能正常运行,但您还没有安装任何固件。请在启动前安装固件,或者按 “确定” 继续启动。]]></string>
 
     <!-- Intent Launch strings -->
     <string name="searching_for_game">正在搜索游戏...</string>
@@ -878,15 +969,15 @@
     <string name="emulation_rel_stick_center">相对摇杆中心</string>
     <string name="emulation_dpad_slide">十字方向键滑动</string>
     <string name="emulation_haptics">触觉反馈</string>
-    <string name="emulation_show_overlay">显示控制器</string>
-    <string name="emulation_hide_overlay">隐藏控制器</string>
+    <string name="emulation_show_overlay">显示触控叠加层</string>
+    <string name="emulation_hide_overlay">隐藏触控叠加层</string>
     <string name="emulation_toggle_all">全部切换</string>
     <string name="emulation_control_adjust">调整触控叠加层</string>
     <string name="emulation_control_scale">缩放</string>
     <string name="emulation_control_opacity">不透明度</string>
     <string name="emulation_touch_overlay_reset">重置触控叠加层</string>
     <string name="emulation_touch_overlay_edit">编辑触控叠加层</string>
-    <string name="emulation_snap_to_grid">截图到网格</string>
+    <string name="emulation_snap_to_grid">对齐到网格</string>
     <string name="emulation_pause">暂停模拟</string>
     <string name="emulation_unpause">继续模拟</string>
     <string name="emulation_input_overlay">触控叠加层选项</string>
@@ -936,14 +1027,15 @@
     <string name="memory_6gb">6GB (不安全)</string>
     <string name="memory_8gb">8GB (不安全)</string>
 
-    <!--CPU clock speeds-->
-    <string name="clock_boost">加速 (1700MHz)</string>
-    <string name="clock_fast">快速 (2000MHz)</string>
+    <!-- CPU clock levels -->
+    <string name="clock_normal">正常</string>
+    <string name="clock_boost">升频</string>
+    <string name="clock_fast">超频</string>
 
-    <!-- GPU overclock factors -->
-    <string name="off">关闭</string>
-    <string name="fast_gpu_medium">中 (256)</string>
-    <string name="fast_gpu_high">高 (512)</string>
+    <!-- GPU clock levels -->
+    <string name="fast_gpu_normal">正常</string>
+    <string name="fast_gpu_medium">升频</string>
+    <string name="fast_gpu_high">超频</string>
 
     <!-- GPU swizzle texture size -->
     <string name="gpu_texturesizeswizzle_verysmall">极小 (16 MB)</string>
@@ -982,8 +1074,7 @@
     <string name="renderer_none">无</string>
 
     <!-- Renderer Accuracy -->
-    <string name="renderer_accuracy_low">性能</string>
-    <string name="renderer_accuracy_medium">平衡</string>
+    <string name="renderer_accuracy_low">快速</string>
     <string name="renderer_accuracy_high">精确</string>
 
     <!-- DMA Accuracy -->
@@ -991,8 +1082,14 @@
     <string name="dma_accuracy_unsafe">不安全</string>
     <string name="dma_accuracy_safe">安全</string>
 
-    <string name="vram_usage_conservative">保守模式</string>
-    <string name="vram_usage_aggressive">激进模式</string>
+    <!-- GPU Fence Behavior -->
+    <string name="gpu_fence_behavior_default">默认</string>
+    <string name="gpu_fence_behavior_immediate">即时</string>
+    <string name="gpu_fence_behavior_balanced">均衡</string>
+    <string name="gpu_fence_behavior_accurate">精确</string>
+
+    <string name="vram_usage_conservative">保守式</string>
+    <string name="vram_usage_aggressive">主动式</string>
 
     <!-- Renderer VSync -->
     <string name="renderer_vsync_immediate">即时 (关闭)</string>
@@ -1014,9 +1111,9 @@
     <string name="ratio_stretch">拉伸窗口</string>
 
     <!-- CPU Accuracy -->
-    <string name="cpu_accuracy_accurate">高精度</string>
-    <string name="cpu_accuracy_unsafe">低精度</string>
-    <string name="cpu_accuracy_paranoid">偏执模式</string>
+    <string name="cpu_accuracy_accurate">精确</string>
+    <string name="cpu_accuracy_unsafe">不安全</string>
+    <string name="cpu_accuracy_paranoid">极致</string>
     <string name="cpu_accuracy_debugging">调试</string>
 
     <!-- Freedreno Settings -->
@@ -1065,8 +1162,6 @@
     <string name="theme_mode_follow_system">跟随系统</string>
     <string name="theme_mode_light">浅色</string>
     <string name="theme_mode_dark">深色</string>
-
-    <string name="multiplier_none">无</string>
 
     <!-- Black backgrounds theme -->
     <string name="use_black_backgrounds">使用黑色背景</string>

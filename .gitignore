@@ -7,7 +7,6 @@
 # Build directory
 /[Bb]uild*/
 doc-build/
-out/
 AppDir/
 uruntime
 
@@ -70,3 +69,6 @@ vulkansdk*.exe
 /build-port-tests*/
 /PEDIDOS.md
 tools/shader-share/data/
+
+# Build-time generated external sources
+externals/generated

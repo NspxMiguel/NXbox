@@ -98,7 +98,7 @@ Vic::~Vic() noexcept {
 }
 
 void Vic::ProcessMethod(u32 method, u32 arg) noexcept {
-    LOG_TRACE(HW_GPU, "Vic {} method {:#X}", id, u32(method));
+    LOG_TRACE(HW_GPU, "Vic {} method {:#x}", id, u32(method));
     regs.reg_array[method] = arg;
     switch (Method(method * sizeof(u32))) {
     case Method::Execute:
@@ -118,6 +118,7 @@ void Vic::Execute() noexcept {
     output_surface.resize(output_width * output_height);
 
     if (Settings::values.nvdec_emulation.GetValue() != Settings::NvdecEmulation::Off) {
+        bool decoded_frame = false;
         for (size_t i = 0; i < config.slot_structs.size(); i++) {
             if (auto& slot_config = config.slot_structs[i]; slot_config.config.slot_enable) {
                 auto const luma_offset = regs.surfaces[i][SurfaceIndex::Current].luma.Address();
@@ -136,10 +137,16 @@ void Vic::Execute() noexcept {
                         break;
                     }
                     Blend(config, slot_config, config.output_surface_config.out_pixel_format);
+                    decoded_frame = true;
                 } else {
-                    LOG_ERROR(HW_GPU, "Vic {} failed to get frame with offset {:#X}", id, luma_offset);
+                    LOG_TRACE(HW_GPU, "Vic {} failed to get frame with offset {:#X}", id, luma_offset);
                 }
             }
+        }
+        if (decoded_frame) {
+            has_decoded_frame = true;
+        } else if (!has_decoded_frame) {
+            return;
         }
     } else {
         // Fill the frame with black, as otherwise they can have random data and be very glitchy.
@@ -407,15 +414,15 @@ void Vic::ReadInterlacedY8__V8U8_N420(const SlotStruct& slot, std::span<const Pl
         };
 
         switch (slot.config.deinterlace_mode) {
-        case DXVAHD_DEINTERLACE_MODE_PRIVATE::WEAVE:
+        case DxvhadDeinterlaceModePrivate::Weave:
             // Due to the fact that we do not write to memory in nvdec, we cannot use Weave as it
             // relies on the previous frame.
             DecodeBobField();
             break;
-        case DXVAHD_DEINTERLACE_MODE_PRIVATE::BOB_FIELD:
+        case DxvhadDeinterlaceModePrivate::BobField:
             DecodeBobField();
             break;
-        case DXVAHD_DEINTERLACE_MODE_PRIVATE::DISI1:
+        case DxvhadDeinterlaceModePrivate::Disi1:
             // Due to the fact that we do not write to memory in nvdec, we cannot use DISI1 as it
             // relies on previous/next frames.
             DecodeBobField();
@@ -431,13 +438,13 @@ void Vic::ReadInterlacedY8__V8U8_N420(const SlotStruct& slot, std::span<const Pl
 
 void Vic::ReadY8__V8U8_N420(const SlotStruct& slot, std::span<const PlaneOffsets> offsets, std::shared_ptr<const FFmpeg::Frame> frame, bool planar) noexcept {
     switch (slot.config.frame_format) {
-    case DXVAHD_FRAME_FORMAT::PROGRESSIVE:
+    case DxvhadFrameFormat::Progressive:
         ReadProgressiveY8__V8U8_N420(slot, offsets, std::move(frame), planar, false);
         break;
-    case DXVAHD_FRAME_FORMAT::TOP_FIELD:
+    case DxvhadFrameFormat::TopField:
         ReadInterlacedY8__V8U8_N420(slot, offsets, std::move(frame), planar, true);
         break;
-    case DXVAHD_FRAME_FORMAT::BOTTOM_FIELD:
+    case DxvhadFrameFormat::BottomField:
         ReadInterlacedY8__V8U8_N420(slot, offsets, std::move(frame), planar, false);
         break;
     default:
@@ -860,15 +867,15 @@ void Vic::WriteY8__V8U8_N420(const OutputSurfaceConfig& output_surface_config) n
     };
 
     switch (output_surface_config.out_block_kind) {
-    case BLK_KIND::GENERIC_16Bx2: {
+    case BlkKind::Generic_16Bx2: {
         u32 const block_height = u32(output_surface_config.out_block_height);
         auto const out_luma_swizzle_size = Texture::CalculateSize(true, BytesPerPixel, out_luma_width, out_luma_height, 1, block_height, 0);
         auto const out_chroma_swizzle_size = Texture::CalculateSize(true, BytesPerPixel * 2, out_chroma_width, out_chroma_height, 1, block_height, 0);
 
         LOG_TRACE(HW_GPU, "Writing Y8__V8U8_N420 swizzled frame\n"
-            "\tinput surface {}x{} stride {} size {:#X}\n"
-            "\toutput   luma {}x{} stride {} size {:#X} block height {} swizzled size 0x{:X}\n",
-            "\toutput chroma {}x{} stride {} size {:#X} block height {} swizzled size 0x{:X}",
+            "\tinput surface {}x{} stride {} size {:#x}\n"
+            "\toutput   luma {}x{} stride {} size {:#x} block height {} swizzled size {:#x}\n",
+            "\toutput chroma {}x{} stride {} size {:#x} block height {} swizzled size {:#x}",
             surface_width, surface_height, surface_stride * BytesPerPixel,
             surface_stride * surface_height * BytesPerPixel, out_luma_width, out_luma_height,
             out_luma_stride, out_luma_size, block_height, out_luma_swizzle_size, out_chroma_width,
@@ -889,11 +896,11 @@ void Vic::WriteY8__V8U8_N420(const OutputSurfaceConfig& output_surface_config) n
             Texture::SwizzleTexture(out_chroma, chroma_scratch, BytesPerPixel, out_chroma_width, out_chroma_height, 1, block_height, 0, 1);
         }
     } break;
-    case BLK_KIND::PITCH: {
+    case BlkKind::Pitch: {
         LOG_TRACE(HW_GPU, "Writing Y8__V8U8_N420 swizzled frame\n"
-            "\tinput surface {}x{} stride {} size {:#X}\n"
-            "\toutput   luma {}x{} stride {} size {:#X} block height {} swizzled size 0x{:X}\n",
-            "\toutput chroma {}x{} stride {} size {:#X} block height {} swizzled size 0x{:X}",
+            "\tinput surface {}x{} stride {} size {:#x}\n"
+            "\toutput   luma {}x{} stride {} size {:#x} block height {} swizzled size {:#x}\n",
+            "\toutput chroma {}x{} stride {} size {:#x} block height {} swizzled size {:#x}",
             surface_width, surface_height, surface_stride * BytesPerPixel,
             surface_stride * surface_height * BytesPerPixel, out_luma_width, out_luma_height,
             out_luma_stride, out_luma_size, out_chroma_width, out_chroma_height, out_chroma_stride,
@@ -956,7 +963,7 @@ void Vic::WriteABGR(const OutputSurfaceConfig& output_surface_config, VideoPixel
                     auto pixel1213 = _mm_load_si128((__m128i*)&inp[src + x + 12]);
                     auto pixel1415 = _mm_load_si128((__m128i*)&inp[src + x + 14]);
 
-                    // Right-shift the channels by 16 to un-do the left shit on read and bring the range
+                    // Right-shift the channels by 16 to un-do the left shift on read and bring the range
                     // back to 8-bit.
                     pixel01 = _mm_srli_epi16(pixel01, 2);
                     pixel23 = _mm_srli_epi16(pixel23, 2);
@@ -1032,12 +1039,12 @@ void Vic::WriteABGR(const OutputSurfaceConfig& output_surface_config, VideoPixel
     };
 
     switch (output_surface_config.out_block_kind) {
-    case BLK_KIND::GENERIC_16Bx2: {
+    case BlkKind::Generic_16Bx2: {
         const u32 block_height = u32(output_surface_config.out_block_height);
         auto const out_swizzle_size = Texture::CalculateSize(true, BytesPerPixel, out_luma_width, out_luma_height, 1, block_height, 0);
         LOG_TRACE(HW_GPU, "Writing ABGR swizzled frame\n"
-            "\tinput surface {}x{} stride {} size {:#X}\n"
-            "\toutput surface {}x{} stride {} size {:#X} block height {} swizzled size 0x{:X}",
+            "\tinput surface {}x{} stride {} size {:#x}\n"
+            "\toutput surface {}x{} stride {} size {:#x} block height {} swizzled size {:#x}",
             surface_width, surface_height, surface_stride * BytesPerPixel,
             surface_stride * surface_height * BytesPerPixel, out_luma_width, out_luma_height,
             out_luma_stride, out_luma_size, block_height, out_swizzle_size);
@@ -1051,10 +1058,10 @@ void Vic::WriteABGR(const OutputSurfaceConfig& output_surface_config, VideoPixel
             Texture::SwizzleTexture(out_luma, luma_scratch, BytesPerPixel, out_luma_width, out_luma_height, 1, block_height, 0, 1);
         }
     } break;
-    case BLK_KIND::PITCH: {
+    case BlkKind::Pitch: {
         LOG_TRACE(HW_GPU, "Writing ABGR pitch frame\n"
-            "\tinput surface {}x{} stride {} size {:#X}"
-            "\toutput surface {}x{} stride {} size {:#X}",
+            "\tinput surface {}x{} stride {} size {:#x}"
+            "\toutput surface {}x{} stride {} size {:#x}",
             surface_width, surface_height, surface_stride,
             surface_stride * surface_height * BytesPerPixel, out_luma_width, out_luma_height,
             out_luma_stride, out_luma_size);

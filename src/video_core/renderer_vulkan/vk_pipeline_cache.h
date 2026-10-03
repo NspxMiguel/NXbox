@@ -7,11 +7,13 @@
 #pragma once
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <memory>
 #include <type_traits>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <vector>
 
 #include "common/common_types.h"
@@ -105,6 +107,7 @@ public:
     explicit PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, const Device& device,
                            Scheduler& scheduler, DescriptorPool& descriptor_pool,
                            GuestDescriptorQueue& guest_descriptor_queue,
+                           DescriptorBufferRing& descriptor_buffer_ring,
                            RenderPassCache& render_pass_cache, BufferCache& buffer_cache,
                            TextureCache& texture_cache, VideoCore::ShaderNotify& shader_notify_);
     ~PipelineCache();
@@ -143,10 +146,13 @@ private:
     vk::PipelineCache LoadVulkanPipelineCache(const std::filesystem::path& filename,
                                               u32 expected_cache_version);
 
+    void QueueVulkanPipelineCacheFlush();
+
     const Device& device;
     Scheduler& scheduler;
     DescriptorPool& descriptor_pool;
     GuestDescriptorQueue& guest_descriptor_queue;
+    DescriptorBufferRing& descriptor_buffer_ring;
     RenderPassCache& render_pass_cache;
     BufferCache& buffer_cache;
     TextureCache& texture_cache;
@@ -157,8 +163,8 @@ private:
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
 
-    ankerl::unordered_dense::map<ComputePipelineCacheKey, std::unique_ptr<ComputePipeline>> compute_cache;
-    ankerl::unordered_dense::map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
+    ::Common::unordered_map<ComputePipelineCacheKey, std::unique_ptr<ComputePipeline>> compute_cache;
+    ::Common::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
 
     ShaderPools main_pools;
 
@@ -169,6 +175,10 @@ private:
 
     std::filesystem::path vulkan_pipeline_cache_filename;
     vk::PipelineCache vulkan_pipeline_cache;
+    size_t pipelines_since_flush{};
+    std::chrono::steady_clock::time_point last_flush{};
+    std::atomic<size_t> last_cache_size{};
+    std::atomic_bool flush_in_flight{};
 
     Common::ThreadWorker workers;
     Common::ThreadWorker serialization_thread;

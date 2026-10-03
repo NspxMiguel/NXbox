@@ -20,7 +20,9 @@ import org.yuzu.yuzu_emu.features.settings.model.IntSetting
 import org.yuzu.yuzu_emu.features.settings.model.LongSetting
 import org.yuzu.yuzu_emu.features.settings.model.ShortSetting
 import org.yuzu.yuzu_emu.features.settings.model.StringSetting
+import org.yuzu.yuzu_emu.features.settings.model.UShortSetting
 import org.yuzu.yuzu_emu.network.NetDataValidators
+import org.yuzu.yuzu_emu.utils.LosslessScalingHelper
 import org.yuzu.yuzu_emu.utils.NativeConfig
 
 /**
@@ -65,6 +67,19 @@ abstract class SettingsItem(
                 return NativeLibrary.isFirmwareAvailable()
             }
 
+            if (setting.key in frameGenKeys &&
+                !(LosslessScalingHelper.isInstalled() && LosslessScalingHelper.isSupportedByGpu())
+            ) {
+                return false
+            }
+
+            // A frame rate target moves the multiplier on its own
+            if (setting.key == IntSetting.RENDERER_FRAME_GEN_MULTIPLIER.key &&
+                frameGenTargetRate != 0
+            ) {
+                return false
+            }
+
             // Can't edit settings that aren't saveable in per-game config even if they are switchable
             if (NativeConfig.isPerGameConfigLoaded() && !setting.isSaveable) {
                 return false
@@ -88,7 +103,29 @@ abstract class SettingsItem(
     val clearable: Boolean
         get() = !setting.global && NativeConfig.isPerGameConfigLoaded()
 
+    private val frameGenTargetRate: Int
+        get() {
+            val key = IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key
+            val needsGlobal = if (NativeLibrary.isRunning() &&
+                !NativeConfig.isPerGameConfigLoaded()
+            ) {
+                !NativeConfig.usingGlobal(key)
+            } else {
+                NativeConfig.usingGlobal(key)
+            }
+            return IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.getInt(needsGlobal)
+        }
+
     companion object {
+        private val frameGenKeys = setOf(
+            BooleanSetting.RENDERER_FRAME_GEN.key,
+            IntSetting.RENDERER_FRAME_GEN_MULTIPLIER.key,
+            IntSetting.RENDERER_FRAME_GEN_TARGET_RATE.key,
+            IntSetting.RENDERER_FRAME_GEN_QUEUE_TARGET.key,
+            BooleanSetting.RENDERER_FRAME_GEN_FLOW_SCALE_AUTO.key,
+            IntSetting.RENDERER_FRAME_GEN_FLOW_SCALE.key
+        )
+
         const val TYPE_HEADER = 0
         const val TYPE_SWITCH = 1
         const val TYPE_SINGLE_CHOICE = 2
@@ -105,6 +142,10 @@ abstract class SettingsItem(
         const val TYPE_LAUNCHABLE = 13
         const val TYPE_PATH = 14
         const val TYPE_GPU_UNSWIZZLE = 15
+        const val TYPE_FX_TOOLBAR = 16
+        const val TYPE_FX_PRESET = 17
+        const val TYPE_FX_SHADER = 18
+        const val TYPE_FX_BUTTON = 19
 
         const val FASTMEM_COMBINED = "fastmem_combined"
         const val GPU_UNSWIZZLE_COMBINED = "gpu_unswizzle_combined"
@@ -125,6 +166,13 @@ abstract class SettingsItem(
         // List of all general
         val settingsItems = HashMap<String, SettingsItem>().apply {
             put(StringInputSetting(StringSetting.DEVICE_NAME, titleId = R.string.device_name))
+            put(
+                StringInputSetting(
+                    StringSetting.PROGRAM_ARGS,
+                    titleId = R.string.program_args,
+                    descriptionId = R.string.program_args_description
+                )
+            )
             put(
                 SwitchSetting(
                     BooleanSetting.RENDERER_USE_SPEED_LIMIT,
@@ -214,6 +262,13 @@ abstract class SettingsItem(
                     BooleanSetting.DEBUG_FLUSH_BY_LINE,
                     titleId = R.string.flush_by_line,
                     descriptionId = R.string.flush_by_line_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.EXTENDED_LOGGING,
+                    titleId = R.string.extended_logging,
+                    descriptionId = R.string.extended_logging_description
                 )
             )
 
@@ -579,6 +634,7 @@ abstract class SettingsItem(
                     IntSetting.FSR_SHARPENING_SLIDER,
                     titleId = R.string.fsr_sharpness,
                     descriptionId = R.string.fsr_sharpness_description,
+                    max = 200,
                     units = "%"
                 )
             )
@@ -587,7 +643,7 @@ abstract class SettingsItem(
                     IntSetting.ANDROID_PIPELINE_WORKERS,
                     titleId = R.string.pipeline_worker_cores,
                     descriptionId = R.string.pipeline_worker_cores_description,
-                    min = 4,
+                    min = 2,
                     max = 8,
                     units = "cores"
                 )
@@ -598,6 +654,57 @@ abstract class SettingsItem(
                     titleId = R.string.renderer_anti_aliasing,
                     choicesId = R.array.rendererAntiAliasingNames,
                     valuesId = R.array.rendererAntiAliasingValues
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.RENDERER_FRAME_GEN,
+                    titleId = R.string.frame_gen,
+                    descriptionId = R.string.frame_gen_description
+                )
+            )
+            put(
+                SingleChoiceSetting(
+                    IntSetting.RENDERER_FRAME_GEN_MULTIPLIER,
+                    titleId = R.string.frame_gen_multiplier,
+                    descriptionId = R.string.frame_gen_multiplier_description,
+                    choicesId = R.array.frameGenMultiplierNames,
+                    valuesId = R.array.frameGenMultiplierValues
+                )
+            )
+            put(
+                SingleChoiceSetting(
+                    IntSetting.RENDERER_FRAME_GEN_TARGET_RATE,
+                    titleId = R.string.frame_gen_target_rate,
+                    descriptionId = R.string.frame_gen_target_rate_description,
+                    choicesId = R.array.frameGenTargetRateNames,
+                    valuesId = R.array.frameGenTargetRateValues
+                )
+            )
+            put(
+                SingleChoiceSetting(
+                    IntSetting.RENDERER_FRAME_GEN_QUEUE_TARGET,
+                    titleId = R.string.frame_gen_queue_target,
+                    descriptionId = R.string.frame_gen_queue_target_description,
+                    choicesId = R.array.frameGenQueueTargetNames,
+                    valuesId = R.array.frameGenQueueTargetValues
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.RENDERER_FRAME_GEN_FLOW_SCALE_AUTO,
+                    titleId = R.string.frame_gen_flow_scale_auto,
+                    descriptionId = R.string.frame_gen_flow_scale_auto_description
+                )
+            )
+            put(
+                SliderSetting(
+                    IntSetting.RENDERER_FRAME_GEN_FLOW_SCALE,
+                    titleId = R.string.frame_gen_flow_scale,
+                    descriptionId = R.string.frame_gen_flow_scale_description,
+                    min = 25,
+                    max = 100,
+                    units = "%"
                 )
             )
             put(
@@ -660,6 +767,15 @@ abstract class SettingsItem(
                     descriptionId = R.string.dma_accuracy_description,
                     choicesId = R.array.dmaAccuracyNames,
                     valuesId = R.array.dmaAccuracyValues
+                )
+            )
+            put(
+                SingleChoiceSetting(
+                    IntSetting.GPU_FENCE_BEHAVIOR,
+                    titleId = R.string.gpu_fence_behavior,
+                    descriptionId = R.string.gpu_fence_behavior_description,
+                    choicesId = R.array.gpuFenceBehaviorNames,
+                    valuesId = R.array.gpuFenceBehaviorValues
                 )
             )
             put(
@@ -748,13 +864,6 @@ abstract class SettingsItem(
                     BooleanSetting.SKIP_CPU_INNER_INVALIDATION,
                     titleId = R.string.skip_cpu_inner_invalidation,
                     descriptionId = R.string.skip_cpu_inner_invalidation_description
-                )
-            )
-            put(
-                SwitchSetting(
-                    BooleanSetting.ANTIFLICKER,
-                    titleId = R.string.antiflicker,
-                    descriptionId = R.string.antiflicker_description
                 )
             )
             put(
@@ -913,8 +1022,15 @@ abstract class SettingsItem(
                 )
             )
             put(
+                StringInputSetting(
+                    StringSetting.LOG_FILTER,
+                    titleId = R.string.log_filter,
+                    descriptionId = R.string.log_filter_description
+                )
+            )
+            put(
                 SpinBoxSetting(
-                    ShortSetting.DEBUG_KNOBS,
+                    UShortSetting.DEBUG_KNOBS,
                     titleId = R.string.debug_knobs,
                     descriptionId = R.string.debug_knobs_description,
                     valueHint = R.string.debug_knobs_hint,
@@ -924,13 +1040,6 @@ abstract class SettingsItem(
             )
 
             // GPU Logging settings
-            put(
-                SwitchSetting(
-                    BooleanSetting.GPU_LOGGING_ENABLED,
-                    titleId = R.string.gpu_logging_enabled,
-                    descriptionId = R.string.gpu_logging_enabled_description
-                )
-            )
             put(
                 SingleChoiceSetting(
                     ByteSetting.GPU_LOG_LEVEL,
@@ -949,9 +1058,23 @@ abstract class SettingsItem(
             )
             put(
                 SwitchSetting(
+                    BooleanSetting.DUMP_GUEST_SHADERS,
+                    titleId = R.string.dump_guest_shaders,
+                    descriptionId = R.string.dump_guest_shaders_description
+                )
+            )
+            put(
+                SwitchSetting(
                     BooleanSetting.GPU_LOG_SHADER_DUMPS,
                     titleId = R.string.gpu_log_shader_dumps,
                     descriptionId = R.string.gpu_log_shader_dumps_description
+                )
+            )
+            put(
+                SwitchSetting(
+                    BooleanSetting.DUMP_MACROS,
+                    titleId = R.string.dump_macros,
+                    descriptionId = R.string.dump_macros_description
                 )
             )
             put(

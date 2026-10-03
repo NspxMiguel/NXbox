@@ -22,7 +22,7 @@ struct Range {
 };
 
 // Bounded registry: fault handling never allocates or takes an allocator lock.
-// This is for VirtualBuffer data only; DRAM has its own handler in HostMemory.
+// This is for SparseLargeVector data only; DRAM has its own handler in HostMemory.
 std::array<Range, 256> ranges;
 std::mutex allocation_mutex;
 std::once_flag initialize_flag;

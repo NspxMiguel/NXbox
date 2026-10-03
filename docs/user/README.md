@@ -10,13 +10,15 @@ A copy of this handbook is [available online](https://git.eden-emu.dev/eden-emu/
 
 - **[The Basics](Basics.md)**
 - **[Quickstart](./QuickStart.md)**
+    - **[Windows](./QuickStart.md#windows)**
+    - **[Steamdeck](./QuickStart.md#steamdeck)**
+    - **[macOS](./QuickStart.md#macos)**
 - **[Settings](./Settings.md)**
 - **[Controllers](./Controllers.md)**
     - **[Controller profiles](./Controllers.md#configuring-controller-profiles)**
 - **[Audio](Audio.md)**
 - **[Graphics](Graphics.md)**
 - **[Installing Mods](./Mods.md)**
-- **[Run On macOS](./RunOnMacOS.md)**
 - **[Data, Savefiles and Storage](Storage.md)**
 - **[Orphaned Profiles](Orphaned.md)**
 - **[Troubleshooting](./Troubleshoot.md)**
@@ -47,6 +49,4 @@ A copy of this handbook is [available online](https://git.eden-emu.dev/eden-emu/
 - **[Gyro Controls](./GyroControls.md)**
 - **[Platforms and Architectures](./Architectures.md)**
 - **[Native Application Development](./Native.md)**
-- **[Adding Boolean Settings Toggles](./AddingBooleanToggles.md)**
-- **[Adding Debug Knobs](./AddingDebugKnobs.md)**
 - **[Testing](./Testing.md)**

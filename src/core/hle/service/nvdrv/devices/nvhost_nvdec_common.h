@@ -7,7 +7,7 @@
 #pragma once
 
 #include <deque>
-#include <ankerl/unordered_dense.h>
+#include "common/container/unordered_map.h"
 #include <vector>
 
 #include "common/common_types.h"
@@ -111,6 +111,12 @@ protected:
     };
     static_assert(sizeof(IoctlMapBuffer) == 0x0C, "IoctlMapBuffer is incorrect size");
 
+    struct IoctlGetClkRate {
+        u32_le clk_rate{};
+        u32_le module_id{};
+    };
+    static_assert(sizeof(IoctlGetClkRate) == 8);
+
     /// Ioctl command implementations
     NvResult SetNVMAPfd(IoctlSetNvmapFD&);
     NvResult Submit(IoctlSubmit& params, std::span<u8> input, DeviceFD fd);
@@ -119,6 +125,7 @@ protected:
     NvResult MapBuffer(IoctlMapBuffer& params, std::span<MapBufferEntry> entries, DeviceFD fd);
     NvResult UnmapBuffer(IoctlMapBuffer& params, std::span<MapBufferEntry> entries);
     NvResult SetSubmitTimeout(u32 timeout);
+    NvResult GetClkRate(IoctlGetClkRate& params);
 
     Kernel::KEvent* QueryEvent(u32 event_id) override;
 
@@ -131,7 +138,7 @@ protected:
     NvCore::NvMap& nvmap;
     NvCore::ChannelType channel_type;
     std::array<u32, MaxSyncPoints> device_syncpoints{};
-    ankerl::unordered_dense::map<DeviceFD, NvCore::SessionId> sessions;
+    ::Common::unordered_map<DeviceFD, NvCore::SessionId> sessions;
 };
 }; // namespace Devices
 } // namespace Service::Nvidia

@@ -24,6 +24,9 @@
 #include "video_core/gpu.h"
 #include "video_core/present.h"
 #include "video_core/renderer_vulkan/present/util.h"
+#ifdef HAS_RESHADE
+#include "video_core/post_processing/fx_chain.h"
+#endif
 #include "video_core/renderer_vulkan/renderer_vulkan.h"
 #include "video_core/renderer_vulkan/vk_blit_screen.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
@@ -48,6 +51,23 @@ constexpr VkExtent2D CaptureImageSize{
     .width = VideoCore::Capture::LinearWidth,
     .height = VideoCore::Capture::LinearHeight,
 };
+
+#ifdef HAS_LSFG
+[[nodiscard]] VkExtent2D GuestExtent(std::span<const Tegra::FramebufferConfig> framebuffers) {
+    if (framebuffers.empty()) {
+        return VkExtent2D{};
+    }
+
+    const auto& framebuffer = framebuffers.front();
+    if (framebuffer.crop_rect.IsEmpty()) {
+        return VkExtent2D{.width = framebuffer.width, .height = framebuffer.height};
+    }
+    return VkExtent2D{
+        .width = static_cast<u32>(framebuffer.crop_rect.GetWidth()),
+        .height = static_cast<u32>(framebuffer.crop_rect.GetHeight()),
+    };
+}
+#endif
 
 constexpr VkExtent3D CaptureImageExtent{
     .width = VideoCore::Capture::LinearWidth,
@@ -89,11 +109,10 @@ std::string BuildCommaSeparatedExtensions(
 
 } // Anonymous namespace
 
-Device CreateDevice(const vk::Instance& instance, const vk::InstanceDispatch& dld,
-                    VkSurfaceKHR surface) {
+Device CreateDevice(const vk::Instance& instance, const vk::InstanceDispatch& dld, VkSurfaceKHR surface) {
     const std::vector<VkPhysicalDevice> devices = instance.EnumeratePhysicalDevices();
-    const s32 device_index = Settings::values.vulkan_device.GetValue();
-    if (device_index < 0 || device_index >= static_cast<s32>(devices.size())) {
+    const u32 device_index = Settings::values.vulkan_device.GetValue();
+    if (device_index >= u32(devices.size())) {
         LOG_ERROR(Render_Vulkan, "Invalid device index {}!", device_index);
         throw vk::Exception(VK_ERROR_INITIALIZATION_FAILED);
     }
@@ -156,12 +175,20 @@ try
                   present_manager,
                   scheduler,
                   PresentFiltersForAppletCapture)
-    , rasterizer(render_window, gpu, device_memory, device, memory_allocator, state_tracker, scheduler) {
+    , rasterizer(render_window, gpu, device_memory, device, memory_allocator, state_tracker, scheduler)
+#ifdef HAS_LSFG
+    , frame_gen(memory_allocator, scheduler)
+#endif
+{
 
     if (Settings::values.renderer_force_max_clock.GetValue() && device.ShouldBoostClocks()) {
         turbo_mode.emplace(instance, dld);
         scheduler.RegisterOnSubmit([this] { turbo_mode->QueueSubmitted(); });
     }
+
+#ifdef HAS_RESHADE
+    VideoCore::FxChain::Instance().LoadFromSettings();
+#endif
 
     Report();
 } catch (const vk::Exception& exception) {
@@ -189,12 +216,31 @@ void RendererVulkan::Composite(std::span<const Tegra::FramebufferConfig> framebu
     Frame* frame = present_manager.GetRenderFrame();
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    blit_swapchain.DrawToFrame(rasterizer, frame, framebuffers,
+    blit_swapchain.DrawToFrame(device, rasterizer, frame, framebuffers,
                                render_window.GetFramebufferLayout(), swapchain.GetImageCount(),
                                swapchain.GetImageViewFormat());
+
+#ifdef HAS_LSFG
+    void(frame_gen.WantedGenerations(present_manager.MaxExtraFrames()));
+
+    frame_gen.Process(device, frame, swapchain.GetImageFormat(), GuestExtent(framebuffers));
+
+    const size_t generated_frames = frame_gen.GeneratedFrameCount();
+    for (size_t generation = 0; generation < generated_frames; ++generation) {
+        Frame* generated = present_manager.GetRenderFrame();
+        blit_swapchain.PrepareFrame(device, generated, render_window.GetFramebufferLayout());
+        frame_gen.GenerateInto(device, generated, generation);
+        scheduler.Flush(*generated->render_ready);
+        present_manager.Present(generated);
+    }
+#endif
+
     scheduler.Flush(*frame->render_ready);
 
     present_manager.Present(frame);
+#ifdef HAS_LSFG
+    scheduler.DispatchWork();
+#endif
 
     gpu.RendererFrameEndNotify();
     rasterizer.TickFrame();
@@ -227,12 +273,12 @@ vk::Buffer RendererVulkan::RenderToBuffer(std::span<const Tegra::FramebufferConf
         f.image =
             CreateWrappedImage(memory_allocator, VkExtent2D{layout.width, layout.height}, format);
         f.image_view = CreateWrappedImageView(device, f.image, format);
-        f.framebuffer = blit_capture.CreateFramebuffer(layout, *f.image_view, format);
+        f.framebuffer = blit_capture.CreateFramebuffer(device, layout, *f.image_view, format);
         return f;
     }();
 
     auto dst_buffer = CreateWrappedBuffer(memory_allocator, buffer_size, MemoryUsage::Download);
-    blit_capture.DrawToFrame(rasterizer, &frame, framebuffers, layout, 1, format);
+    blit_capture.DrawToFrame(device, rasterizer, &frame, framebuffers, layout, 1, format);
 
     scheduler.RequestOutsideRenderPassOperationContext();
     scheduler.Record([&](vk::CommandBuffer cmdbuf) {
@@ -253,8 +299,11 @@ void RendererVulkan::RenderScreenshot(std::span<const Tegra::FramebufferConfig> 
         return;
     }
 
+    const auto screenshot_layers = Tegra::FilterLayerStack(
+        framebuffers, renderer_settings.screenshot_layer_stack, screenshot_layer_scratch);
+
     const auto& layout{renderer_settings.screenshot_framebuffer_layout};
-    const auto dst_buffer = RenderToBuffer(framebuffers, layout, VK_FORMAT_B8G8R8A8_UNORM,
+    const auto dst_buffer = RenderToBuffer(screenshot_layers, layout, VK_FORMAT_B8G8R8A8_UNORM,
                                            layout.width * layout.height * 4);
 
     std::memcpy(renderer_settings.screenshot_bits, dst_buffer.Mapped().data(),
@@ -293,15 +342,21 @@ std::vector<u8> RendererVulkan::GetAppletCaptureBuffer() {
 
 void RendererVulkan::RenderAppletCaptureLayer(
     std::span<const Tegra::FramebufferConfig> framebuffers) {
+    const auto capture_layers = Tegra::FilterLayerStack(
+        framebuffers, Service::Nvnflinger::LayerStackId::LastFrame, applet_capture_layers);
+
+    if (capture_layers.empty())
+        return;
+
     if (!applet_frame.image) {
         applet_frame.image = CreateWrappedImage(memory_allocator, CaptureImageSize, CaptureFormat);
         applet_frame.image_view = CreateWrappedImageView(device, applet_frame.image, CaptureFormat);
-        applet_frame.framebuffer = blit_applet.CreateFramebuffer(
+        applet_frame.framebuffer = blit_applet.CreateFramebuffer(device,
             VideoCore::Capture::Layout, *applet_frame.image_view, CaptureFormat);
     }
 
     scheduler.RequestOutsideRenderPassOperationContext();
-    blit_applet.DrawToFrame(rasterizer, &applet_frame, framebuffers, VideoCore::Capture::Layout, 1,
+    blit_applet.DrawToFrame(device, rasterizer, &applet_frame, capture_layers, VideoCore::Capture::Layout, 1,
                             CaptureFormat);
 }
 

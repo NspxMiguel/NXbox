@@ -8,8 +8,9 @@
 
 #include "qt_common/config/uisettings.h"
 #include "qt_common/game_list/game_list_p.h"
-#include "yuzu/game/game_tree.h"
 #include "qt_common/game_list/model.h"
+#include "yuzu/game/common.h"
+#include "yuzu/game/game_tree.h"
 
 GameTree::GameTree(QWidget* parent) : QTreeView{parent} {
     setAlternatingRowColors(true);
@@ -67,7 +68,6 @@ void GameTree::LoadInterfaceLayout() {
 void GameTree::UpdateColumnVisibility(GameListModel* model) {
     Q_UNUSED(model)
     setColumnHidden(GameListModel::COLUMN_ADD_ONS, !UISettings::values.show_add_ons);
-    setColumnHidden(GameListModel::COLUMN_COMPATIBILITY, !UISettings::values.show_compat);
     setColumnHidden(GameListModel::COLUMN_FILE_TYPE, !UISettings::values.show_types);
     setColumnHidden(GameListModel::COLUMN_SIZE, !UISettings::values.show_size);
     setColumnHidden(GameListModel::COLUMN_PLAY_TIME, !UISettings::values.show_play_time);
@@ -139,28 +139,7 @@ void GameTree::ApplyFilter(const QString& edit_filter_text, GameListModel* model
 
             const QStandardItem* child = folder->child(j, 0);
 
-            const auto program_id = child->data(GameListItemPath::ProgramIdRole).toULongLong();
-
-            const QString file_path =
-                child->data(GameListItemPath::FullPathRole).toString().toLower();
-            const QString file_title =
-                child->data(GameListItemPath::TitleRole).toString().toLower();
-            const QString file_program_id =
-                QStringLiteral("%1").arg(program_id, 16, 16, QLatin1Char{'0'});
-
-            const QString file_name =
-                file_path.mid(file_path.lastIndexOf(QLatin1Char{'/'}) + 1) + QLatin1Char{' '} +
-                file_title;
-
-            auto ContainsAllWords = [](const QString& haystack, const QString& userinput) {
-                const QStringList userinput_split =
-                    userinput.split(QLatin1Char{' '}, Qt::SkipEmptyParts);
-                return std::all_of(userinput_split.begin(), userinput_split.end(),
-                                   [&haystack](const QString& s) { return haystack.contains(s); });
-            };
-
-            if (ContainsAllWords(file_name, edit_filter_text) ||
-                (file_program_id.size() == 16 && file_program_id.contains(edit_filter_text))) {
+            if (Yuzu::FilterMatches(edit_filter_text, child)) {
                 setRowHidden(j, folder_index, false);
                 ++result_count;
             } else {

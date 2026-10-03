@@ -46,6 +46,8 @@ These options control dependencies.
 - `YUZU_INSTALL_UDEV_RULES` (OFF) Install udev rules to enable hidraw access
   - Needed for gyroscopes
   - Only available on Linux
+- `ENABLE_DEBUG_TOOLS` (OFF) Enables debugging and development tools, see [tools](../tools/README.md).
+- `ENABLE_WERROR` (ON) Enables warnings as errors (-Werror).
 
 ### Flavors
 
@@ -74,7 +76,7 @@ The following options are desktop only.
 
 - `ENABLE_LIBUSB` (ON) Enable the use of the libusb input backend (HIGHLY RECOMMENDED)
 - `ENABLE_OPENGL` (ON) Enable the OpenGL graphics backend
-  - Unavailable on Windows/ARM64
+  - Unavailable on Windows/ARM64 and on Android
   - You probably shouldn't turn this off.
 
 ### Qt
