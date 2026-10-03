@@ -162,6 +162,33 @@ constexpr Entry kTable[] = {
          L"portal.json is missing from LocalState, with the Device Portal host, port, user and "
          L"pass. Add the file and press A to retry."}, // UpdateMissingPortal
         {L"Atualizar", L"Update"},                     // UpdateAction
+        {L"Pendrive detectado", L"USB drive detected"}, // UsbDetected
+        {L"Pendrive", L"USB drive"},                    // UsbSetting
+        {L"Não escolhido (pergunta no próximo drive)",
+         L"Not chosen yet (asks on the next drive)"},                            // UsbModeUnset
+        {L"Perguntar sempre", L"Ask every time"},                                // UsbModeAsk
+        {L"Copiar jogos para o SSD interno", L"Copy games to the internal SSD"}, // UsbModeCopy
+        {L"Usar como SSD externo", L"Use as an external SSD"},                   // UsbModeExternal
+        {L"Não fazer nada", L"Do nothing"},                                      // UsbModeOff
+        {L"Agora não", L"Not now"},                                              // UsbLater
+        {L"A ação escolhida será repetida sempre que este drive for conectado. Mude em "
+         L"Configurações > Pendrive, inclusive para perguntar sempre. Agora não mantém a "
+         L"configuração atual.",
+         L"The chosen action will run every time this drive is connected. Change it in Settings > "
+         L"USB drive, including asking every time. Not now keeps the current setting."}, // UsbRepeat
+        {L"Perguntar sempre está ativo: esta escolha vale só agora. Você verá esta pergunta a cada "
+         L"conexão. Mude em Configurações > Pendrive.",
+         L"Ask every time is on: this choice runs once. You will see this question on every "
+         L"connection. Change it in Settings > USB drive."}, // UsbRepeatAsk
+        {L"A muda a ação ao conectar o drive.",
+         L"A changes the action when a drive connects."},                    // UsbSettingHint
+        {L"jogos fora de NXbox\\games", L"games outside NXbox\\games"},      // UsbDetectedGames
+        {L"chaves fora de NXbox\\games", L"key files outside NXbox\\games"}, // UsbDetectedKeys
+        {L"Espaço livre desconhecido", L"Free space unknown"},               // UsbSpaceUnknown
+        {L"jogos não couberam: use o drive como SSD externo.",
+         L"games did not fit: use the drive as an external SSD."}, // UsbDidNotFit
+        {L"Não foi possível salvar a preferência do pendrive.",
+         L"Could not save the USB drive preference."},                    // UsbSaveFailed
         {L"Importar do pendrive", L"Import from USB drive"}, // UsbTitle
         {L"Procurando nos drives...", L"Looking through your drives..."}, // UsbScanning
         {L"Nenhum drive removível encontrado. Conecte um pendrive ou HD formatado em exFAT ou NTFS com seus dumps e pressione A para procurar de novo.", L"No removable drive found. Plug in a USB drive formatted exFAT or NTFS with your dumps, then press A to scan again."}, // UsbNoDrive

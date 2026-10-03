@@ -15,8 +15,11 @@
 #include <cstdint>
 #include <cwctype>
 #include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <span>
 #include <string>
 #include <system_error>
@@ -87,6 +90,7 @@ constexpr auto kRateWindow = std::chrono::milliseconds(500);
 
 struct Item {
     bool is_key = false;
+    bool already_copied = false;
     std::wstring path;   // full path on the drive
     std::wstring name;   // file name, kept as the name of the copy
     std::wstring drive;  // the drive's root, e.g. L"E:\"
@@ -96,6 +100,8 @@ struct Item {
 
 struct Drive {
     std::wstring root;
+    std::wstring name;
+    bool unseen = false;
     std::wstring letter;
     std::optional<std::uint64_t> free;
 };
@@ -111,7 +117,7 @@ struct Job {
     bool move = false; // false: copy to the console's storage
 };
 
-enum class Phase { Scanning, Ready, Working };
+enum class Phase { Scanning, Ready, Working, Detected, Result };
 enum class Outcome { Done, Failed, Cancelled };
 
 std::wstring Lower(std::wstring text) {
@@ -216,30 +222,54 @@ void Walk(const StorageFolder& folder, int depth, const Drive& drive, const std:
     }
 }
 
-ScanResult ScanDrives(const fs::path& local_state, const std::atomic<bool>& cancel) {
+ScanResult ScanDrives(const fs::path& local_state, const std::atomic<bool>& cancel,
+                      std::set<std::wstring>* connected = nullptr) {
     ScanResult result;
-    result.xbox_free = StorageFreeSpace(local_state);
+    if (!connected)
+        result.xbox_free = FreeSpace(local_state);
     try {
         const auto drives =
             AwaitBounded(KnownFolders::RemovableDevices().GetFoldersAsync(), std::chrono::seconds(5));
         if (drives) {
+            std::set<std::wstring> present;
             for (const auto& folder : *drives) {
                 if (cancel.load()) {
                     break;
                 }
                 Drive drive;
                 drive.root = std::wstring(folder.Path());
+                drive.name = std::wstring(folder.DisplayName());
+                if (drive.root.empty()) {
+                    Diagnostic("USB_DETECT skipping drive without a folder path");
+                    continue;
+                }
+                const auto identity = drive.name + L"|" + Lower(drive.root);
+                present.insert(identity);
+                if (connected && connected->contains(identity)) {
+                    continue;
+                }
                 drive.letter = drive.root.size() >= 2 && drive.root[1] == L':'
                                    ? drive.root.substr(0, 2)
                                    : std::wstring(folder.DisplayName());
                 drive.free = StorageFreeSpace(fs::path(drive.root));
                 const std::wstring skip = Lower(TrimBackslash(drive.root)) + L"\\nxbox\\games";
-                Walk(folder, 0, drive, skip, cancel, result.items);
+                Walk(folder, 0, drive, connected ? L"" : skip, cancel, result.items);
                 result.drives.push_back(std::move(drive));
+            }
+            if (connected) {
+                *connected = std::move(present);
             }
         }
     } catch (const winrt::hresult_error& error) {
         Diagnostic("USB_IMPORT_SCAN failed " + winrt::to_string(error.message()));
+    }
+    if (connected) {
+        for (auto& item : result.items) {
+            const auto target = local_state / (item.is_key ? L"eden/keys" : L"games") / item.name;
+            std::error_code error;
+            const auto size = fs::file_size(target, error);
+            item.already_copied = !error && size == item.size;
+        }
     }
     // Keys first, then the games by name.
     std::sort(result.items.begin(), result.items.end(), [](const Item& a, const Item& b) {
@@ -253,11 +283,50 @@ ScanResult ScanDrives(const fs::path& local_state, const std::atomic<bool>& canc
     return result;
 }
 
+const char* ModeName(UsbMode mode) {
+    switch (mode) {
+    case UsbMode::Ask:
+        return "ask";
+    case UsbMode::Copy:
+        return "copy";
+    case UsbMode::External:
+        return "external";
+    case UsbMode::Off:
+        return "off";
+    default:
+        return "unset";
+    }
+}
+
+bool InDriveLibrary(const Item& item) {
+    const auto prefix = Lower(TrimBackslash(item.drive)) + L"\\nxbox\\games\\";
+    return Lower(item.path).starts_with(prefix);
+}
+
+std::string DriveIdentity(const Drive& drive) {
+    return Utf8(drive.name + L"|" + Lower(drive.root));
+}
+
+void RememberDrive(const fs::path& local_state, const Drive& drive) {
+    std::ofstream file(local_state / "usb_seen.txt", std::ios::app);
+    file << std::quoted(DriveIdentity(drive)) << '\n';
+    if (!file)
+        Diagnostic("USB_DETECT failed saving seen drive");
+}
+
 class UsbImportScreen {
 public:
     UsbImportScreen(Renderer& renderer, const CoreWindow& window, Input& input,
                     const fs::path& local_state)
         : renderer_(renderer), window_(window), input_(input), local_state_(local_state) {}
+
+    UsbImportScreen(Renderer& renderer, const CoreWindow& window, Input& input,
+                    const fs::path& local_state, Drive drive, std::vector<Item> items, UsbMode mode)
+        : renderer_(renderer), window_(window), input_(input), local_state_(local_state),
+          detected_(true), mode_(mode) {
+        drives_.push_back(std::move(drive));
+        items_ = std::move(items);
+    }
 
     ~UsbImportScreen() {
         cancel_.store(true);
@@ -274,7 +343,18 @@ public:
             window_.Closed(closed_token);
         };
         Diagnostic("UI usb import screen open");
-        StartScan();
+        if (detected_) {
+            const Drive& drive = drives_.front();
+            phase_ = Phase::Detected;
+            if (mode_ != UsbMode::Unset && mode_ != UsbMode::Ask && !drive.unseen) {
+                StartDetectedAction(mode_);
+            } else {
+                if (drive.unseen)
+                    RememberDrive(local_state_, drive);
+            }
+        } else {
+            StartScan();
+        }
         while (!closed_ && !leaving_) {
             const Clock::time_point frame_start = Clock::now();
             window_.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
@@ -346,7 +426,12 @@ private:
     }
 
     void StartJobs(std::vector<Job> jobs, int skipped) {
-        if (jobs.empty()) {
+        if (jobs.empty() && detected_) {
+            Diagnostic(std::string("USB_AUTO ") + ModeName(action_) + " done=0 skipped=0");
+            leaving_ = true;
+            return;
+        }
+        if (jobs.empty() && !detected_) {
             return;
         }
         phase_ = Phase::Working;
@@ -364,6 +449,24 @@ private:
         single_move_ = jobs.size() == 1 && jobs.front().move;
         StartWorker([this, jobs = std::move(jobs)] {
             for (std::size_t i = 0; i < jobs.size(); ++i) {
+                if (cancel_.load()) {
+                    cancelled_.store(true);
+                    break;
+                }
+                const auto& job = jobs[i];
+                if (!job.move) {
+                    const auto target = local_state_ / (job.item.is_key ? L"eden/keys" : L"games");
+                    std::error_code error;
+                    const auto size = fs::file_size(target / job.item.name, error);
+                    if (!error && size == job.item.size)
+                        continue;
+                    const auto free = FreeSpace(local_state_);
+                    if (!job.item.is_key &&
+                        (!free || *free < kSpaceReserve || job.item.size > *free - kSpaceReserve)) {
+                        skipped_.fetch_add(1);
+                        continue;
+                    }
+                }
                 job_index_.store(static_cast<int>(i) + 1);
                 Outcome outcome = RunJob(jobs[i]);
                 if (outcome == Outcome::Done) {
@@ -578,6 +681,16 @@ private:
             phase_ = Phase::Ready;
             selected_ = std::clamp(selected_, 0, std::max(RowCount() - 1, 0));
         } else if (phase_ == Phase::Working) {
+            if (detected_) {
+                Diagnostic(std::string("USB_AUTO ") + ModeName(action_) +
+                           " done=" + std::to_string(ok_.load()) +
+                           " skipped=" + std::to_string(skipped_.load()));
+                result_ = Summary();
+                phase_ = Phase::Result;
+                if (result_.empty())
+                    leaving_ = true;
+                return;
+            }
             Toast(Summary(), now);
             // The files moved or arrived: look again, which also refreshes the free space.
             StartScan();
@@ -602,13 +715,35 @@ private:
         };
         add(ok, Tr(Text::UsbSummaryOk));
         add(failed, Tr(Text::UsbSummaryFailed));
-        add(skipped, Tr(Text::UsbSummaryNoSpace));
+        add(skipped, Tr(detected_ ? Text::UsbDidNotFit : Text::UsbSummaryNoSpace));
         return text;
     }
 
     void Update(Clock::time_point now) {
         AdoptWorker(now);
         switch (phase_) {
+        case Phase::Detected:
+            if (input_.Pressed(Button::Up))
+                choice_focus_ = std::max(0, choice_focus_ - 1);
+            if (input_.Pressed(Button::Down))
+                choice_focus_ = std::min(2, choice_focus_ + 1);
+            if (input_.Pressed(Button::B) || (input_.Pressed(Button::A) && choice_focus_ == 2)) {
+                Diagnostic("USB_DETECT_CHOICE later");
+                leaving_ = true;
+            } else if (input_.Pressed(Button::A)) {
+                const auto action = choice_focus_ == 0 ? UsbMode::Copy : UsbMode::External;
+                Diagnostic(std::string("USB_DETECT_CHOICE ") + ModeName(action));
+                if (mode_ != UsbMode::Ask && !SaveUsbMode(local_state_, action)) {
+                    choice_message_ = Tr(Text::UsbSaveFailed);
+                    return;
+                }
+                StartDetectedAction(action);
+            }
+            break;
+        case Phase::Result:
+            if (input_.Pressed(Button::A) || input_.Pressed(Button::B))
+                leaving_ = true;
+            break;
         case Phase::Scanning:
             if (input_.Pressed(Button::B)) {
                 cancel_.store(true);
@@ -638,6 +773,53 @@ private:
         if (scroll_.Target() != static_cast<float>(top_)) {
             scroll_.To(static_cast<float>(top_), now, kDurationPanel);
         }
+    }
+
+    void StartDetectedAction(UsbMode action) {
+        action_ = action;
+        std::vector<Job> jobs;
+        for (const auto& item : items_) {
+            if (action == UsbMode::External && !item.is_key && InDriveLibrary(item))
+                continue;
+            const bool move = action == UsbMode::External && !item.is_key;
+            if (!move && item.already_copied)
+                continue;
+            jobs.push_back({item, move});
+        }
+        StartJobs(std::move(jobs), 0);
+    }
+
+    void DrawDetection() {
+        const auto sheet = RectF(300.0f, 150.0f, 1620.0f, 930.0f);
+        DrawSheet(renderer_, sheet);
+        const float left = sheet.left + kSheetPadding;
+        const float right = sheet.right - kSheetPadding;
+        renderer_.DrawString(Tr(Text::UsbDetected), Font::Heading,
+                             RectF(left, 185.0f, right, 255.0f), Theme::kText);
+        const auto& drive = drives_.front();
+        const auto games = std::count_if(items_.begin(), items_.end(), [](const Item& item) {
+            return !item.is_key && !InDriveLibrary(item);
+        });
+        const auto keys = std::count_if(items_.begin(), items_.end(), [](const Item& item) {
+            return item.is_key && !InDriveLibrary(item);
+        });
+        const auto detail = drive.name + L" · " +
+                            (drive.free ? FormatBytes(*drive.free) + L" " + Tr(Text::UsbFree)
+                                        : std::wstring(Tr(Text::UsbSpaceUnknown))) +
+                            L"\n" + std::to_wstring(games) + L" " + Tr(Text::UsbDetectedGames) +
+                            L" · " + std::to_wstring(keys) + L" " + Tr(Text::UsbDetectedKeys);
+        renderer_.DrawString(detail, Font::Body, RectF(left, 270.0f, right, 395.0f),
+                             Theme::kTextSecondary);
+        const Text labels[] = {Text::UsbModeCopy, Text::UsbModeExternal, Text::UsbLater};
+        for (int i = 0; i < 3; ++i) {
+            const float top = 420.0f + static_cast<float>(i) * 96.0f;
+            DrawChoicePill(renderer_, RectF(left, top, right, top + kPillHeight), Tr(labels[i]),
+                           i == 0, choice_focus_ == i);
+        }
+        renderer_.DrawString(choice_message_.empty()
+                                 ? Tr(mode_ == UsbMode::Ask ? Text::UsbRepeatAsk : Text::UsbRepeat)
+                                 : choice_message_.c_str(),
+                             Font::Body, RectF(left, 740.0f, right, 900.0f), Theme::kTextSecondary);
     }
 
     void HandleInput(Clock::time_point now) {
@@ -725,24 +907,12 @@ private:
     // Every key and every game that still fits on the console's storage.
     void CopyAll(Clock::time_point now) {
         std::vector<Job> jobs;
-        int skipped = 0;
-        std::optional<std::uint64_t> remaining = xbox_free_;
         for (const Item& item : items_) {
-            if (!item.is_key && remaining) {
-                if (item.size + kSpaceReserve > *remaining) {
-                    ++skipped;
-                    Diagnostic("USB_IMPORT_COPY " + Utf8(item.name) + " failed not enough space");
-                    continue;
-                }
-                *remaining -= item.size;
-            }
             jobs.push_back(Job{item, false});
         }
-        if (jobs.empty()) {
-            Toast(Tr(Text::UsbNothingFits), now);
-            return;
-        }
-        StartJobs(std::move(jobs), skipped);
+        // Check duplicates and fresh free space on the worker before each copy.
+        StartJobs(std::move(jobs), 0);
+        (void)now;
     }
 
     void Toast(const std::wstring& text, Clock::time_point now) {
@@ -756,6 +926,18 @@ private:
     // ---- Drawing ----
 
     void Draw(Clock::time_point now) {
+        if (detected_ && phase_ == Phase::Detected) {
+            DrawDetection();
+            DrawHints(renderer_, {{Theme::kButtonA, L"A", Tr(Text::HintSelect)},
+                                  {Theme::kButtonB, L"B", Tr(Text::UsbLater)}});
+            return;
+        }
+        if (detected_ && phase_ == Phase::Result) {
+            DrawHeader();
+            DrawMessage(result_);
+            DrawHints(renderer_, {{Theme::kButtonB, L"B", Tr(Text::HintBack)}});
+            return;
+        }
         DrawHeader();
         if (phase_ == Phase::Scanning) {
             DrawMessage(Tr(Text::UsbScanning));
@@ -964,6 +1146,10 @@ private:
     Input& input_;
     fs::path local_state_;
 
+    bool detected_ = false;
+    UsbMode mode_ = UsbMode::Unset;
+    UsbMode action_ = UsbMode::Unset;
+    std::wstring result_;
     Phase phase_ = Phase::Scanning;
     std::vector<Item> items_;
     std::vector<Drive> drives_;
@@ -1003,6 +1189,138 @@ private:
 };
 
 } // namespace
+
+UsbMode LoadUsbMode(const fs::path& local_state) {
+    std::ifstream file(local_state / "usb_mode.txt");
+    std::string value;
+    file >> value;
+    for (const auto mode : {UsbMode::Ask, UsbMode::Copy, UsbMode::External, UsbMode::Off}) {
+        if (value == ModeName(mode))
+            return mode;
+    }
+    return UsbMode::Unset;
+}
+
+bool SaveUsbMode(const fs::path& local_state, UsbMode mode) {
+    std::ofstream file(local_state / "usb_mode.txt", std::ios::trunc);
+    file << ModeName(mode) << '\n';
+    file.close();
+    if (!file)
+        Diagnostic("USB_DETECT failed saving mode");
+    return static_cast<bool>(file);
+}
+
+const wchar_t* UsbModeLabel(UsbMode mode) {
+    switch (mode) {
+    case UsbMode::Ask:
+        return Tr(Text::UsbModeAsk);
+    case UsbMode::Copy:
+        return Tr(Text::UsbModeCopy);
+    case UsbMode::External:
+        return Tr(Text::UsbModeExternal);
+    case UsbMode::Off:
+        return Tr(Text::UsbModeOff);
+    default:
+        return Tr(Text::UsbModeUnset);
+    }
+}
+
+struct UsbDetection::State {
+    fs::path local_state;
+    std::atomic<bool> cancel{false};
+    std::atomic<bool> done{false};
+    bool running = false;
+    Clock::time_point next{};
+    std::set<std::wstring> connected;
+    ScanResult result;
+};
+
+UsbDetection::UsbDetection(const fs::path& local_state) : state_(std::make_shared<State>()) {
+    state_->local_state = local_state;
+    Ready();
+}
+
+UsbDetection::~UsbDetection() {
+    state_->cancel.store(true);
+}
+
+bool UsbDetection::Ready() {
+    auto& state = *state_;
+    if (state.running) {
+        if (!state.done.load())
+            return false;
+        state.running = false;
+        state.next = Clock::now() + std::chrono::seconds(5);
+    }
+    if (!state.result.drives.empty())
+        return true;
+    if (Clock::now() < state.next)
+        return false;
+    state.done.store(false);
+    state.running = true;
+    // The worker owns its state. Leaving the library never joins a pending storage request.
+    std::thread([state = state_] {
+        try {
+            winrt::init_apartment(winrt::apartment_type::multi_threaded);
+            SCOPE_EXIT {
+                winrt::uninit_apartment();
+            };
+            if (LoadUsbMode(state->local_state) != UsbMode::Off) {
+                state->result = ScanDrives(state->local_state, state->cancel, &state->connected);
+            }
+        } catch (const std::exception& error) {
+            Diagnostic(std::string("USB_DETECT worker failed ") + error.what());
+        } catch (...) {
+            Diagnostic("USB_DETECT worker failed");
+        }
+        state->done.store(true);
+    }).detach();
+    return false;
+}
+
+bool UsbDetection::Run(Renderer& renderer, const CoreWindow& window, Input& input) {
+    auto result = std::move(state_->result);
+    state_->result = {};
+    std::set<std::string> seen;
+    std::ifstream file(state_->local_state / "usb_seen.txt");
+    std::string identity;
+    while (file >> std::quoted(identity))
+        seen.insert(identity);
+    for (auto& drive : result.drives) {
+        const auto mode = LoadUsbMode(state_->local_state);
+        if (mode == UsbMode::Off)
+            break;
+        drive.unseen = !seen.contains(DriveIdentity(drive));
+        std::vector<Item> items;
+        int games = 0;
+        int keys = 0;
+        for (const auto& item : result.items) {
+            if (item.drive != drive.root)
+                continue;
+            items.push_back(item);
+            if (!InDriveLibrary(item)) {
+                if (item.is_key)
+                    ++keys;
+                else
+                    ++games;
+            }
+        }
+        Diagnostic("USB_DETECT drive=" + Utf8(drive.name) + " mode=" + ModeName(mode) +
+                   " games=" + std::to_string(games) + " keys=" + std::to_string(keys) +
+                   " new=" + (drive.unseen ? "yes" : "no"));
+        try {
+            UsbImportScreen screen(renderer, window, input, state_->local_state, std::move(drive),
+                                   std::move(items), mode);
+            if (screen.Run())
+                return true;
+        } catch (const winrt::hresult_error& error) {
+            Diagnostic("USB_DETECT screen failed " + winrt::to_string(error.message()));
+        } catch (const std::exception& error) {
+            Diagnostic(std::string("USB_DETECT screen failed ") + error.what());
+        }
+    }
+    return false;
+}
 
 bool RunUsbImportScreen(Renderer& renderer, const CoreWindow& window, Input& input,
                         const std::filesystem::path& local_state) {

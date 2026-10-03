@@ -117,7 +117,8 @@ constexpr int kActionCount = 3;
 // The rows of the settings list.
 constexpr int kSettingSaveSync = 0;
 constexpr int kSettingSources = 1;
-constexpr int kSettingsRowCount = 2;
+constexpr int kSettingUsb = 2;
+constexpr int kSettingsRowCount = 3;
 
 constexpr std::size_t Idx(int index) {
     return static_cast<std::size_t>(index);
@@ -276,6 +277,8 @@ public:
           banners_(local_state) {
         sync_account_ = GetSyncAccount();
         sources_count_ = CountSources(local_state_);
+        usb_mode_ = LoadUsbMode(local_state_);
+        usb_detection_ = std::make_unique<UsbDetection>(local_state_);
         StartScan();
     }
 
@@ -478,6 +481,14 @@ private:
         AdoptScan();
         if (!launching_) {
             HandleInput(now);
+        }
+        // Input gets first refusal: an A press that starts a game must beat detection.
+        if (!launching_ && !leaving_ && !closed_ && !scan_ && !details_open_ && !update_open_ &&
+            tab_ == Tab::Library && usb_detection_->Ready()) {
+            closed_ = usb_detection_->Run(renderer_, window_, input_);
+            usb_mode_ = LoadUsbMode(local_state_);
+            if (!closed_)
+                StartScan();
         }
         Refresh(now);
         PollBanner(hero_key_, now);
@@ -690,6 +701,18 @@ private:
 
     // A on a settings row.
     void ActivateSetting(Clock::time_point now) {
+        if (settings_row_ == kSettingUsb) {
+            const auto next = usb_mode_ == UsbMode::Ask        ? UsbMode::Copy
+                              : usb_mode_ == UsbMode::Copy     ? UsbMode::External
+                              : usb_mode_ == UsbMode::External ? UsbMode::Off
+                                                               : UsbMode::Ask;
+            if (SaveUsbMode(local_state_, next)) {
+                usb_mode_ = next;
+            } else {
+                Toast(Tr(Text::UsbSaveFailed), now);
+            }
+            return;
+        }
         if (settings_row_ == kSettingSources) {
             OpenSources();
             return;
@@ -1230,7 +1253,8 @@ private:
                     hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSignIn)});
                 }
             }
-            if (layer_ == Layer::Rail && settings_row_ == kSettingSources) {
+            if (layer_ == Layer::Rail &&
+                (settings_row_ == kSettingSources || settings_row_ == kSettingUsb)) {
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSelect)});
             }
         } else if (HasGame()) {
@@ -1282,7 +1306,9 @@ private:
             sources_row.state = sources_state.c_str();
             sources_row.state_color = Theme::kSuccessText;
         }
-        const std::array<Row, kSettingsRowCount> rows = {{sync_row, sources_row}};
+        const Row usb_row = {Tr(Text::UsbSetting), UsbModeLabel(usb_mode_), Theme::kTextSecondary,
+                             Tr(Text::UsbSettingHint)};
+        const std::array<Row, kSettingsRowCount> rows = {{sync_row, sources_row, usb_row}};
         constexpr float kRowTop = 580.0f;
         constexpr float kRowHeight = 88.0f;
         constexpr float kRowPitch = 98.0f;
@@ -1297,14 +1323,16 @@ private:
             renderer_.DrawString(rows[Idx(i)].name, Font::RowTitle,
                                  RectF(kMargin + 28.0f, y + 12.0f, kMargin + 700.0f, y + 48.0f),
                                  Theme::kText, HAlign::Left, VAlign::Middle);
-            renderer_.DrawString(rows[Idx(i)].hint, Font::RowSub,
-                                 RectF(kMargin + 28.0f, y + 50.0f, kCanvasWidth - kMargin - 360.0f,
-                                       y + 78.0f),
-                                 Theme::kTextSecondary, HAlign::Left, VAlign::Middle);
-            renderer_.DrawString(rows[Idx(i)].state, Font::Button,
-                                 RectF(kCanvasWidth - kMargin - 340.0f, y, kCanvasWidth - kMargin - 28.0f,
-                                       y + kRowHeight),
-                                 rows[Idx(i)].state_color, HAlign::Right, VAlign::Middle);
+            renderer_.DrawString(
+                rows[Idx(i)].hint, Font::RowSub,
+                RectF(kMargin + 28.0f, y + 50.0f,
+                      kCanvasWidth - kMargin - (i == kSettingUsb ? 790.0f : 360.0f), y + 78.0f),
+                Theme::kTextSecondary, HAlign::Left, VAlign::Middle);
+            renderer_.DrawString(
+                rows[Idx(i)].state, Font::Button,
+                RectF(kCanvasWidth - kMargin - (i == kSettingUsb ? 770.0f : 340.0f), y,
+                      kCanvasWidth - kMargin - 28.0f, y + kRowHeight),
+                rows[Idx(i)].state_color, HAlign::Right, VAlign::Middle);
             if (focused) {
                 DrawRing(renderer_, row, kRowRadius + kRingGap, 1.0f);
             }
@@ -1366,6 +1394,8 @@ private:
     BannerSource banners_; // the eShop banners of the hero, fetched off the render thread
     std::vector<int> banner_order_; // games whose banner is on the GPU, the oldest first
 
+    UsbMode usb_mode_ = UsbMode::Unset;
+    std::unique_ptr<UsbDetection> usb_detection_;
     std::unique_ptr<LibraryScan> scan_; // set while the folder is being read
     std::string keep_title_id_;         // the game to focus again when the scan ends
     bool keys_missing_ = false;         // the last scan found games it could not open for want of keys
