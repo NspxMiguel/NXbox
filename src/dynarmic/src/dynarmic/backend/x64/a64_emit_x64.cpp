@@ -751,6 +751,7 @@ bool A64EmitX64::EmitTerminal(IR::Term::Terminal const& terminal, IR::LocationDe
 
 void A64EmitX64::EmitPatchJg(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
     const CodePtr patch_location = code.getCurr();
+    code.PrepareWriteRange(patch_location, 23);
     if (target_code_ptr) {
         code.jg(target_code_ptr);
     } else {
@@ -763,6 +764,7 @@ void A64EmitX64::EmitPatchJg(const IR::LocationDescriptor& target_desc, CodePtr 
 
 void A64EmitX64::EmitPatchJz(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
     const CodePtr patch_location = code.getCurr();
+    code.PrepareWriteRange(patch_location, 23);
     if (target_code_ptr) {
         code.jz(target_code_ptr);
     } else {
@@ -775,6 +777,7 @@ void A64EmitX64::EmitPatchJz(const IR::LocationDescriptor& target_desc, CodePtr 
 
 void A64EmitX64::EmitPatchJmp(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
     const CodePtr patch_location = code.getCurr();
+    code.PrepareWriteRange(patch_location, 22);
     if (target_code_ptr) {
         code.jmp(target_code_ptr);
     } else {
@@ -790,6 +793,7 @@ void A64EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
         target_code_ptr = code.GetReturnFromRunCodeAddress();
     }
     const CodePtr patch_location = code.getCurr();
+    code.PrepareWriteRange(patch_location, 10);
     code.mov(code.rcx, u64(target_code_ptr));
     code.EnsurePatchLocationSize(patch_location, 10);
 }
@@ -797,9 +801,14 @@ void A64EmitX64::EmitPatchMovRcx(CodePtr target_code_ptr) {
 void A64EmitX64::Unpatch(const IR::LocationDescriptor& location) {
     EmitX64::Unpatch(location);
     if (conf.HasOptimization(OptimizationFlag::FastDispatch)) {
+#ifndef DYNARMIC_UWP_APPCONTAINER
         code.DisableWriting();
+#endif
+        // UWP keeps this immutable prelude on separate RX pages while patching blocks.
         (*fast_dispatch_table_lookup)(location.Value()) = {};
+#ifndef DYNARMIC_UWP_APPCONTAINER
         code.EnableWriting();
+#endif
     }
 }
 

@@ -12,19 +12,20 @@
 #include <functional>
 #include <memory>
 #include <type_traits>
+#include <vector>
 
 #include "common/common_types.h"
 #include "common/x64/xbyak.h"
-#include "dynarmic/mcl/bit.hpp"
-#include "dynarmic/backend/x64/xbyak.h"
 #include "dynarmic/backend/x64/abi.h"
 #include "dynarmic/backend/x64/callback.h"
 #include "dynarmic/backend/x64/constant_pool.h"
 #include "dynarmic/backend/x64/host_feature.h"
 #include "dynarmic/backend/x64/jitstate_info.h"
+#include "dynarmic/backend/x64/xbyak.h"
 #include "dynarmic/common/cast_util.h"
 #include "dynarmic/interface/halt_reason.h"
 #include "dynarmic/ir/cond.h"
+#include "dynarmic/mcl/bit.hpp"
 
 namespace Dynarmic::Backend::X64 {
 
@@ -49,6 +50,9 @@ public:
     void EnableWriting();
     /// Change permissions to RX. This is required to support systems with W^X enforced.
     void DisableWriting();
+
+    /// Make an existing patch or constant writable until DisableWriting (UWP only).
+    void PrepareWriteRange(const void* address, size_t size);
 
     /// Clears this block of code and resets code pointer to beginning.
     void ClearCache();
@@ -173,6 +177,21 @@ private:
     static constexpr size_t MXCSR_ALREADY_EXITED = 1 << 0;
     static constexpr size_t FORCE_RETURN = 1 << 1;
 
+#ifdef _WIN32
+    // ConstantPool's constructor commits memory, so this state must precede it.
+    size_t committed_size = 0;
+#endif
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    struct WriteRange {
+        size_t begin;
+        size_t end;
+    };
+    size_t append_begin = 0;
+    size_t executable_end = 0;
+    bool writing = true;
+    std::vector<WriteRange> write_ranges;
+    void RecordWriteRange(size_t begin, size_t end);
+#endif
     ConstantPool constant_pool;
     JitStateInfo jsi;
     std::array<const void*, 4> return_from_run_code;
@@ -180,9 +199,6 @@ private:
     RunCodeFuncType step_code = nullptr;
     RunCodeCallbacks cb;
     CodePtr code_begin = nullptr;
-#ifdef _WIN32
-    size_t committed_size = 0;
-#endif
     bool prelude_complete = false;
 
     void GenRunCode(std::function<void(BlockOfCode&)> rcp);

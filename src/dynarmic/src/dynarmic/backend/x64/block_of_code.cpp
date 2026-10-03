@@ -78,6 +78,17 @@ constexpr size_t CONSTANT_POOL_SIZE = 2 * 1024 * 1024;
 constexpr size_t PRELUDE_COMMIT_SIZE = 16 * 1024 * 1024;
 
 #ifdef DYNARMIC_UWP_APPCONTAINER
+size_t JitPageSize() {
+    static const size_t page_size = [] {
+        SYSTEM_INFO info{};
+        GetSystemInfo(&info);
+        return static_cast<size_t>(info.dwPageSize);
+    }();
+    return page_size;
+}
+#endif
+
+#ifdef DYNARMIC_UWP_APPCONTAINER
 // Upstream now uses Xbyak's default allocator (heap memory) and flips protections on it. Under the
 // Xbox/UWP AppContainer JIT pages must instead be reserved with VirtualAllocFromApp so that
 // VirtualProtectFromApp (codeGeneration capability) may later make them executable, so the port
@@ -115,7 +126,16 @@ void ProtectMemory(const void* base, size_t size, bool is_executable) {
     // The is_executable→PAGE_EXECUTE_READ transition is the call that requires the `codeGeneration`
     // capability under the AppContainer (VirtualProtectFromApp); the W^X invariant means we only ever
     // hold RW or RX, never RWX.
+#        ifdef DYNARMIC_UWP_APPCONTAINER
+    if (!DYNARMIC_VIRTUAL_PROTECT(const_cast<void*>(base), size, is_executable ? PAGE_EXECUTE_READ : PAGE_READWRITE, &oldProtect)) {
+        UNREACHABLE_MSG("NXBOX JIT protection failed: error={}", GetLastError());
+    }
+    if (is_executable && !FlushInstructionCache(GetCurrentProcess(), base, size)) {
+        UNREACHABLE_MSG("NXBOX JIT instruction cache flush failed: error={}", GetLastError());
+    }
+#        else
     DYNARMIC_VIRTUAL_PROTECT(const_cast<void*>(base), size, is_executable ? PAGE_EXECUTE_READ : PAGE_READWRITE, &oldProtect);
+#        endif
 #    else
     static const size_t pageSize = sysconf(_SC_PAGESIZE);
     const size_t iaddr = reinterpret_cast<size_t>(base);
@@ -208,8 +228,19 @@ BlockOfCode::BlockOfCode(RunCodeCallbacks cb, JitStateInfo jsi, size_t total_cod
     , jsi(jsi)
     , cb(std::move(cb))
 {
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    static const bool logged = [] {
+        LOG_INFO(Core_ARM, "NXBOX JIT_MODE wx protection=page-granular");
+        return true;
+    }();
+    (void)logged;
+#endif
     EnableWriting();
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    EnsureMemoryCommitted(PRELUDE_COMMIT_SIZE - size_);
+#else
     EnsureMemoryCommitted(PRELUDE_COMMIT_SIZE);
+#endif
     GenRunCode(rcp);
 }
 
@@ -218,14 +249,26 @@ bool BlockOfCode::HasHostFeature(HostFeature feature) const noexcept {
 }
 
 void BlockOfCode::PreludeComplete() {
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    // Cache rewinds and incoming block patches must never make the dispatcher NX.
+    EnsureMemoryCommitted(JitPageSize());
+    align(JitPageSize());
+#endif
     prelude_complete = true;
     code_begin = getCurr();
-    ClearCache();
     DisableWriting();
 }
 
 void BlockOfCode::EnableWriting() {
-#ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    if (writing)
+        return;
+    writing = true;
+    append_begin = size_;
+    // The unused suffix is already RW. Only the shared tail page can be RX.
+    if (size_ < executable_end)
+        PrepareWriteRange(getCurr(), 1);
+#elif defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT)
 #    ifdef _WIN32
     ProtectMemory(getCode(), committed_size, false);
 #    else
@@ -235,7 +278,19 @@ void BlockOfCode::EnableWriting() {
 }
 
 void BlockOfCode::DisableWriting() {
-#ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    if (!writing)
+        return;
+    if (size_ > append_begin) {
+        RecordWriteRange(append_begin, size_);
+        executable_end = std::max(executable_end, (size_ + JitPageSize() - 1) & ~(JitPageSize() - 1));
+    }
+    for (const auto& range : write_ranges) {
+        ProtectMemory(top_ + range.begin, range.end - range.begin, true);
+    }
+    write_ranges.clear();
+    writing = false;
+#elif defined(DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT)
 #    ifdef _WIN32
     ProtectMemory(getCode(), committed_size, true);
 #    else
@@ -244,8 +299,62 @@ void BlockOfCode::DisableWriting() {
 #endif
 }
 
+#ifdef DYNARMIC_UWP_APPCONTAINER
+void BlockOfCode::RecordWriteRange(size_t begin, size_t end) {
+    const size_t mask = JitPageSize() - 1;
+    begin &= ~mask;
+    end = (end + mask) & ~mask;
+    auto it = write_ranges.begin();
+    while (it != write_ranges.end() && it->end < begin)
+        ++it;
+    while (it != write_ranges.end() && it->begin <= end) {
+        begin = std::min(begin, it->begin);
+        end = std::max(end, it->end);
+        it = write_ranges.erase(it);
+    }
+    write_ranges.insert(it, WriteRange{begin, end});
+}
+#endif
+
+void BlockOfCode::PrepareWriteRange([[maybe_unused]] const void* address, [[maybe_unused]] size_t size) {
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    if (!writing)
+        UNREACHABLE_MSG("NXBOX JIT write outside emission");
+    const size_t offset = static_cast<const u8*>(address) - top_;
+    if (offset > committed_size || size > committed_size - offset)
+        UNREACHABLE_MSG("NXBOX JIT write outside committed cache");
+    if (size == 0 || offset >= executable_end)
+        return;
+    const size_t mask = JitPageSize() - 1;
+    const size_t begin = offset & ~mask;
+    const size_t end = std::min(executable_end, (offset + size + mask) & ~mask);
+    // Do not reopen pages already touched in this emission/invalidation batch.
+    size_t cursor = begin;
+    for (const auto& range : write_ranges) {
+        if (range.end <= cursor)
+            continue;
+        if (range.begin >= end)
+            break;
+        if (cursor < range.begin)
+            ProtectMemory(top_ + cursor, range.begin - cursor, false);
+        cursor = std::max(cursor, range.end);
+    }
+    if (cursor < end)
+        ProtectMemory(top_ + cursor, end - cursor, false);
+    RecordWriteRange(begin, end);
+#endif
+}
+
 void BlockOfCode::ClearCache() {
     ASSERT(prelude_complete);
+#ifdef DYNARMIC_UWP_APPCONTAINER
+    // Retired code becomes the writable append suffix; the prelude stays RX.
+    const size_t begin = static_cast<const u8*>(code_begin) - top_;
+    if (executable_end > begin)
+        ProtectMemory(top_ + begin, executable_end - begin, false);
+    executable_end = begin;
+    append_begin = begin;
+#endif
     SetCodePtr(code_begin);
 }
 
@@ -259,17 +368,30 @@ size_t BlockOfCode::SpaceRemaining() const {
 
 void BlockOfCode::EnsureMemoryCommitted([[maybe_unused]] size_t codesize) {
 #ifdef _WIN32
+#    ifdef DYNARMIC_UWP_APPCONTAINER
+    if (size_ > maxSize_ || codesize > maxSize_ - size_)
+        UNREACHABLE_MSG("NXBOX JIT code cache exhausted");
+    if (committed_size < size_ + codesize) {
+        const size_t mask = JitPageSize() - 1;
+        const size_t next_size = std::min(maxSize_, (std::max(size_ + codesize, committed_size + PRELUDE_COMMIT_SIZE) + mask) & ~mask);
+        // Never recommit old RX pages with RW permissions.
+        if (!DYNARMIC_VIRTUAL_ALLOC(top_ + committed_size, next_size - committed_size, MEM_COMMIT, PAGE_READWRITE))
+            UNREACHABLE_MSG("NXBOX JIT commit failed: error={}", GetLastError());
+        committed_size = next_size;
+    }
+#    else
     if (committed_size < size_ + codesize) {
         committed_size = std::min<size_t>(maxSize_, committed_size + codesize);
-#    ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
+#        ifdef DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT
         // W^X: commit read-write only; ProtectMemory() flips pages to RX before execution.
         DYNARMIC_VIRTUAL_ALLOC(top_, committed_size, MEM_COMMIT, PAGE_READWRITE);
-#    else
+#        else
         // RWX fast path — desktop only. Never compiled under DYNARMIC_UWP_APPCONTAINER, which
         // forces DYNARMIC_ENABLE_NO_EXECUTE_SUPPORT on (the AppContainer never grants RWX).
         VirtualAlloc(top_, committed_size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-#    endif
+#        endif
     }
+#    endif
 #endif
 }
 

@@ -91,3 +91,123 @@ capture aggregation, clang-format on changed lines, and `git diff --check`.
 No build, emulator execution, console test, commit or push was performed. The
 cause of the reported persistent high-compilation windows remains unproven until
 the new identity and invalidation counters are captured in that scene.
+
+## 0.3.220 follow-up: page-granular UWP W^X
+
+The new console measurements supplied for this change supersede the earlier
+unmeasured-cost finding: over 59 five-second windows, `jit=28403 ms`,
+`jitprotect=25507 ms`, `jittranslate=273 ms`, `jitoptimize=138 ms`, and
+`jitemit=27778 ms`. Protection accounts for 89.8% of measured JIT time. These
+are supplied measurements, not a new capture made on this host.
+
+### Platform decision
+
+Use option (c), page-granular W^X. Do not assume Developer Mode grants RWX:
+
+- Microsoft's [VirtualAllocFromApp documentation](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualallocfromapp)
+  explicitly rejects executable allocation protections, including RWX.
+  [VirtualProtectFromApp](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotectfromapp)
+  permits RX with `codeGeneration`, but rejects simultaneous write and execute.
+- [Nativra's CodeCache.cs](https://github.com/NspxMiguel/nativra/blob/main/x86/Nativra.X86/Jit/CodeCache.cs)
+  independently documents RWX refusal measured by its console JitProbe, and
+  publishes page-aligned allocations by committing RW, copying code, then
+  protecting RX. [PPSSPP's MemoryUtil.cpp](https://github.com/hrydgard/ppsspp/blob/master/Common/MemoryUtil.cpp)
+  also classifies UWP as W^X-exclusive.
+- NXbox's `dist/nxbox/AppxManifest.xml` already declares `codeGeneration`.
+  No capability change or `allowElevatedProcess` addition is made. There is no
+  verified Xbox exception supporting the proposed persistent RWX allocation.
+  Consequently this patch does not add an RWX probe or a misleading `rwx` log.
+- Dual mapping is deferred, not declared universally impossible. Microsoft's
+  [mapping creation](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingfromapp)
+  and [view mapping](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffilefromapp)
+  documentation mentions executable access with `codeGeneration`, but does not
+  establish the proposed simultaneous RW/RX alias scheme on this console.
+  Dynarmic/Xbyak uses a single address for emission, RIP-relative constants,
+  branch displacements, saved patch sites, dispatch/RSB pointers and Windows
+  unwind offsets. Adding an alias offset only at publication would be incorrect.
+  That redesign cannot be validated safely here without a target build/run.
+
+### Implementation and invariants
+
+`BlockOfCode` now keeps the ungenerated suffix RW and non-executable. Opening an
+emission only reopens its shared tail page, if any. Closing it rounds the actual
+emitted span to OS pages, merges adjacent/overlapping dirty ranges, and publishes
+those ranges RX. It no longer protects all committed bytes per block. Existing
+code addresses and all translation/optimization/guest cache semantics are kept.
+
+`PrepareWriteRange` opens previously published pages before writes. All four
+patch forms in **both A64 and A32** call it with their exact reserved instruction
+lengths, including padding. Thus `RegisterBlock -> Patch` and
+`InvalidateBasicBlocks -> Unpatch -> Patch` cover old incoming branch sites,
+including patches straddling page boundaries. Restoring the emission cursor does
+not discard their dirty ranges. Constant-pool insertion tracks its destination
+as well; updating constants is not confined to the append span. Repeated writes
+to a page in the same batch do not repeat the RW transition.
+
+The prelude ends on an OS page boundary, so block invalidation and full cache
+rewinds cannot make the generated fast-dispatch lookup or dispatcher NX.
+A32/A64 `Unpatch` can therefore call that lookup without closing/reopening the
+batch for each descriptor. Publication happens at the end of the existing
+invalidation loop. Normal `GetBlock` compiles one IR block per call, so its
+existing emission scope already is one compile; batching across separate calls
+would execute unpublished code. Disjoint patch/constant ranges still require
+separate API calls, rather than reopening the untouched pages between them.
+
+A full cache clear changes the retired generated-code range back to RW once,
+retaining RX on the prelude, and resets the append boundary. This infrequent
+operation still scales with retired cache size. Newly committed memory is added
+in 16 MiB increments, with only the new suffix passed to the allocator. Memory
+accounting is initialized **before** `ConstantPool`, whose constructor itself
+commits memory; previously that member was initialized after those calls.
+The 128 MiB cache reservation per JIT is unchanged. Prelude alignment costs at
+most one page of additional padding.
+
+Protection, commit and instruction-cache-flush failures fail closed with a
+logged Windows error instead of continuing with wrong permissions. Each RX
+publication calls `FlushInstructionCache`; its cost remains inside the
+`jitprotect` scope, together with the protection syscall. `jit_protect_bytes`
+continues counting actual protection spans. All other stall counters remain.
+UWP now explicitly implies no-execute support in the target definitions even if
+the CMake cache option was set off. Non-UWP protection policy is unchanged.
+
+The fallback choice is W^X itself: there is no RWX mode to fall back from and no
+attempt to bypass an allocation/protection failure. The first JIT construction
+logs once per process, independent of profiling:
+
+```text
+NXBOX JIT_MODE wx protection=page-granular
+```
+
+Concurrency relies on the existing ownership contract, not a new global lock:
+`KProcess::InitializeInterfaces` creates a CPU interface per core, each with its
+own JIT/BlockOfCode. A single JIT's Run/Step must not overlap. Range/clear
+requests take `invalidation_mutex`, request a halt, and are applied by the owning
+JIT at the existing safe points. Dirty ranges, append bounds and committed-byte
+accounting are per BlockOfCode. The allocator remains stateless; the page-size
+and once-only log use thread-safe local-static initialization. No mutable
+protection state is shared between compiling cores.
+
+### Validation and next console run
+
+Only source/control-flow review, clang-format on changed lines and
+`git diff --check` were performed. No compilation, executable tests, emulator
+run, console access, commit or push was performed. Target compilation and
+runtime correctness/performance remain unverified.
+
+On the next Windows/UWP build and console run:
+
+1. `grep JIT_MODE eden_uwp_diag.txt` must show the `wx protection=page-granular`
+   line once per process. It appears when the first JIT is constructed.
+2. Repeat the same P5R scene transitions and capture `GAME_STALL` windows.
+   Compare `jitprotect`, `jit_protect_bytes`, `jitemit` and `jit` against 0.3.220.
+   Protected bytes should fall from repeated whole-cache spans to emitted,
+   patched and constant pages. The goal is negligible protection time relative
+   to the previous 25.5 seconds; **zero is not guaranteed**, because legal W^X
+   syscalls and cache flushes still occur. Do not label this a measured speedup.
+3. Exercise old incoming links, invalidation with FastDispatch enabled, cache
+   clear/recompilation, growth beyond 16 MiB, and a 32-bit title. Check game
+   behavior and absence of access violations or `NXBOX JIT ... failed` errors.
+   Initialization and full clears can legitimately produce larger spans.
+4. If protection still dominates despite the byte reduction, use the remaining
+   call counts to distinguish fixed syscall cost from span cost before attempting
+   dual mappings. This patch removes whole-cache flipping, not the W^X policy.
