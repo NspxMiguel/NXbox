@@ -123,8 +123,8 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
             compressed ? u32(nso_header.segments_compressed_size[i]) : u32(segment.size);
         const u64 offset = segment.offset;
         if (offset > nso_file.GetSize() || stored_size > nso_file.GetSize() - offset ||
-            (compressed && (stored_size > std::numeric_limits<int>::max() ||
-                            u32(segment.size) > std::numeric_limits<int>::max()))) {
+            (compressed && (stored_size > static_cast<size_t>(std::numeric_limits<int>::max()) ||
+                            u32(segment.size) > static_cast<u32>(std::numeric_limits<int>::max())))) {
             LOG_ERROR(Loader, "NSO segment bounds invalid: {} segment={}", nso_file.GetName(), i);
             return std::nullopt;
         }
@@ -301,7 +301,7 @@ std::optional<VAddr> AppLoader_NSO::LoadModule(Kernel::KProcess& process, Core::
     LOG_INFO(Loader,
              "NXBOX FAULT MODULE name={} base={:#x} end={:#x} text={:#x}+{:#x} "
              "bss={:#x} build_id={} nso_patched={} final_hash_valid={} final_sha256={}",
-             name, load_base, load_base + image_size, load_base + codeset.CodeSegment().addr,
+             name, load_base, load_base + image_size, load_base + GetInteger(codeset.CodeSegment().addr),
              codeset.CodeSegment().size, u32(nso_header.segments[2].bss_size),
              Common::HexToString(nso_header.build_id), nso_patched, final_hashed,
              Common::HexToString(final_digest));
