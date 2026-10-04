@@ -201,12 +201,12 @@ void RomfsVerification::Verify() const {
         for (u64 position = 0; position < level_size; position += BatchSize) {
             const size_t requested = std::min<u64>(BatchSize, level_size - position);
             const size_t blocks = (requested + block_size - 1) / block_size;
-            std::fill(data.begin(), data.end(), 0);
+            std::fill(data.begin(), data.end(), u8{0});
             const auto got = leaf ? m_romfs->Read(data.data(), requested, position)
                                   : raw->Read(data.data(), requested, section_start + position);
             const u64 hash_offset = (position / block_size) * Digest{}.size();
             const size_t hash_bytes = blocks * Digest{}.size();
-            std::fill(expected.begin(), expected.begin() + hash_bytes, 0);
+            std::fill(expected.begin(), expected.begin() + hash_bytes, u8{0});
             size_t hash_got = 0;
             if (level == 0) {
                 std::copy(meta.master_hash.value.begin(), meta.master_hash.value.end(),
@@ -247,7 +247,7 @@ void RomfsVerification::Verify() const {
                     const bool retry_ok =
                         raw->Read(retry.data(), valid_size, section_offset) == valid_size &&
                         HashBlock(retry.data(), retry.size(), retry_hash);
-                    std::fill(retry.begin(), retry.end(), 0);
+                    std::fill(retry.begin(), retry.end(), u8{0});
                     const bool unmerged_ok =
                         m_context.indirect_storage &&
                         m_context.indirect_storage->ReadUnmerged(retry.data(), valid_size,
