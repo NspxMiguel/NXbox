@@ -7,14 +7,14 @@ namespace FileSys {
 
 void ResetRomfsVerification();
 
-// Retains the same raw section and final RomFS used by this mount. No second mount
-// or independent decryption path can accidentally hide a read-path discrepancy.
+// Retains the raw section and exact RomFS returned by this mount. IVFC hashes
+// authenticate VFS reads; a separate flat-table/ECB reference diagnoses discrepancies.
 class RomfsVerification {
 public:
     RomfsVerification(VirtualFile romfs, NcaFsHeader header,
                       NcaFileSystemDriver::StorageContext context, Hash header_hash, u64 title_id,
-                      std::string identity);
-    void Verify() const;
+                      std::string identity, bool is_update);
+    void Verify(VirtualFile received, bool full) const;
 
 private:
     void Trace(std::string_view role, u64 offset, u64 size) const;
@@ -26,6 +26,7 @@ private:
     Hash m_header_hash;
     u64 m_title_id;
     std::string m_identity;
+    bool m_is_update;
 };
 
 } // namespace FileSys

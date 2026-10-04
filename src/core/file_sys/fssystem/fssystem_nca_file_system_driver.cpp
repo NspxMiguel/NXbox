@@ -271,6 +271,10 @@ Result NcaFileSystemDriver::OpenStorageImpl(VirtualFile* out, NcaFsHeaderReader*
                      ResultAllocationMemoryFailedAllocateShared);
         }
 
+        if (ctx != nullptr) {
+            ctx->original_indirectable_storage = original_indirectable_storage;
+        }
+
         // Create the indirect storage.
         VirtualFile indirect_storage;
         R_TRY(this->CreateIndirectStorage(

@@ -94,6 +94,10 @@ public:
 
     virtual size_t Read(u8* buffer, size_t size, size_t offset) const override;
 
+    // Diagnostic reference: caller resolves the subsection from flat table bytes.
+    // Bypasses BucketTree, alignment wrappers, MakeIv and the CTR decryptor.
+    size_t ReadReference(u8* buffer, size_t size, u64 offset, u32 generation, bool encrypted) const;
+
     s64 GetCounterOffset() const {
         return m_counter_offset;
     }

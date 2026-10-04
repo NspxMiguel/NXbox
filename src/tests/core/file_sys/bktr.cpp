@@ -137,6 +137,13 @@ TEST_CASE("BKTR subsection counters retain high offsets and generation changes",
     REQUIRE(aligned.Read(out.data(), out.size(), 7) == out.size());
     REQUIRE(std::equal(out.begin(), out.end(), plain.begin() + 7));
     REQUIRE(storage->Read(out.data(), 16, 64) == 0);
+    // The diagnostic bypasses the production tree and CTR implementation, with
+    // unaligned requests on each side of the generation and 4 GiB boundaries.
+    REQUIRE(storage->ReadReference(out.data(), 9, 7, 3, true) == 9);
+    REQUIRE(std::equal(out.begin(), out.begin() + 9, plain.begin() + 7));
+    REQUIRE(storage->ReadReference(out.data(), 31, 17, 7, true) == 31);
+    REQUIRE(std::equal(out.begin(), out.begin() + 31, plain.begin() + 17));
+    REQUIRE(storage->ReadReference(out.data(), 1, 64, 7, true) == 0);
 }
 
 TEST_CASE("Offset and aligned AES storages do not report unread bytes", "[file_sys][bktr]") {

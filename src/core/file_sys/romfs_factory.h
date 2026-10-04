@@ -37,7 +37,8 @@ enum class StorageId : u8 {
 class RomFSFactory {
 public:
     explicit RomFSFactory(Loader::AppLoader& app_loader, ContentProvider& provider,
-                          Service::FileSystem::FileSystemController& controller);
+                          Service::FileSystem::FileSystemController& controller,
+                          std::shared_ptr<const NCA> loaded_nca = {});
     ~RomFSFactory();
 
     void SetPackedUpdate(VirtualFile packed_update_raw);
@@ -53,7 +54,8 @@ private:
     VirtualFile file;
     VirtualFile packed_update_raw;
 
-    VirtualFile base;
+    // Retain the exact Program NCA loaded from NSP/XCI, including its mount context.
+    std::shared_ptr<const NCA> loaded_nca;
 
     bool updatable;
 

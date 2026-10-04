@@ -228,6 +228,7 @@ public:
         VirtualFile aes_ctr_ex_storage_data_storage;
         std::shared_ptr<AesCtrCounterExtendedStorage> aes_ctr_ex_storage;
         VirtualFile indirect_storage_meta_storage;
+        VirtualFile original_indirectable_storage;
         std::shared_ptr<IndirectStorage> indirect_storage;
         VirtualFile fs_data_storage;
         VirtualFile raw_storage;

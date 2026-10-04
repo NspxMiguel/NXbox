@@ -85,7 +85,7 @@ public:
     bool IsUpdate() const;
 
     VirtualFile GetRomFS() const;
-    void VerifyRomFS() const;
+    void VerifyRomFS(VirtualFile received, bool full) const;
     VirtualDir GetExeFS() const;
 
     VirtualFile GetBaseFile() const;

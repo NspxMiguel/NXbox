@@ -225,6 +225,40 @@ size_t AesCtrCounterExtendedStorage::Read(u8* buffer, size_t size, size_t offset
     return size;
 }
 
+size_t AesCtrCounterExtendedStorage::ReadReference(u8* buffer, size_t size, u64 offset,
+                                                   u32 generation, bool encrypted) const {
+    if (!m_data_storage || offset > m_data_storage->GetSize() ||
+        size > m_data_storage->GetSize() - offset ||
+        m_data_storage->Read(buffer, size, offset) != size) {
+        return 0;
+    }
+    if (!encrypted) {
+        return size;
+    }
+    Core::Crypto::AESCipher<Core::Crypto::Key128> cipher(m_key, Core::Crypto::Mode::ECB);
+    size_t done = 0;
+    while (done < size) {
+        const u64 absolute = static_cast<u64>(m_counter_offset) + offset + done;
+        const u64 counter = absolute / BlockSize;
+        std::array<u8, BlockSize> input{}, stream{};
+        for (size_t i = 0; i < 4; ++i) {
+            input[i] = static_cast<u8>(m_secure_value >> (24 - 8 * i));
+            input[4 + i] = static_cast<u8>(generation >> (24 - 8 * i));
+        }
+        for (size_t i = 0; i < 8; ++i) {
+            input[8 + i] = static_cast<u8>(counter >> (56 - 8 * i));
+        }
+        cipher.Transcode(input.data(), input.size(), stream.data(), Core::Crypto::Op::Encrypt);
+        const size_t skip = absolute % BlockSize;
+        const size_t chunk = std::min(size - done, BlockSize - skip);
+        for (size_t i = 0; i < chunk; ++i) {
+            buffer[done + i] ^= stream[skip + i];
+        }
+        done += chunk;
+    }
+    return size;
+}
+
 void SoftwareDecryptor::Decrypt(u8* buf, size_t buf_size, const std::array<u8, AesCtrCounterExtendedStorage::KeySize>& key, const std::array<u8, AesCtrCounterExtendedStorage::IvSize>& iv) {
     Core::Crypto::AESCipher<Core::Crypto::Key128> cipher(key, Core::Crypto::Mode::CTR);
     cipher.SetIV(iv);

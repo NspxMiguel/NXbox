@@ -27,7 +27,7 @@ namespace Loader {
 
 AppLoader_NCA::AppLoader_NCA(FileSys::VirtualFile file_, u64 update_only_program_id_)
     : AppLoader(std::move(file_)),
-      nca(std::make_unique<FileSys::NCA>(file, nullptr, update_only_program_id_ != 0)),
+      nca(std::make_shared<FileSys::NCA>(file, nullptr, update_only_program_id_ != 0)),
       update_only_program_id(update_only_program_id_) {}
 
 u64 AppLoader_NCA::GetProgramId() const {
@@ -106,7 +106,7 @@ AppLoader_NCA::LoadResult AppLoader_NCA::Load(Kernel::KProcess& process, Core::S
     system.GetFileSystemController().RegisterProcess(
         process.GetProcessId(), GetProgramId(),
         std::make_shared<FileSys::RomFSFactory>(*this, system.GetContentProvider(),
-                                                system.GetFileSystemController()));
+                                                system.GetFileSystemController(), nca));
 
     is_loaded = true;
     return load_result;

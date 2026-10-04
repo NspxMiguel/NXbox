@@ -21,8 +21,10 @@
 namespace FileSys {
 
 RomFSFactory::RomFSFactory(Loader::AppLoader& app_loader, ContentProvider& provider,
-                           Service::FileSystem::FileSystemController& controller)
-    : content_provider{provider}, filesystem_controller{controller} {
+                           Service::FileSystem::FileSystemController& controller,
+                           std::shared_ptr<const NCA> loaded_nca_)
+    : loaded_nca{std::move(loaded_nca_)}, content_provider{provider},
+      filesystem_controller{controller} {
     // Load the RomFS from the app
     if (app_loader.ReadRomFS(file) != Loader::ResultStatus::Success) {
         LOG_WARNING(Service_FS, "Unable to read base RomFS");
@@ -43,7 +45,15 @@ VirtualFile RomFSFactory::OpenCurrentProcess(u64 current_process_title_id) const
     }
 
     const auto type = ContentRecordType::Program;
-    const auto nca = content_provider.GetEntry(current_process_title_id, type);
+    // ExternalContentProvider deliberately indexes only updates/DLC. A frontend
+    // without a game-list provider cannot recover the base NCA from that union.
+    std::shared_ptr<const NCA> nca = loaded_nca;
+    if (!nca || nca->GetTitleId() != current_process_title_id) {
+        nca = content_provider.GetEntry(current_process_title_id, type);
+    }
+    LOG_INFO(Loader, "NXBOX ROMFS_BASE title={:016X} origin={} nca={} present={} file_matches={}",
+             current_process_title_id, nca == loaded_nca ? "loader" : "provider",
+             nca ? nca->GetName() : "none", nca != nullptr, nca && nca->GetRomFS() == file);
     const PatchManager patch_manager{current_process_title_id, filesystem_controller,
                                      content_provider};
     return patch_manager.PatchRomFS(nca.get(), file, ContentRecordType::Program, packed_update_raw);

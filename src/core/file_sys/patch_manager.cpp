@@ -325,7 +325,8 @@ VirtualDir PatchManager::PatchExeFS(VirtualDir exefs) const {
 
     if (!update_disabled && update != nullptr && update->GetExeFS() != nullptr) {
         LOG_INFO(Loader, "    ExeFS: Update ({}) applied successfully",
-                 FormatTitleVersion(content_provider.GetEntryVersion(update_tid).value_or(0)));
+                 FormatTitleVersion(enabled_version.value_or(
+                     content_provider.GetEntryVersion(update_tid).value_or(0))));
         exefs = update->GetExeFS();
 #ifdef NXBOX_UWP
         LOG_INFO(Loader,
@@ -333,6 +334,12 @@ VirtualDir PatchManager::PatchExeFS(VirtualDir exefs) const {
                  enabled_version.has_value(), enabled_version.value_or(0));
 #endif
     }
+
+#ifdef NXBOX_UWP
+    const auto selected_exefs = exefs;
+    const auto selected_exefs_name =
+        update && !update_disabled && update->GetExeFS() == exefs ? update->GetName() : "base";
+#endif
 
     // LayeredExeFS
     const auto load_dir = GetModificationLoadRoot();
@@ -371,6 +378,24 @@ VirtualDir PatchManager::PatchExeFS(VirtualDir exefs) const {
         LOG_INFO(Loader, "    ExeFS: LayeredExeFS patches applied successfully");
         exefs = std::move(layered);
     }
+
+#ifdef NXBOX_UWP
+    for (const auto* name : EXEFS_FILE_NAMES) {
+        const auto received = exefs->GetFile(name);
+        if (!received) {
+            continue;
+        }
+        Loader::NSOHeader header{};
+        const bool is_nso = received->ReadObject(&header) == sizeof(header) &&
+                            header.magic == Common::MakeMagic('N', 'S', 'O', '0');
+        LOG_INFO(Loader,
+                 "NXBOX EXEFS_SOURCE title={:016X} nca={} version={:#x} file={} "
+                 "same_selected_file={} size={:#x} build_id={}",
+                 title_id, selected_exefs_name, enabled_version.value_or(0), name,
+                 received == selected_exefs->GetFile(name), received->GetSize(),
+                 is_nso ? Common::HexToString(header.build_id) : "npdm");
+    }
+#endif
 
     if (Settings::values.dump_exefs) {
         LOG_INFO(Loader, "Dumping ExeFS for title_id={:016X}", title_id);
@@ -716,49 +741,60 @@ VirtualFile PatchManager::PatchRomFS(const NCA* base_nca, VirtualFile base_romfs
         }
     }
 
-    if (!update_disabled && update_raw != nullptr && base_nca != nullptr) {
-        const auto new_nca = std::make_shared<NCA>(update_raw, base_nca);
-        if (new_nca->GetStatus() == Loader::ResultStatus::Success &&
-            new_nca->GetRomFS() != nullptr) {
-            LOG_INFO(Loader, "    RomFS: Update ({}) applied successfully",
-                     enabled_version.has_value() ? FormatTitleVersion(*enabled_version) :
-                     FormatTitleVersion(content_provider.GetEntryVersion(update_tid).value_or(0)));
-            romfs = new_nca->GetRomFS();
-            if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
-                LOG_INFO(Loader, "NXBOX VERIFY_ROMFS SELECT title={:016X} selected_version={:#x}",
-                         title_id, enabled_version.value_or(0));
-                new_nca->VerifyRomFS();
-            }
-        }
-    } else if (!update_disabled && packed_update_raw != nullptr && base_nca != nullptr) {
-        const auto new_nca = std::make_shared<NCA>(packed_update_raw, base_nca);
-        if (new_nca->GetStatus() == Loader::ResultStatus::Success &&
-            new_nca->GetRomFS() != nullptr) {
-            LOG_INFO(Loader, "    RomFS: Update (PACKED) applied successfully");
-            romfs = new_nca->GetRomFS();
-            if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
-                LOG_INFO(Loader, "NXBOX VERIFY_ROMFS SELECT title={:016X} selected_version={:#x}",
-                         title_id, enabled_version.value_or(0));
-                new_nca->VerifyRomFS();
-            }
+    // Keep the selected owner alive through the final check. Never verify a
+    // provider re-open of the base while returning a different mount to the game.
+    std::shared_ptr<NCA> selected_update;
+    const NCA* selected_nca = base_nca;
+    const auto selected_raw = update_raw ? update_raw : packed_update_raw;
+    const bool wants_update = !update_disabled && selected_raw != nullptr;
+    if (wants_update && base_nca != nullptr) {
+        auto candidate = std::make_shared<NCA>(selected_raw, base_nca);
+        if (candidate->GetStatus() == Loader::ResultStatus::Success && candidate->GetRomFS()) {
+            selected_update = std::move(candidate);
+            selected_nca = selected_update.get();
+            romfs = selected_nca->GetRomFS();
+            LOG_INFO(Loader, "    RomFS: Update ({}) applied successfully type={:02X}",
+                     enabled_version.has_value() ? FormatTitleVersion(*enabled_version)
+                                                 : "PACKED/NAND",
+                     static_cast<u8>(type));
+        } else {
+            LOG_ERROR(Loader, "NXBOX ROMFS_SELECT_ERROR title={:016X} nca={} status={}", title_id,
+                      selected_raw->GetName(), static_cast<u32>(candidate->GetStatus()));
         }
     }
 
-    if (type == ContentRecordType::Program && IsRomfsVerificationEnabled() && romfs == base_romfs &&
-        base_nca != nullptr) {
-        base_nca->VerifyRomFS();
-    }
-
-    const auto verified_romfs = romfs;
-    // LayeredFS
+    const auto selected_romfs = romfs;
     if (apply_layeredfs) {
         ApplyLayeredFS(romfs, type);
     }
-    if (type == ContentRecordType::Program && IsRomfsVerificationEnabled()) {
+    if (type == ContentRecordType::Program) {
+        const bool full = IsRomfsVerificationEnabled();
         LOG_INFO(Loader,
-                 "NXBOX VERIFY_ROMFS FINAL title={:016X} layeredfs_changed={} size={:#x} "
-                 "ivfc_scope=before_layeredfs",
-                 title_id, romfs != verified_romfs, romfs ? romfs->GetSize() : 0);
+                 "NXBOX ROMFS_SELECT title={:016X} type={:02X} provider={} version_known={} "
+                 "version={:#x} requested_update={} applied={} base={} selected={} "
+                 "base_is_update={} layeredfs_changed={} size={:#x} full={}",
+                 title_id, static_cast<u8>(type),
+                 checked_external ? "external"
+                 : checked_manual ? "manual"
+                                  : "nand/packed",
+                 enabled_version.has_value(), enabled_version.value_or(0), wants_update,
+                 selected_update != nullptr, base_nca ? base_nca->GetName() : "none",
+                 selected_nca ? selected_nca->GetName() : "none", base_nca && base_nca->IsUpdate(),
+                 romfs != selected_romfs, romfs ? romfs->GetSize() : 0, full);
+        if (selected_nca && (!wants_update || selected_update)) {
+            if (selected_update || full) {
+                selected_nca->VerifyRomFS(romfs, full);
+            }
+        } else {
+            LOG_ERROR(Loader,
+                      "NXBOX ROMFS_CHECK FAIL blocks=0 bad=1 first_bad_offset=none source=base "
+                      "title={:016X} reason=missing_base_or_update_mount",
+                      title_id);
+        }
+    } else if (type == ContentRecordType::Data) {
+        LOG_INFO(Loader, "NXBOX ROMFS_DATA title={:016X} type=02 applied={} selected={} size={:#x}",
+                 title_id, selected_update != nullptr,
+                 selected_nca ? selected_nca->GetName() : "none", romfs ? romfs->GetSize() : 0);
     }
 
     return romfs;

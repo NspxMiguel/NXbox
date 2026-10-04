@@ -58,7 +58,7 @@ public:
     u64 GetProgramId() const;
 
 private:
-    std::unique_ptr<FileSys::NCA> nca;
+    std::shared_ptr<FileSys::NCA> nca;
     u64 update_only_program_id{};
     std::unique_ptr<FileSys::NACP> nacp;
     std::unique_ptr<AppLoader_DeconstructedRomDirectory> directory_loader;
