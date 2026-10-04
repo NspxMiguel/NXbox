@@ -250,6 +250,58 @@ constexpr Entry kTable[] = {
         {L"Apagar", L"Delete"}, // KeyBackspace
         {L"OK", L"OK"}, // KeyOk
         {L"Recarregar", L"Reload"}, // HintReload
+        {L"Cheats",
+         L"Cheats"}, // CheatsTitle
+        {L"Cheats da comunidade para este jogo. Valem na próxima vez que o jogo abrir.",
+         L"Community cheats for this game. They apply the next time the game opens."}, // CheatsSourceLine
+        {L"Banco de cheats: nx-cheats-db, de sthetix, via CNX Updater, de CostelaCNX (GPL-3.0)",
+         L"Cheats database: nx-cheats-db by sthetix, via CNX Updater by CostelaCNX (GPL-3.0)"}, // CheatsCredit
+        {L"Buscando os cheats deste jogo…",
+         L"Looking for this game's cheats…"}, // CheatsLoading
+        {L"O banco de cheats não tem nada para este jogo.",
+         L"The cheats database has nothing for this game."}, // CheatsNone
+        {L"Sem conexão com o banco de cheats. Pressione A para tentar de novo.",
+         L"Cannot reach the cheats database. Press A to try again."}, // CheatsOffline
+        {L"Não deu para ler o banco de cheats. Pressione A para tentar de novo.",
+         L"The cheats database could not be read. Press A to try again."}, // CheatsFailed
+        {L"Cada versão do jogo tem um build ID próprio. Ligue os cheats na versão que você joga; na dúvida, ligue em todas.",
+         L"Each game version has its own build ID. Turn cheats on for the version you play; if unsure, turn them on in every one."}, // CheatsBuildHint
+        {L"Ligado",
+         L"On"}, // CheatOn
+        {L"Desligado",
+         L"Off"}, // CheatOff
+        {L"Cheats",
+         L"Cheats"}, // HintCheats
+        {L"Ligar todos",
+         L"All on"}, // HintAllOn
+        {L"Desligar todos",
+         L"All off"}, // HintAllOff
+        {L"Cheat ligado",
+         L"Cheat on"}, // ToastCheatOn
+        {L"Cheat desligado",
+         L"Cheat off"}, // ToastCheatOff
+        {L"Créditos",
+         L"Credits"}, // CreditsRowTitle
+        {L"Ver",
+         L"View"}, // CreditsRowState
+        {L"Quem fez o que o NXbox usa.",
+         L"Who made what NXbox builds on."}, // CreditsRowHint
+        {L"Créditos",
+         L"Credits"}, // CreditsTitle
+        {L"O NXbox é um fork do Eden, um emulador de Switch de código aberto (GPL-3.0), levado para o Xbox Series X.\n"
+         L"\n"
+         L"Cheats: o banco nx-cheats-db, de sthetix, baixado quando você abre a tela e que pertence aos seus autores. Chegamos a ele pelo mesmo caminho do CNX Updater, de CostelaCNX (GPL-3.0, github.com/CostelaCNX/CNX-Updater).\n"
+         L"\n"
+         L"O CNX Updater é um fork do AIO-Switch-Updater, de HamletDuFromage (GPL-3.0), feito com o Borealis, de natinusala. O conjunto de recursos deles inspirou os downloads e os cheats do NXbox.\n"
+         L"\n"
+         L"Os avisos completos estão no arquivo NOTICE.md do repositório.",
+         L"NXbox is a fork of Eden, an open-source Nintendo Switch emulator (GPL-3.0), brought to the Xbox Series X.\n"
+         L"\n"
+         L"Cheats: the nx-cheats-db database by sthetix, downloaded when you open the screen and owned by its authors. We reach it the same way CNX Updater by CostelaCNX does (GPL-3.0, github.com/CostelaCNX/CNX-Updater).\n"
+         L"\n"
+         L"CNX Updater is a fork of AIO-Switch-Updater by HamletDuFromage (GPL-3.0), built on Borealis by natinusala. Their feature set inspired the downloads and cheats in NXbox.\n"
+         L"\n"
+         L"The full notices are in NOTICE.md in the repository."}, // CreditsBody
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

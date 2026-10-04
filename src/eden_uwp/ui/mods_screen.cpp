@@ -22,6 +22,7 @@
 #include "common/scope_exit.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/ui/anim.h"
+#include "eden_uwp/ui/cheats_screen.h"
 #include "eden_uwp/ui/mods.h"
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/theme.h"
@@ -200,8 +201,20 @@ private:
             details_open_ = true;
             store_->RequestDetails(rows_[static_cast<std::size_t>(selected_)]);
         }
+        if (input_.Pressed(Button::Menu)) {
+            OpenCheats();
+        }
         if (input_.Pressed(Button::B)) {
             leaving_ = true;
+        }
+    }
+
+    // The cheats of the game (nx-cheats-db), on this window and this renderer. It runs its own
+    // loop and returns when the player leaves with B.
+    void OpenCheats() {
+        Diagnostic("UI mods open cheats " + game_.title_id);
+        if (RunCheatsScreen(renderer_, window_, input_, game_, local_state_)) {
+            closed_ = true;
         }
     }
 
@@ -624,12 +637,14 @@ private:
             if (store_->Phase() == StorePhase::Offline) {
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSelect)});
             }
+            hints.push_back({Theme::kTextSecondary, L"\u2261", Tr(Text::HintCheats)});
             hints.push_back({Theme::kButtonB, L"B", Tr(Text::HintBack)});
             return hints;
         }
         return {{Theme::kButtonA, L"A", Tr(Text::HintInstall)},
                 {Theme::kButtonY, L"Y", Tr(Text::HintViewMod)},
                 {Theme::kButtonX, L"X", Tr(Text::HintToggle)},
+                {Theme::kTextSecondary, L"\u2261", Tr(Text::HintCheats)},
                 {Theme::kButtonB, L"B", Tr(Text::HintBack)}};
     }
 

@@ -31,6 +31,11 @@ add_executable(eden-uwp WIN32
     ui/anim.h
     ui/art.cpp
     ui/art.h
+    ui/cheats.cpp
+    ui/cheats.h
+    ui/cheats_parse.h
+    ui/cheats_screen.cpp
+    ui/cheats_screen.h
     ui/input.cpp
     ui/input.h
     ui/library.cpp

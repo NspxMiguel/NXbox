@@ -128,6 +128,13 @@ ctest --test-dir build-port-tests -C Release --output-on-failure
 - [aerisarn/mesa-uwp](https://github.com/aerisarn/mesa-uwp) provides Mesa for UWP.
 - The **yuzu** and **Sudachi** projects and their contributors built the foundations Eden derives
   from.
+- **Cheats** come from the community database
+  [nx-cheats-db](https://github.com/sthetix/nx-cheats-db) by sthetix, reached the way
+  [CNX Updater](https://github.com/CostelaCNX/CNX-Updater) by CostelaCNX (GPL-3.0) does. CNX Updater
+  is a fork of [AIO-Switch-Updater](https://github.com/HamletDuFromage/aio-switch-updater) by
+  HamletDuFromage (GPL-3.0), built on Borealis by natinusala, and their feature set inspired the
+  downloads and cheats of NXbox. The data is fetched at runtime and belongs to its authors; see
+  [NOTICE.md](NOTICE.md).
 - Third-party libraries keep their own licenses and copyright notices.
 
 Exact source revisions are recorded in the [provenance notes](docs/nxbox-port.md#source-provenance).

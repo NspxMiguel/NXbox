@@ -29,6 +29,7 @@
 #include "eden_uwp/ui/art.h"
 #include "eden_uwp/ui/input.h"
 #include "eden_uwp/ui/library.h"
+#include "eden_uwp/ui/cheats_screen.h"
 #include "eden_uwp/ui/mods_screen.h"
 #include "eden_uwp/ui/renderer.h"
 #include "eden_uwp/ui/savesync_ui.h"
@@ -118,7 +119,8 @@ constexpr int kActionCount = 3;
 constexpr int kSettingSaveSync = 0;
 constexpr int kSettingSources = 1;
 constexpr int kSettingUsb = 2;
-constexpr int kSettingsRowCount = 3;
+constexpr int kSettingCredits = 3;
+constexpr int kSettingsRowCount = 4;
 
 constexpr std::size_t Idx(int index) {
     return static_cast<std::size_t>(index);
@@ -699,8 +701,20 @@ private:
         StartScan();
     }
 
+    // Settings > Credits: who made what NXbox builds on (cheats_screen.cpp).
+    void OpenCredits() {
+        Diagnostic("UI library open credits");
+        if (RunCreditsScreen(renderer_, window_, input_)) {
+            closed_ = true;
+        }
+    }
+
     // A on a settings row.
     void ActivateSetting(Clock::time_point now) {
+        if (settings_row_ == kSettingCredits) {
+            OpenCredits();
+            return;
+        }
         if (settings_row_ == kSettingUsb) {
             const auto next = usb_mode_ == UsbMode::Ask        ? UsbMode::Copy
                               : usb_mode_ == UsbMode::Copy     ? UsbMode::External
@@ -1254,7 +1268,8 @@ private:
                 }
             }
             if (layer_ == Layer::Rail &&
-                (settings_row_ == kSettingSources || settings_row_ == kSettingUsb)) {
+                (settings_row_ == kSettingSources || settings_row_ == kSettingUsb ||
+                 settings_row_ == kSettingCredits)) {
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSelect)});
             }
         } else if (HasGame()) {
@@ -1308,10 +1323,13 @@ private:
         }
         const Row usb_row = {Tr(Text::UsbSetting), UsbModeLabel(usb_mode_), Theme::kTextSecondary,
                              Tr(Text::UsbSettingHint)};
-        const std::array<Row, kSettingsRowCount> rows = {{sync_row, sources_row, usb_row}};
-        constexpr float kRowTop = 580.0f;
+        const Row credits_row = {Tr(Text::CreditsRowTitle), Tr(Text::CreditsRowState),
+                                 Theme::kTextSecondary, Tr(Text::CreditsRowHint)};
+        const std::array<Row, kSettingsRowCount> rows = {
+            {sync_row, sources_row, usb_row, credits_row}};
+        constexpr float kRowTop = 560.0f;
         constexpr float kRowHeight = 88.0f;
-        constexpr float kRowPitch = 98.0f;
+        constexpr float kRowPitch = 96.0f;
         constexpr float kRowRadius = 22.0f;
         for (int i = 0; i < kSettingsRowCount; ++i) {
             const float y = kRowTop + static_cast<float>(i) * kRowPitch;
