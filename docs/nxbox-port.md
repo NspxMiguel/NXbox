@@ -733,3 +733,110 @@ No Xbox run or complete UWP compilation was performed for this change on the mac
     files.
   - Super Mario 3D World + Bowser's Fury ran over 5 minutes at a steady 60 FPS with no driver
     failures.
+
+## Rejected graphics PSOs: diagnosis and bounded fallback (04/10/2026)
+
+Mario Kart 8 Deluxe stops presenting near 19.8 s after a graphics PSO is rejected with
+`E_INVALIDARG`: one `R8_UNORM` RTV, no DSV, one sample, triangles, VS+PS, valid root
+signature. The null guard prevents a crash but loses the draw. This patch retries rejected
+PSOs to preserve more draws; it is a rendering degradation, not proof that the game can
+continue or that the original validation error is fixed. BotW's later rejections after
+`DXGI_ERROR_INVALID_CALL` device removal are a different problem.
+
+Ranked hypotheses for the **first** R8 rejection, pending the new console fields:
+
+1. **Logic-op state / integer-output conversion.** In the pinned source,
+   `d3d12_context.cpp:d3d12_create_blend_state` copies logic-op and blend enables separately;
+   it can describe both enabled, which D3D12 forbids, or logic ops with independent blending.
+   `d3d12_pipeline_state.cpp:d3d12_rtv_format` converts only RGBA/BGRA 8-bit formats to UINT;
+   R8 reaches `unreachable("unsupported logic-op format")`. That is a real coverage gap,
+   but does **not** prove the observed PSO took that branch: the compiler may treat
+   `unreachable` as undefined behavior. `has_float_rtv` only tests floating-point formats,
+   not UNORM. There is no separate `d3d12_blend.cpp` at this pin.
+   The [D3D12 format table](https://learn.microsoft.com/en-us/windows/win32/direct3ddxgi/hardware-support-for-direct3d-12-0-formats#dxgi_format_r8_unormfcs-61)
+   requires R8_UNORM rendering/blending support and disallows output-merger logic ops.
+2. **PS output numeric type versus RTV.** The pinned compiler's `d3d12_fill_shader_key`
+   sets `fs.cast_to_uint` for UNORM with logic ops, and `select_shader_variant` runs
+   `d3d12_lower_uint_cast`. An integer output with an unchanged UNORM RTV violates numeric
+   type compatibility; a float4 output into the one-channel RTV is not inherently invalid.
+   Disabling logic ops alone does not undo this shader lowering. The new `cast` and `types`
+   fields distinguish this case. See the
+   [pinned compiler](https://github.com/aerisarn/mesa-uwp/blob/15acdd7ea2b9dcdd62f26fe86b88280d79efc46b/src/gallium/drivers/d3d12/d3d12_compiler.cpp#L980).
+3. **Other blend/signature validation.** Check dual-source factors without the required
+   second output, invalid alpha factors, and the actual device format support. Ordinary
+   R8_UNORM blending is supported; a write mask containing G/B/A is not evidence by itself
+   of an invalid R8 PSO. The blend constructor leaves disabled factors zero-initialized;
+   level 2 also normalizes those enums. Input formats and `TEXCOORD` indices are another
+   possibility: `copy_input_attribs` copies the vertex elements and renumbers semantic
+   indices to match the selected VS. The new first-four-element report can expose a mismatch.
+4. **Output count, rasterization, other stream state.** `NumRenderTargets` comes from
+   `num_cbufs`, not the PS output mask. A missing color output or no bound RTV is not by
+   itself proof of invalidity (depth-only and UAV-only draws exist). `SampleMask` is an
+   arbitrary bit mask, not an enum. The reported forced count is already zero, and there
+   is no DSV, so depth/forced-sample restrictions are weak explanations for MK8.
+   `NodeMask=0`, `Flags=NONE`, sample quality 0 and no SO entries are set in the pinned
+   constructor. Strip cut is separate from topology type (triangle lists and strips share
+   the same PSO topology type). No custom view-instancing state is assigned. A systemic
+   STREAM3 incompatibility is less likely when other games create all their PSOs.
+
+Microsoft documents the relevant
+[PSO validation rules](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_graphics_pipeline_state_desc),
+[blend constraints](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_render_target_blend_desc),
+and [logic-op/independent-blend restriction](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/ns-d3d12-d3d12_blend_desc).
+There is not enough evidence to name the rule hit on the console conclusively.
+
+The fallback runs only after `E_INVALIDARG`, while `GetDeviceRemovedReason` still succeeds.
+Any other HRESULT or device loss stops it immediately. Both stream and legacy creation
+paths use the same ladder; the stream path retains STREAM3 and its extended stencil state.
+
+| Level | Description tried |
+| --- | --- |
+| 1 | Disable logic ops on every RT. |
+| 2 | Also disable blending, normalize blend factors/ops, and enable all physically present channels per RTV (R8: R only). Enable independent state so mixed formats get their own masks. |
+| 3 | Also disable alpha-to-coverage, clear forced samples, and zero constant/slope/clamp depth bias. |
+| 4 | Also trim RTV count to the PS's highest color slot plus one, capped by attached RTV count; clear trailing formats/masks. No color outputs or no active PS gives zero. Depth/stencil/sample-mask outputs do not count, nor does a dual-source index. Legacy `FRAG_RESULT_COLOR` counts as RT0. Sparse slots are not compacted and missing attachments are not invented. |
+| 5 | Start again from the **original** stream and change only DSVFormat to UNKNOWN. |
+
+The successful object, fallback level, effective RTV count and DSV presence are cached under
+Mesa's original key. Cache hits do not retry. Shared blend/rasterizer/shader state is unchanged.
+Framebuffer binding uses the cached attachment limits, and PSO changes also rebind the
+framebuffer so a subsequent normal PSO restores its attachments. If all levels fail, return
+NULL and retain the existing draw guard; failures are not cached. Root signatures and compute
+PSOs have no equivalent blend/RT simplification, so their behavior is unchanged. A shader type
+mismatch can still defeat the entire ladder; this patch does not replace shaders or cast RTVs.
+
+Diagnostics (environment names have `NXBOX_`; the frontend drops that prefix in the log):
+
+- `D3D12_PSO_FAIL`: original description, never the simplified retry. `b/l` = RT0 blend/logic
+  enables; `rgb` and `a` = source/destination/op enums; `op` = logic op; `wm` = hex write mask;
+  `atc` = alpha-to-coverage. `rast` = fill/cull/front-CCW/depth-bias/clamp/slope/depth-clip/
+  multisample/AA-line/forced-samples/conservative-raster. `sm` is the hex sample mask;
+  `cut`, `node`, `flags` expose the remaining simple validation candidates.
+- `D3D12_PSO_FAIL2`: same `id`, `out` = hexadecimal NIR `outputs_written`; `colors` = color
+  slot extent; `vars` = total declared outputs. `types` lists up to eight declarations as
+  `location.dual-source-index.location-frac:kindBitsxComponents`, with f/u/i for float/unsigned/
+  signed (e.g. `4.0.0:u32x4`). These are selected NIR declarations, not DXIL reflection.
+  `cast` = uint/int shader-key flags; `ia` = first four `semantic:index/DXGI-format` entries
+  (semantic names capped at 12 characters; this driver uses `TEXCOORD`). `fmt0cap` is the
+  format-query HRESULT/Support1/Support2 in hex; query failure is not evidence of unsupported
+  blending. `fmt4-7` completes the RTV list. Each report is bounded to 511 characters.
+- `D3D12_PSO_FALLBACK`: process-wide, synchronized success counters `level1` through `level5`,
+  and `failed` for terminal rejections. `last=0` means no level succeeded. `tried` is a hex
+  bitmask (bits 0..4 = levels 1..5; `1f` = all tried); `hr` holds each attempt's HRESULT
+  (`00000001`/S_FALSE means untried), and `removed` distinguishes device loss. Correlate by
+  `id`; the frontend polls the variables independently, so mismatched ids are different
+  rejections. Existing `D3D12_PSO failed` counts original rejections, including recovered
+  ones; `created` includes successful fallback objects. These are PSO creation counts,
+  not draw counts. Polling can coalesce intermediate failures; save the earliest log window.
+
+For the next MK8/BotW run, search the diagnostic file with:
+
+```sh
+rg 'D3D12_PSO_FALLBACK|D3D12_PSO_FAIL2|D3D12_PSO_FAIL|D3D12_REMOVED|D3D12_FIRST_FAILURE' eden_uwp_diag.txt
+```
+
+A level-1 success implicates logic-op state. Level 2 points toward blending/masks/enums, not
+necessarily absent R8 blend support. All levels failing with `cast=1/0` and a UINT color
+output on UNORM makes the shader/RT format mismatch the priority. No console runtime or Mesa
+build is available here; the host tests apply the patch to checked-in pinned source copies
+and check anchors, ladder generation, cache/binding integration and frontend subscriptions.

@@ -253,91 +253,373 @@ def patch_fence(root: Path) -> None:
 
 
 def patch_pso(root: Path) -> None:
-    # A failed CreateGraphicsPipelineState only reaches debug_printf, which is invisible on the
-    # Xbox, and the draw then silently produces nothing. Publish counters and the last HRESULT
-    # in the process environment so the frontend can log them.
+    # Cache a degraded PSO under its original Gallium key; never mutate shared state.
     pso = root / "src/gallium/drivers/d3d12/d3d12_pipeline_state.cpp"
     source = pso.read_text()
     anchor = "static ID3D12PipelineState *\ncreate_gfx_pipeline_state(struct d3d12_context *ctx)\n"
-    helper = (
-        "#include <stdio.h>\n\n"
-        "static void\n"
-        "nxbox_report_pso(bool ok, HRESULT hr)\n"
-        "{\n"
-        "   static long created = 0, failed = 0, last_hr = 0;\n"
-        "   if (ok)\n"
-        "      created++;\n"
-        "   else {\n"
-        "      failed++;\n"
-        "      last_hr = (long)hr;\n"
-        "   }\n"
-        "   if (!ok || created <= 4 || (created & (created - 1)) == 0) {\n"
-        "      char text[96];\n"
-        "      snprintf(text, sizeof(text), \"created=%ld failed=%ld last_hr=0x%08lx\",\n"
-        "               created, failed, (unsigned long)last_hr);\n"
-        "      SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", text);\n"
-        "   }\n"
-        "}\n\n"
-        "/* The fields of a rejected graphics PSO, so a pattern shows without the debug layer. */\n"
-        "static void\n"
-        "nxbox_report_pso_desc(const D3D12_GRAPHICS_PIPELINE_STATE_DESC &d)\n"
-        "{\n"
-        "   char text[320];\n"
-        "   snprintf(text, sizeof(text),\n"
-        "            \"rt=%u fmt=%d,%d,%d,%d dsv=%d samples=%u/%u topo=%d vs=%zu hs=%zu ds=%zu gs=%zu \"\n"
-        "            \"ps=%zu inputs=%u so=%u/%u rs=%p depth=%d stencil=%d forced=%u blend_ind=%d\",\n"
-        "            d.NumRenderTargets, d.RTVFormats[0], d.RTVFormats[1], d.RTVFormats[2],\n"
-        "            d.RTVFormats[3], d.DSVFormat, d.SampleDesc.Count, d.SampleDesc.Quality,\n"
-        "            d.PrimitiveTopologyType, d.VS.BytecodeLength, d.HS.BytecodeLength,\n"
-        "            d.DS.BytecodeLength, d.GS.BytecodeLength, d.PS.BytecodeLength,\n"
-        "            d.InputLayout.NumElements, d.StreamOutput.NumEntries,\n"
-        "            d.StreamOutput.NumStrides, (void *)d.pRootSignature,\n"
-        "            d.DepthStencilState.DepthEnable, d.DepthStencilState.StencilEnable,\n"
-        "            d.RasterizerState.ForcedSampleCount, d.BlendState.IndependentBlendEnable);\n"
-        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO_FAIL\", text);\n"
-        "   /* Also through the counter variable, which the frontend is known to read. */\n"
-        "   char both[400];\n"
-        "   snprintf(both, sizeof(both), \"rejected %s\", text);\n"
-        "   SetEnvironmentVariableA(\"NXBOX_D3D12_PSO\", both);\n"
-        "}\n\n"
-    )
-    stream_old = (
+    helper = r"""#include <stdio.h>
+#include <mutex>
+#include <string.h>
+
+static std::mutex nxbox_pso_report_mutex;
+
+static void
+nxbox_report_pso(bool ok, HRESULT hr)
+{
+   std::lock_guard<std::mutex> lock(nxbox_pso_report_mutex);
+   static unsigned long long created = 0, failed = 0;
+   static unsigned last_hr = 0;
+   if (ok)
+      created++;
+   else {
+      failed++;
+      last_hr = (unsigned)hr;
+   }
+   if (!ok || created <= 4 || (created & (created - 1)) == 0) {
+      char text[128];
+      snprintf(text, sizeof(text), "created=%llu failed=%llu last_hr=0x%08x", created, failed,
+               last_hr);
+      SetEnvironmentVariableA("NXBOX_D3D12_PSO", text);
+   }
+}
+
+/* Count color slots, not depth/stencil/sample-mask bits or dual-source indices. */
+static unsigned
+nxbox_ps_color_count(nir_shader *ps)
+{
+   if (!ps)
+      return 0;
+   uint64_t written = ps->info.outputs_written;
+   unsigned count = (written & BITFIELD64_BIT(FRAG_RESULT_COLOR)) ? 1 : 0;
+   for (unsigned i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+      if (written & BITFIELD64_BIT(FRAG_RESULT_DATA0 + i))
+         count = i + 1;
+   }
+   return count;
+}
+
+static UINT8
+nxbox_rtv_write_mask(DXGI_FORMAT format)
+{
+   switch (format) {
+   case DXGI_FORMAT_UNKNOWN: return 0;
+   case DXGI_FORMAT_A8_UNORM: return D3D12_COLOR_WRITE_ENABLE_ALPHA;
+   case DXGI_FORMAT_R8_UNORM:
+   case DXGI_FORMAT_R8_SNORM:
+   case DXGI_FORMAT_R8_UINT:
+   case DXGI_FORMAT_R8_SINT:
+   case DXGI_FORMAT_R16_FLOAT:
+   case DXGI_FORMAT_R16_UNORM:
+   case DXGI_FORMAT_R16_SNORM:
+   case DXGI_FORMAT_R16_UINT:
+   case DXGI_FORMAT_R16_SINT:
+   case DXGI_FORMAT_R32_FLOAT:
+   case DXGI_FORMAT_R32_UINT:
+   case DXGI_FORMAT_R32_SINT: return D3D12_COLOR_WRITE_ENABLE_RED;
+   case DXGI_FORMAT_R8G8_UNORM:
+   case DXGI_FORMAT_R8G8_SNORM:
+   case DXGI_FORMAT_R8G8_UINT:
+   case DXGI_FORMAT_R8G8_SINT:
+   case DXGI_FORMAT_R16G16_FLOAT:
+   case DXGI_FORMAT_R16G16_UNORM:
+   case DXGI_FORMAT_R16G16_SNORM:
+   case DXGI_FORMAT_R16G16_UINT:
+   case DXGI_FORMAT_R16G16_SINT:
+   case DXGI_FORMAT_R32G32_FLOAT:
+   case DXGI_FORMAT_R32G32_UINT:
+   case DXGI_FORMAT_R32G32_SINT:
+      return D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN;
+   case DXGI_FORMAT_R11G11B10_FLOAT:
+   case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+   case DXGI_FORMAT_R32G32B32_FLOAT:
+   case DXGI_FORMAT_R32G32B32_UINT:
+   case DXGI_FORMAT_R32G32B32_SINT:
+   case DXGI_FORMAT_B5G6R5_UNORM:
+   case DXGI_FORMAT_B8G8R8X8_UNORM:
+   case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+      return D3D12_COLOR_WRITE_ENABLE_RED | D3D12_COLOR_WRITE_ENABLE_GREEN |
+             D3D12_COLOR_WRITE_ENABLE_BLUE;
+   default: return D3D12_COLOR_WRITE_ENABLE_ALL;
+   }
+}
+
+/* Report the ORIGINAL rejection. Each value fits the frontend's 512-byte buffer. */
+static unsigned long long
+nxbox_report_pso_desc(struct d3d12_screen *screen, const D3D12_GRAPHICS_PIPELINE_STATE_DESC &d,
+                      struct d3d12_shader *shader)
+{
+   std::lock_guard<std::mutex> lock(nxbox_pso_report_mutex);
+   static unsigned long long serial = 0;
+   const unsigned long long id = ++serial;
+   const auto &b = d.BlendState.RenderTarget[0];
+   const auto &r = d.RasterizerState;
+   char text[512];
+   snprintf(text, sizeof(text),
+            "id=%llu rt=%u fmt=%d,%d,%d,%d dsv=%d samples=%u/%u topo=%d "
+            "vs=%zu hs=%zu ds=%zu gs=%zu ps=%zu in=%u so=%u/%u rs=%p z/s=%d/%d "
+            "ind=%d b/l=%d/%d rgb=%d/%d/%d a=%d/%d/%d op=%d wm=%x atc=%d "
+            "rast=%d/%d/%d/%d/%.3g/%.3g/%d/%d/%d/%u/%d sm=%08x cut=%d node=%x flags=%x",
+            id, d.NumRenderTargets, d.RTVFormats[0], d.RTVFormats[1], d.RTVFormats[2],
+            d.RTVFormats[3], d.DSVFormat, d.SampleDesc.Count, d.SampleDesc.Quality,
+            d.PrimitiveTopologyType, d.VS.BytecodeLength, d.HS.BytecodeLength, d.DS.BytecodeLength,
+            d.GS.BytecodeLength, d.PS.BytecodeLength, d.InputLayout.NumElements,
+            d.StreamOutput.NumEntries, d.StreamOutput.NumStrides, (void *)d.pRootSignature,
+            d.DepthStencilState.DepthEnable, d.DepthStencilState.StencilEnable,
+            d.BlendState.IndependentBlendEnable, b.BlendEnable, b.LogicOpEnable, b.SrcBlend,
+            b.DestBlend, b.BlendOp, b.SrcBlendAlpha, b.DestBlendAlpha, b.BlendOpAlpha, b.LogicOp,
+            (unsigned)b.RenderTargetWriteMask, d.BlendState.AlphaToCoverageEnable, r.FillMode,
+            r.CullMode, r.FrontCounterClockwise, r.DepthBias, r.DepthBiasClamp,
+            r.SlopeScaledDepthBias, r.DepthClipEnable, r.MultisampleEnable, r.AntialiasedLineEnable,
+            r.ForcedSampleCount, r.ConservativeRaster, d.SampleMask, d.IBStripCutValue, d.NodeMask,
+            (unsigned)d.Flags);
+   SetEnvironmentVariableA("NXBOX_D3D12_PSO_FAIL", text);
+
+   nir_shader *ps = d.PS.BytecodeLength && shader ? shader->nir : NULL;
+   /* Fixed per-field budgets leave room for all four vertex elements. */
+   char outputs[176] = "", inputs[160] = "";
+   unsigned output_count = 0;
+   if (ps) {
+      nir_foreach_variable_with_modes(var, ps, nir_var_shader_out)
+      {
+         output_count++;
+         if (output_count > 8)
+            continue;
+         const glsl_type *type = glsl_without_array(var->type);
+         char kind =
+             glsl_type_is_float_16_32_64(type) ? 'f'
+             : (glsl_type_is_uint_16_32_64(type) || glsl_get_base_type(type) == GLSL_TYPE_UINT8)
+                 ? 'u'
+             : glsl_type_is_integer(type) ? 'i'
+                                          : '?';
+         size_t n = strlen(outputs);
+         snprintf(outputs + n, sizeof(outputs) - n, "%s%d.%u.%u:%c%ux%u", n ? "," : "",
+                  var->data.location, var->data.index, var->data.location_frac, kind,
+                  glsl_type_is_numeric(type) ? glsl_get_bit_size(type) : 0u,
+                  glsl_get_vector_elements(type));
+      }
+   }
+   for (unsigned i = 0; i < MIN2(d.InputLayout.NumElements, 4u); ++i) {
+      const auto &e = d.InputLayout.pInputElementDescs[i];
+      size_t n = strlen(inputs);
+      snprintf(inputs + n, sizeof(inputs) - n, "%s%.12s:%u/%d", n ? "," : "",
+               e.SemanticName ? e.SemanticName : "null", e.SemanticIndex, e.Format);
+   }
+   D3D12_FEATURE_DATA_FORMAT_SUPPORT support = {};
+   support.Format = d.RTVFormats[0];
+   HRESULT support_hr = d.NumRenderTargets && support.Format != DXGI_FORMAT_UNKNOWN
+                            ? screen->dev->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT,
+                                                               &support, sizeof(support))
+                            : S_FALSE;
+   snprintf(text, sizeof(text),
+            "id=%llu out=%llx colors=%u vars=%u types=%s cast=%u/%u ia=%s "
+            "fmt0cap=%08x/%x/%x fmt4-7=%d,%d,%d,%d",
+            id, (unsigned long long)(ps ? ps->info.outputs_written : 0), nxbox_ps_color_count(ps),
+            output_count, outputs, shader ? shader->key.fs.cast_to_uint : 0u,
+            shader ? shader->key.fs.cast_to_int : 0u, inputs, (unsigned)support_hr,
+            (unsigned)support.Support1, (unsigned)support.Support2, d.RTVFormats[4],
+            d.RTVFormats[5], d.RTVFormats[6], d.RTVFormats[7]);
+   SetEnvironmentVariableA("NXBOX_D3D12_PSO_FAIL2", text);
+   return id;
+}
+
+static void
+nxbox_report_pso_fallback(unsigned long long id, unsigned level, unsigned tried,
+                          const HRESULT *results, HRESULT removed)
+{
+   std::lock_guard<std::mutex> lock(nxbox_pso_report_mutex);
+   static unsigned long long counts[6] = {};
+   counts[level]++;
+   char text[512];
+   snprintf(text, sizeof(text),
+            "level1=%llu level2=%llu level3=%llu level4=%llu level5=%llu failed=%llu "
+            "id=%llu last=%u tried=%02x hr=%08x,%08x,%08x,%08x,%08x removed=%08x",
+            counts[1], counts[2], counts[3], counts[4], counts[5], counts[0], id, level, tried,
+            (unsigned)results[0], (unsigned)results[1], (unsigned)results[2], (unsigned)results[3],
+            (unsigned)results[4], (unsigned)removed);
+   SetEnvironmentVariableA("NXBOX_D3D12_PSO_FALLBACK", text);
+}
+
+/* Levels 1-4 accumulate; level 5 changes only DSVFormat in the original stream. */
+static void
+nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
+                   const CD3DX12_PIPELINE_STATE_STREAM3 &original, unsigned level, nir_shader *ps)
+{
+   auto &blend = (D3D12_BLEND_DESC &)desc.BlendState;
+   auto &rast = (D3D12_RASTERIZER_DESC &)desc.RasterizerState;
+   auto &targets = (D3D12_RT_FORMAT_ARRAY &)desc.RTVFormats;
+   switch (level) {
+   case 1:
+      for (auto &rt : blend.RenderTarget)
+         rt.LogicOpEnable = false;
+      break;
+   case 2:
+      /* Different format masks require independent state, even with blending off. */
+      blend.IndependentBlendEnable = true;
+      for (unsigned i = 0; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+         auto &rt = blend.RenderTarget[i];
+         rt.BlendEnable = false;
+         rt.SrcBlend = rt.SrcBlendAlpha = D3D12_BLEND_ONE;
+         rt.DestBlend = rt.DestBlendAlpha = D3D12_BLEND_ZERO;
+         rt.BlendOp = rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+         rt.RenderTargetWriteMask =
+             i < targets.NumRenderTargets ? nxbox_rtv_write_mask(targets.RTFormats[i]) : 0;
+      }
+      break;
+   case 3:
+      blend.AlphaToCoverageEnable = false;
+      rast.ForcedSampleCount = 0;
+      rast.DepthBias = 0;
+      rast.DepthBiasClamp = 0;
+      rast.SlopeScaledDepthBias = 0;
+      break;
+   case 4: {
+      /* Never invent an RTV for a shader output without an attached color buffer. */
+      targets.NumRenderTargets = MIN2(targets.NumRenderTargets, nxbox_ps_color_count(ps));
+      for (unsigned i = targets.NumRenderTargets; i < D3D12_SIMULTANEOUS_RENDER_TARGET_COUNT; ++i) {
+         targets.RTFormats[i] = DXGI_FORMAT_UNKNOWN;
+         blend.RenderTarget[i].RenderTargetWriteMask = 0;
+      }
+      break;
+   }
+   case 5:
+      desc = original;
+      desc.DSVFormat = DXGI_FORMAT_UNKNOWN;
+      break;
+   }
+}
+"""
+    create_old = (
+        "   ID3D12PipelineState *ret;\n"
+        "\n"
+        "   if (screen->opts14.IndependentFrontAndBackStencilRefMaskSupported) {\n"
+        "      D3D12_PIPELINE_STATE_STREAM_DESC pso_stream_desc{\n"
+        "          sizeof(pso_desc),\n"
+        "          &pso_desc\n"
+        "      };\n"
+        "\n"
         "      if (FAILED(screen->dev->CreatePipelineState(&pso_stream_desc,\n"
         "                                                  IID_PPV_ARGS(&ret)))) {\n"
-        "         debug_printf(\"D3D12: CreateGraphicsPipelineState failed!\\n\");\n"
+        '         debug_printf("D3D12: CreateGraphicsPipelineState failed!\\n");\n'
         "         return NULL;\n"
         "      }\n"
-    )
-    stream_new = (
-        "      HRESULT nxbox_hr = screen->dev->CreatePipelineState(&pso_stream_desc,\n"
-        "                                                          IID_PPV_ARGS(&ret));\n"
-        "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
-        "      if (FAILED(nxbox_hr)) {\n"
-        "         nxbox_report_pso_desc(pso_desc.GraphicsDescV0());\n"
-        "         return NULL;\n"
-        "      }\n"
-    )
-    v0_old = (
+        "   } \n"
+        "   else {\n"
+        "      D3D12_GRAPHICS_PIPELINE_STATE_DESC v0desc = pso_desc.GraphicsDescV0();\n"
         "      if (FAILED(screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
         "                                                       IID_PPV_ARGS(&ret)))) {\n"
-        "         debug_printf(\"D3D12: CreateGraphicsPipelineState failed!\\n\");\n"
+        '         debug_printf("D3D12: CreateGraphicsPipelineState failed!\\n");\n'
         "         return NULL;\n"
         "      }\n"
+        "   }\n"
+        "\n"
+        "   return ret;"
     )
-    v0_new = (
-        "      HRESULT nxbox_hr = screen->dev->CreateGraphicsPipelineState(&v0desc,\n"
-        "                                                               IID_PPV_ARGS(&ret));\n"
-        "      nxbox_report_pso(SUCCEEDED(nxbox_hr), nxbox_hr);\n"
-        "      if (FAILED(nxbox_hr)) {\n"
-        "         nxbox_report_pso_desc(pso_desc.GraphicsDescV0());\n"
-        "         return NULL;\n"
-        "      }\n"
+    create_new = r"""   ID3D12PipelineState *ret = NULL;
+   cache_entry->fallback_level = 0;
+   cache_entry->num_render_targets = render_targets.NumRenderTargets;
+   cache_entry->has_dsv = (DXGI_FORMAT)pso_desc.DSVFormat != DXGI_FORMAT_UNKNOWN;
+   /* Keep STREAM3 (including stencil masks/view instancing) on the stream path. */
+   auto create = [&]() -> HRESULT {
+      ret = NULL;
+      if (screen->opts14.IndependentFrontAndBackStencilRefMaskSupported) {
+         D3D12_PIPELINE_STATE_STREAM_DESC stream = {sizeof(pso_desc), &pso_desc};
+         return screen->dev->CreatePipelineState(&stream, IID_PPV_ARGS(&ret));
+      }
+      D3D12_GRAPHICS_PIPELINE_STATE_DESC v0desc = pso_desc.GraphicsDescV0();
+      return screen->dev->CreateGraphicsPipelineState(&v0desc, IID_PPV_ARGS(&ret));
+   };
+   HRESULT hr = create();
+   nxbox_report_pso(SUCCEEDED(hr), hr);
+   if (SUCCEEDED(hr))
+      return ret;
+
+   auto shader = state->stages[PIPE_SHADER_FRAGMENT];
+   const auto original = pso_desc;
+   const auto original_v0 = original.GraphicsDescV0();
+   const auto id = nxbox_report_pso_desc(screen, original_v0, shader);
+   nir_shader *ps = original_v0.PS.BytecodeLength && shader ? shader->nir : NULL;
+   HRESULT results[5] = {S_FALSE, S_FALSE, S_FALSE, S_FALSE, S_FALSE};
+   unsigned tried = 0;
+   HRESULT removed = screen->dev->GetDeviceRemovedReason();
+   for (unsigned level = 1; level <= 5 && hr == E_INVALIDARG && SUCCEEDED(removed); ++level) {
+      nxbox_simplify_pso(pso_desc, original, level, ps);
+      tried |= 1u << (level - 1);
+      hr = results[level - 1] = create();
+      if (SUCCEEDED(hr)) {
+         cache_entry->fallback_level = level;
+         cache_entry->num_render_targets = render_targets.NumRenderTargets;
+         cache_entry->has_dsv = (DXGI_FORMAT)pso_desc.DSVFormat != DXGI_FORMAT_UNKNOWN;
+         nxbox_report_pso(true, hr);
+         nxbox_report_pso_fallback(id, level, tried, results, removed);
+         return ret;
+      }
+      removed = screen->dev->GetDeviceRemovedReason();
+   }
+   nxbox_report_pso_fallback(id, 0, tried, results, removed);
+   return NULL;"""
+    entry_old = (
+        "struct d3d12_gfx_pso_entry {\n"
+        "   struct d3d12_gfx_pipeline_state key;\n"
+        "   ID3D12PipelineState *pso;\n"
     )
-    for old in (anchor, stream_old, v0_old):
-        if old not in source:
-            raise RuntimeError("Pinned Mesa d3d12_pipeline_state.cpp does not match the PSO patch")
-    source = source.replace(anchor, helper + anchor)
-    source = source.replace(stream_old, stream_new).replace(v0_old, v0_new)
+    call_old = "      data->pso = create_gfx_pipeline_state(ctx);"
+    replacements = {
+        anchor: helper
+        + anchor.replace(" *ctx)", " *ctx, struct d3d12_gfx_pso_entry *cache_entry)"),
+        create_old: create_new,
+        entry_old: entry_old
+        + "   unsigned fallback_level;\n   unsigned num_render_targets;\n   bool has_dsv;\n",
+        call_old: "      data->pso = create_gfx_pipeline_state(ctx, data);",
+    }
+    bind_anchor = "void\nd3d12_gfx_pipeline_state_cache_init(struct d3d12_context *ctx)\n"
+    bind_helper = r"""/* Keep attachment bindings consistent with a cached fallback PSO. */
+void
+d3d12_nxbox_set_render_targets(struct d3d12_context *ctx, unsigned count,
+                               const D3D12_CPU_DESCRIPTOR_HANDLE *targets,
+                               const D3D12_CPU_DESCRIPTOR_HANDLE *depth)
+{
+   uint32_t hash = hash_gfx_pipeline_state(&ctx->gfx_pipeline_state);
+   struct hash_entry *entry =
+       _mesa_hash_table_search_pre_hashed(ctx->pso_cache, hash, &ctx->gfx_pipeline_state);
+   if (entry) {
+      auto data = (struct d3d12_gfx_pso_entry *)entry->data;
+      if (data->fallback_level) {
+         count = MIN2(count, data->num_render_targets);
+         if (!data->has_dsv)
+            depth = NULL;
+      }
+   }
+   ctx->cmdlist->OMSetRenderTargets(count, targets, false, depth);
+}
+"""
+    replacements[bind_anchor] = bind_helper + bind_anchor
+    draw = root / "src/gallium/drivers/d3d12/d3d12_draw.cpp"
+    draw_source = draw.read_text()
+    declaration_anchor = '#include "d3d12_context.h"\n'
+    bind_old = "      ctx->cmdlist->OMSetRenderTargets(ctx->fb.nr_cbufs, render_targets, false, depth_desc);"
+    dirty_old = "   if (ctx->cmdlist_dirty & D3D12_DIRTY_FRAMEBUFFER) {"
+    draw_replacements = {
+        declaration_anchor: declaration_anchor
+        + r"""
+/* Defined by the NXbox PSO patch; the upstream cache entry remains private. */
+void d3d12_nxbox_set_render_targets(struct d3d12_context *ctx, unsigned count,
+                                  const D3D12_CPU_DESCRIPTOR_HANDLE *targets,
+                                  const D3D12_CPU_DESCRIPTOR_HANDLE *depth);
+""",
+        bind_old: "      d3d12_nxbox_set_render_targets(ctx, ctx->fb.nr_cbufs, render_targets, depth_desc);",
+        dirty_old: "   if (ctx->cmdlist_dirty & (D3D12_DIRTY_FRAMEBUFFER | D3D12_DIRTY_GFX_PSO)) {",
+    }
+    for old in draw_replacements:
+        if draw_source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa PSO framebuffer anchor mismatch: {old[:80]}")
+    for old in replacements:
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa PSO patch anchor mismatch: {old[:80]}")
+    for old, new in replacements.items():
+        source = source.replace(old, new, 1)
+    for old, new in draw_replacements.items():
+        draw_source = draw_source.replace(old, new, 1)
+    draw.write_text(draw_source)
     pso.write_text(source)
 
 
