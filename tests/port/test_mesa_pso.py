@@ -179,8 +179,8 @@ class MesaPsoPatchTests(unittest.TestCase):
         for name in ["NXBOX_D3D12_PSO_FAIL", "NXBOX_D3D12_PSO_FAIL2", "NXBOX_D3D12_PSO_FALLBACK"]:
             self.assertIn(f'SetEnvironmentVariableA("{name}"', source)
             self.assertIn(f'"{name}"', frontend)
-        self.assertIn("std::array<std::string, 9> last", frontend)
-        self.assertIn("std::array<const char*, 9> names", frontend)
+        self.assertIn("std::array<std::string, 11> last", frontend)
+        self.assertIn("std::array<const char*, 11> names", frontend)
 
     def test_draw_patches_compose_in_production_order(self):
         self.patched()

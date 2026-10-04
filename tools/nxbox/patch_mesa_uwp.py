@@ -69,6 +69,7 @@ def patch(root: Path) -> None:
     patch_null_pso(root)
     patch_root_signature_report(root)
     patch_batch(root)
+    patch_dred(root)
     if "fence" in SKIP:
         print("skipping the null fence patch")
     else:
@@ -975,6 +976,189 @@ nxbox_report_reset(const char *what, HRESULT hr)
     if context_source.count(release_old) != 1:
         raise RuntimeError("Pinned Mesa d3d12_context.cpp does not match the recovery patch")
     context.write_text(context_source.replace(release_old, release_new))
+
+
+def patch_dred(root: Path) -> None:
+    """Instrument the pinned driver after the batch/root-signature/optional PSO patches.
+
+    Validate every anchor before writing any file. The helper lives in screen.cpp so
+    every worker shares one capture latch per device; no Meson source list change.
+    """
+    driver = root / "src/gallium/drivers/d3d12"
+    sources = {
+        name: (driver / name).read_text()
+        for name in (
+            "d3d12_screen.cpp",
+            "d3d12_batch.cpp",
+            "d3d12_pipeline_state.cpp",
+            "d3d12_root_signature.cpp",
+        )
+    }
+
+    def replace(name: str, old: str, new: str, count: int = 1) -> None:
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa DRED anchor mismatch in {name}: {old[:80]}")
+        sources[name] = sources[name].replace(old, new)
+
+    screen = "d3d12_screen.cpp"
+    anchor = "#include <dxguids/dxguids.h>\n"
+    replace(screen, anchor, anchor + '#define NXBOX_DRED_IMPLEMENTATION\n#include "nxbox_dred.h"\n')
+    anchor = "      screen->dev = create_device(screen->d3d12_mod, adapter, factory);"
+    replace(screen, anchor, "      nxbox_dred_enable(screen->d3d12_mod, factory);\n" + anchor)
+    anchor = "   assert(screen->base.destroy != nullptr);"
+    replace(
+        screen,
+        anchor,
+        anchor + "\n   if (screen->dev) {\n"
+        '      SetEnvironmentVariableA("NXBOX_D3D12_DRED", "unavailable stage=ImportedDevice settings-too-late");\n'
+        '      SetEnvironmentVariableA("NXBOX_D3D12_DRED2", "pending device removal");\n   }',
+    )
+    anchor = "      screen->dev->Release();\n      screen->dev = nullptr;"
+    replace(screen, anchor, "      nxbox_dred_forget(screen->dev);\n" + anchor)
+    for name in sources:
+        if name != screen:
+            anchor = '#include "d3d12_screen.h"\n'
+            replace(name, anchor, anchor + '#include "nxbox_dred.h"\n')
+
+    batch = "d3d12_batch.cpp"
+    replace(
+        batch,
+        "#include <directx/d3d12sdklayers.h>\n",
+        "#include <directx/d3d12sdklayers.h>\n#include <mutex>\n#include <wchar.h>\n",
+    )
+    replace(
+        batch,
+        "nxbox_report_batch(struct d3d12_screen *screen, HRESULT close_hr)\n{",
+        "nxbox_report_batch(struct d3d12_context *ctx, struct d3d12_batch *batch,\n"
+        "                   HRESULT close_hr, const char *stage, unsigned long long fence)\n{\n"
+        "   auto screen = d3d12_screen(ctx->base.screen);\n"
+        "   static std::mutex report_mutex;\n"
+        "   std::lock_guard<std::mutex> lock(report_mutex);",
+    )
+    replace(batch, "   batches++;\n", '   if (strcmp(stage, "close") == 0)\n      batches++;\n')
+    replace(
+        batch,
+        "   const bool report = FAILED(close_hr) ?",
+        "   HRESULT removed = screen->dev->GetDeviceRemovedReason();\n"
+        "   const bool report = FAILED(close_hr) ?",
+    )
+    replace(
+        batch,
+        "   if (!report)\n      return;",
+        "   if (!report && SUCCEEDED(removed))\n      return;",
+    )
+    old = r"""   char text[160];
+   snprintf(text, sizeof(text), "batches=%ld close_failed=%ld close_hr=0x%08lx removed=0x%08lx",
+            batches, close_failed, (unsigned long)last_hr,
+            (unsigned long)screen->dev->GetDeviceRemovedReason());
+   SetEnvironmentVariableA("NXBOX_D3D12_BATCH", text);"""
+    new = r"""   char text[256];
+   snprintf(text, sizeof(text), "batches=%ld close_failed=%ld close_hr=0x%08lx removed=0x%08lx "
+            "stage=%s ctx=%p batch=%u submit=%llu fence_target=%llu fence_ok=%u",
+            batches, close_failed, (unsigned long)last_hr, (unsigned long)removed, stage,
+            (void *)ctx, (unsigned)(batch - ctx->batches),
+            (unsigned long long)batch->submit_id, fence, batch->fence ? 1u : 0u);
+   if (FAILED(removed))
+      nxbox_dred_capture(screen->dev, removed, stage, text);
+   else
+      nxbox_dred_publish_batch(screen->dev, text);"""
+    replace(batch, old, new)
+    replace(
+        batch,
+        "   nxbox_report_batch(screen, nxbox_close_hr);",
+        '   nxbox_report_batch(ctx, batch, nxbox_close_hr, "close", 0);',
+    )
+    anchor = "   screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);"
+    replace(
+        batch,
+        anchor,
+        "   /* submit_mutex serializes this target with d3d12_create_fence. */\n"
+        "   const auto nxbox_fence_target = screen->fence_value + 1;\n"
+        "   nxbox_dred_submit(screen->dev, ctx, (unsigned)(batch - ctx->batches),\n"
+        "                     batch->submit_id, nxbox_fence_target);\n" + anchor,
+    )
+    anchor = "   batch->fence = d3d12_create_fence(screen);"
+    replace(
+        batch,
+        anchor,
+        anchor + '\n   nxbox_report_batch(ctx, batch, S_OK, "execute", nxbox_fence_target);',
+    )
+    anchor = "   batch->submit_id = ++ctx->submit_id;"
+    replace(
+        batch,
+        anchor,
+        anchor
+        + r"""
+   wchar_t nxbox_name[80];
+   swprintf(nxbox_name, ARRAY_SIZE(nxbox_name), L"%p.b%u.s%llu", (void *)ctx, (unsigned)(batch - ctx->batches),
+            (unsigned long long)batch->submit_id);
+   ctx->cmdlist->SetName(nxbox_name);
+""",
+    )
+    # Name the state-fixup list separately; it contains submission-time barriers.
+    anchor = "   bool has_state_fixup = d3d12_context_state_resolve_submission(ctx, batch);"
+    replace(
+        batch,
+        anchor,
+        anchor
+        + r"""
+   if (has_state_fixup) {
+      wchar_t nxbox_name[80];
+      swprintf(nxbox_name, ARRAY_SIZE(nxbox_name), L"fix.%p.b%u.s%llu", (void *)ctx, (unsigned)(batch - ctx->batches),
+               (unsigned long long)batch->submit_id);
+      ctx->state_fixup_cmdlist->SetName(nxbox_name);
+   }
+""",
+    )
+
+    pso = "d3d12_pipeline_state.cpp"
+    if "   HRESULT removed = screen->dev->GetDeviceRemovedReason();" in sources[pso]:
+        anchor = "   HRESULT removed = screen->dev->GetDeviceRemovedReason();"
+        replace(pso, anchor, anchor + '\n   nxbox_dred_capture(screen->dev, removed, "gfx-pso");')
+        anchor = "      removed = screen->dev->GetDeviceRemovedReason();"
+        replace(
+            pso,
+            anchor,
+            anchor + '\n      nxbox_dred_capture(screen->dev, removed, "gfx-pso-retry");',
+        )
+    else:
+        # NXBOX_MESA_SKIP=pso still needs DRED on the two upstream graphics paths.
+        anchor = '         debug_printf("D3D12: CreateGraphicsPipelineState failed!\\n");'
+        replace(
+            pso,
+            anchor,
+            '         nxbox_dred_capture(screen->dev, screen->dev->GetDeviceRemovedReason(), "gfx-pso");\n'
+            + anchor,
+            2,
+        )
+    anchor = '      debug_printf("D3D12: CreateComputePipelineState failed!\\n");'
+    replace(
+        pso,
+        anchor,
+        '      nxbox_dred_capture(screen->dev, screen->dev->GetDeviceRemovedReason(), "compute-pso");\n'
+        + anchor,
+    )
+    rootsig = "d3d12_root_signature.cpp"
+    anchor = '      nxbox_report_root_signature("create", nxbox_create_hr, NULL, num_params);'
+    replace(
+        rootsig,
+        anchor,
+        anchor
+        + '\n      nxbox_dred_capture(screen->dev, screen->dev->GetDeviceRemovedReason(), "rootsig");',
+    )
+    anchor = '         nxbox_report_root_signature("serialize", nxbox_hr, error.Get(), num_params);'
+    replace(
+        rootsig,
+        anchor,
+        anchor + "\n         auto nxbox_dev = d3d12_screen(ctx->base.screen)->dev;\n"
+        '         nxbox_dred_capture(nxbox_dev, nxbox_dev->GetDeviceRemovedReason(), "rootsig-serialize");',
+    )
+    helper = Path(__file__).with_name("mesa_dred.h").read_text()
+    if (driver / "nxbox_dred.h").exists():
+        raise RuntimeError("Pinned Mesa DRED anchor mismatch: helper already exists")
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    (driver / "nxbox_dred.h").write_text(helper)
 
 
 if __name__ == "__main__":

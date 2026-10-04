@@ -840,3 +840,68 @@ necessarily absent R8 blend support. All levels failing with `cast=1/0` and a UI
 output on UNORM makes the shader/RT format mismatch the priority. No console runtime or Mesa
 build is available here; the host tests apply the patch to checked-in pinned source copies
 and check anchors, ladder generation, cache/binding integration and frontend subscriptions.
+
+## DRED device-removal diagnostics
+
+`patch_dred` enables auto-breadcrumbs, page-fault tracking and, when available,
+breadcrumb contexts **before** Mesa creates its D3D12 device. Settings1 falls back
+to Settings. On the factory path it uses that factory's configuration interface;
+otherwise it resolves `D3D12GetDebugInterface` from Mesa's loaded `d3d12.dll`.
+The pinned [`util/u_dl.c`](https://github.com/aerisarn/mesa-uwp/blob/15acdd7ea2b9dcdd62f26fe86b88280d79efc46b/src/util/u_dl.c)
+uses `GetProcAddress` without a symbol allowlist. `_XBOX_UWP` uses the ordinary
+Windows creation path, not `_GAMING_XBOX`. This makes the lookup possible but does
+not establish that the console exports the function or supports DRED. No debug
+layer is enabled by this patch. The settings setters return void; `enabled` means
+configuration was requested successfully, not that the GPU produced breadcrumbs.
+Imported, already-created devices report `settings-too-late`.
+
+The frontend drops `NXBOX_`. Example lines below are illustrative, not console results:
+
+```text
+D3D12_DRED enabled settings=1 breadcrumbs=on pagefault=on contexts=on via=GetDebugInterface
+D3D12_DRED2 pending device removal
+D3D12_DRED removed=0x887a0001 at=execute api=1 crumbs_hr=0x00000000 n0 cl=0000012345678000.b2.s73 q=- count=120 last=91 ops=91:COPYTEXTUREREGION,90:RESOURCEBARRIER,89:DISPATCH,88:RESOURCEBARRIER nodes=1 scan=1 missing=0 more=0
+D3D12_DRED2 page_hr=0x00000000 va=0x0 existing=none freed=none
+```
+
+Unavailable settings instead produce, for example,
+`D3D12_DRED unavailable stage=GetDebugInterface hr=0x8007007f hr1=0x8007007f`
+(missing export); failed interface acquisition preserves its HRESULT. Removal-time
+QI tries DRED1 then DRED, with `api=0 qi1=...` for fallback or
+`unavailable stage=QueryInterface hr=... hr1=...` if neither works. In that case
+DRED2 preserves the setup diagnostic. `crumbs_hr` and `page_hr` describe the two
+output calls independently. `nodes=0` with successful output is not a successful
+GPU execution verdict: there may be no retained unfinished lists.
+
+`last` is the completed-operation **count**, so `ops` starts with the first
+unfinished index `last`, followed by `last-1`, `last-2`, `last-3` when present.
+Only two unfinished nodes are printed. History uses modulo 65536; overwritten or
+missing history is labeled instead of decoded. DRED2 adds up to two existing and
+two recently freed allocation names/types, plus the nearest preceding context
+string per printed node as `ctx0[index]=...`. Wide names are normalized to ASCII;
+non-ASCII/control characters become `?`, absent names become `-`. Names/context
+strings are limited to 40 characters. Each variable is at most 500 bytes; `~`
+marks overall truncation, and `more=1` marks an incomplete node traversal.
+
+`D3D12_BATCH` adds `stage`, `ctx`, `batch` (index in `ctx->batches`), `submit`,
+`fence_target`, and `fence_ok`. `close` uses target 0 because it has not submitted
+that batch; `execute` is sampled after execution and fence creation. The target
+is the next queue fence value, not proof it was signaled or completed. At first
+removal the report also freezes four submission attempts, newest first, as
+`recent(newest-first)=[ctx=... b=2 s=73 f=104]...`. A PSO/root-signature detection
+uses `removed=... noticed=gfx-pso` (or the corresponding call site) before this
+ring. Command lists are named `<context>.b2.s73`; submission barrier lists add
+`fix.`. Match context, batch and submit to the ring's target fence. The observed
+batch can be later than the faulty batch; command-list objects and batch slots
+are reused, and names alone are not a unique historical identifier on every runtime.
+
+The first removal is latched per device across batch, graphics/compute PSO and
+root-signature reports; teardown discards the latch. Checks run before report
+throttling and after each submission. This is diagnostic instrumentation, not a
+repair. DRED costs runtime/memory overhead and may be unavailable on Xbox.
+A pending `COPYTEXTUREREGION`, `RESOURCEBARRIER`, `EXECUTEINDIRECT` or `DISPATCH`
+narrows the inspection; a nonzero VA with a freed allocation suggests lifetime
+trouble. Zero VA does not exclude invalid API usage. GPU pipelining means the
+breadcrumb is not guaranteed to be the exact failing command; see Microsoft's
+[DRED interpretation and caveats](https://learn.microsoft.com/en-us/windows/win32/direct3d12/use-dred)
+and [factory configuration](https://microsoft.github.io/DirectX-Specs/d3d/IndependentDevices.html).
