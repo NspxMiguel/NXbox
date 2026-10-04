@@ -430,12 +430,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     {
         auto& dirs = Settings::values.external_content_dirs;
         dirs.clear();
-        // Applying updates currently breaks games (the guest computes garbage pointers from
-        // patched RomFS data); keep them off until that is fixed. NXBOX_UPDATES=1 in
-        // LocalState\nxbox_env.txt turns them on for testing.
+        // Updates and DLC load by default. NXBOX_UPDATES=0 in LocalState\nxbox_env.txt turns them
+        // off (they used to corrupt games until the shared AES contexts of the patched RomFS
+        // were made thread-safe).
         const char* updates = std::getenv("NXBOX_UPDATES");
-        if (updates == nullptr || updates[0] != '1') {
-            Diagnostic("CONTENT_DIRS off (set NXBOX_UPDATES=1 to load updates and DLC)");
+        if (updates != nullptr && updates[0] == '0') {
+            Diagnostic("CONTENT_DIRS off (NXBOX_UPDATES=0)");
         } else {
             const auto local_state = std::filesystem::path(winrt::to_string(
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
