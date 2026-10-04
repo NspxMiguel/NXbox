@@ -67,6 +67,7 @@ def patch(root: Path) -> None:
     patch_format_cast_report(root)
     patch_draw(root)
     patch_null_pso(root)
+    patch_image_slot(root)
     patch_root_signature_report(root)
     patch_batch(root)
     patch_dred(root)
@@ -174,6 +175,23 @@ def patch_root_signature_report(root: Path) -> None:
             raise RuntimeError("Pinned Mesa d3d12_root_signature.cpp does not match the report patch")
     source = source.replace(anchor, helper + anchor).replace(ser_old, ser_new)
     path.write_text(source.replace(create_old, create_new))
+
+
+def patch_image_slot(root: Path) -> None:
+    # d3d12_set_shader_images() stores the image view at ctx->image_views[shader][i + start_slot]
+    # but its format-emulation entry at [i]; the draw and compile paths read both at the slot
+    # index. With start_slot != 0 the view then got another slot's format (or none), a wrong UAV
+    # format. This device reports RelaxedFormatCastingSupported=0, so the emulation path is used.
+    path = root / "src/gallium/drivers/d3d12/d3d12_context.cpp"
+    source = path.read_text()
+    reset_old = "      ctx->image_view_emulation_formats[shader][i] = PIPE_FORMAT_NONE;\n"
+    reset_new = "      ctx->image_view_emulation_formats[shader][i + start_slot] = PIPE_FORMAT_NONE;\n"
+    set_old = "            ctx->image_view_emulation_formats[shader][i] =\n"
+    set_new = "            ctx->image_view_emulation_formats[shader][i + start_slot] =\n"
+    for old in (reset_old, set_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_context.cpp does not match the image slot patch")
+    path.write_text(source.replace(reset_old, reset_new).replace(set_old, set_new))
 
 
 def patch_query(root: Path) -> None:
