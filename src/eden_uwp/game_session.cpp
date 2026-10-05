@@ -665,16 +665,21 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             // The patched Mesa publishes its reports in environment variables (pipeline states,
             // root signatures, batch failures, device removal); log each one when it changes.
             {
-                static std::array<std::string, 11> last;
-                static constexpr std::array<const char*, 11> names{
+                static std::array<std::string, 21> last;
+                static constexpr std::array<const char*, 21> names{
                     "NXBOX_D3D12_PSO",           "NXBOX_D3D12_PSO_FAIL",
                     "NXBOX_D3D12_ROOTSIG",       "NXBOX_D3D12_REMOVED",
                     "NXBOX_D3D12_BATCH",         "NXBOX_D3D12_RESET",
                     "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_PSO_FAIL2",
                     "NXBOX_D3D12_PSO_FALLBACK",  "NXBOX_D3D12_DRED",
-                    "NXBOX_D3D12_DRED2"};
+                    "NXBOX_D3D12_DRED2",
+                    "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_BATCH_JOURNAL",
+                    "NXBOX_D3D12_BATCH_JOURNAL_0", "NXBOX_D3D12_BATCH_JOURNAL_1",
+                    "NXBOX_D3D12_BATCH_JOURNAL_2", "NXBOX_D3D12_BATCH_JOURNAL_3",
+                    "NXBOX_D3D12_BATCH_JOURNAL_4", "NXBOX_D3D12_BATCH_JOURNAL_5",
+                    "NXBOX_D3D12_BATCH_JOURNAL_6", "NXBOX_D3D12_BATCH_JOURNAL_7"};
                 for (std::size_t i = 0; i < names.size(); ++i) {
-                    char value[512] = "";
+                    char value[8192] = "";
                     if (GetEnvironmentVariableA(names[i], value, sizeof(value)) != 0 &&
                         last[i] != value) {
                         last[i] = value;
