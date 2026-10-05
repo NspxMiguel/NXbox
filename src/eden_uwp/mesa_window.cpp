@@ -17,7 +17,7 @@
 #include <glad/glad.h>
 
 using namespace winrt;
-using namespace Windows::UI::Core;
+using namespace winrt::Windows::UI::Core;
 
 namespace EdenXbox {
 namespace {
