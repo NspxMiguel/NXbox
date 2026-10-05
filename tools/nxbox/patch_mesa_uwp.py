@@ -76,6 +76,7 @@ def patch(root: Path) -> None:
     else:
         patch_fence(root)
     patch_lifetime(root)
+    patch_sync_batch(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -1383,6 +1384,146 @@ nxbox_trim_{kind}(struct d3d12_context *ctx)
         (driver / name).write_text(source)
     for target, source in helpers.items():
         (driver / target).write_text(Path(__file__).with_name(source).read_text())
+
+
+def patch_sync_batch(root: Path) -> None:
+    """Serialize GPU completion and retain the last 64 command records when opted in.
+
+    Apply after lifetime instrumentation. Validate the entire patch before writing;
+    command counts deliberately reject drift in the pinned graphics driver.
+    """
+    import re
+
+    driver = root / "src/gallium/drivers/d3d12"
+    calls = {
+        "d3d12_context.cpp": {
+            "ResourceBarrier": 2,
+            "ClearRenderTargetView": 1,
+            "ClearDepthStencilView": 1,
+        },
+        "d3d12_draw.cpp": {
+            "SetPipelineState": 2,
+            "SetGraphicsRootSignature": 1,
+            "SetComputeRootSignature": 1,
+            "DrawInstanced": 1,
+            "DrawIndexedInstanced": 1,
+            "Dispatch": 1,
+            "ExecuteIndirect": 2,
+        },
+        "d3d12_blit.cpp": {
+            "CopyBufferRegion": 1,
+            "CopyTextureRegion": 3,
+            "ResolveSubresource": 1,
+        },
+        "d3d12_resource.cpp": {"CopyBufferRegion": 1, "CopyTextureRegion": 1},
+        "d3d12_resource_state.cpp": {"ResourceBarrier": 1},
+    }
+    names = (*calls, "d3d12_batch.cpp", "d3d12_context.h")
+    sources = {name: (driver / name).read_text() for name in names}
+
+    def replace(name: str, old: str, new: str, count: int = 1) -> None:
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa sync batch anchor mismatch in {name}: {old[:100]}")
+        sources[name] = sources[name].replace(old, new)
+
+    target = driver / "nxbox_sync_batch.h"
+    if target.exists():
+        raise RuntimeError("Pinned Mesa sync batch helper already exists")
+    helper = Path(__file__).with_name("mesa_sync_batch.h").read_text()
+    for name in (*calls, "d3d12_batch.cpp"):
+        anchor = '#include "d3d12_context.h"\n'
+        replace(name, anchor, anchor + '#include "nxbox_sync_batch.h"\n')
+    replace(
+        "d3d12_context.h",
+        "   struct hash_table *pso_cache;",
+        "   struct NxboxBatchJournal *nxbox_journal;\n   struct hash_table *pso_cache;",
+    )
+    # This destruction anchor occurs only after all batches have been ended/released.
+    anchor = "   util_dynarray_fini(&ctx->recently_destroyed_bos);"
+    replace("d3d12_context.cpp", anchor, anchor + "\n   delete ctx->nxbox_journal;")
+    anchor = "   ctx->cmdlist->SetDescriptorHeaps(2, heaps);"
+    replace("d3d12_batch.cpp", anchor, "   nxbox_journal_reset(ctx->nxbox_journal);\n" + anchor)
+
+    for name, methods in calls.items():
+        for method, count in methods.items():
+            old = f"ctx->cmdlist->{method}("
+            new = f"nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).{method}("
+            replace(name, old, new, count)
+    # Fixup barriers are recorded at submission time but execute BEFORE the main list.
+    replace(
+        "d3d12_resource_state.cpp",
+        "         cmdlist->ResourceBarrier(",
+        '         nxbox_journal_commands(ctx->nxbox_journal, cmdlist, "fixup").ResourceBarrier(',
+    )
+    # No CopyResource calls exist in this pin, but the wrapper supports it. Reject any
+    # uninstrumented graphics call (including new files/aliases) instead of silently missing it.
+    methods = sorted(
+        {method for entries in calls.values() for method in entries} | {"CopyResource"}
+    )
+    pattern = re.compile(r"->\s*(?:" + "|".join(methods) + r")\s*\(")
+    for path in driver.glob("d3d12_*.cpp"):
+        if path.name.startswith("d3d12_video"):
+            continue  # Separate video queues are not Gallium graphics batches.
+        source = sources.get(path.name, path.read_text())
+        if pattern.search(source):
+            raise RuntimeError(f"Pinned Mesa sync batch unjournaled command in {path.name}")
+
+    file = "d3d12_batch.cpp"
+    anchor = "   mtx_lock(&screen->submit_mutex);"
+    replace(
+        file,
+        anchor,
+        anchor
+        + r"""
+   if (nxbox_sync_batch_enabled()) {
+      const HRESULT removed = screen->dev->GetDeviceRemovedReason();
+      if (FAILED(removed) || nxbox_sync_stopped().load()) {
+         /* Loss predating this Execute is not evidence against this batch. */
+         if (FAILED(removed)) {
+            SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", "device lost before Execute; batch not submitted");
+            nxbox_dred_capture(screen->dev, removed, "sync-before-execute");
+         }
+         batch->has_errors = true;
+         mtx_unlock(&screen->submit_mutex);
+         return;
+      }
+   }
+""",
+    )
+    anchor = "   batch->fence = d3d12_create_fence(screen);"
+    replace(
+        file,
+        anchor,
+        anchor
+        + r"""
+   if (nxbox_sync_batch_enabled()) {
+      /* Keep submit_mutex until this batch completes: no context can queue the next one.
+       * If fence allocation/event registration failed, enqueue a fallback target on the
+       * same queue/fence. Polling it does not need an event or a d3d12_fence allocation.
+       */
+      UINT64 target = batch->fence ? batch->fence->value : ++screen->fence_value;
+      HRESULT signal = batch->fence ? S_OK : screen->cmdqueue->Signal(screen->fence, target);
+      HRESULT removed = SUCCEEDED(signal) ? nxbox_sync_wait(screen->dev, screen->fence, target)
+                                         : screen->dev->GetDeviceRemovedReason();
+      if (FAILED(removed)) {
+         nxbox_sync_publish(ctx->nxbox_journal, ctx, (unsigned)(batch - ctx->batches),
+                            batch->submit_id, target, removed, has_state_fixup);
+         nxbox_dred_capture(screen->dev, removed, "sync-batch");
+         batch->has_errors = true;
+      } else if (FAILED(signal)) {
+         /* Attribution is no longer possible. Do not submit another batch unsynchronized. */
+         char text[128];
+         snprintf(text, sizeof(text), "fence Signal failed hr=0x%08x; sync stopped", (unsigned)signal);
+         SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", text);
+         nxbox_sync_stopped().store(true);
+         batch->has_errors = true;
+      }
+   }
+""",
+    )
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    target.write_text(helper)
 
 
 if __name__ == "__main__":
