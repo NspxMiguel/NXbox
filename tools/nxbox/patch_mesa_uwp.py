@@ -1228,7 +1228,7 @@ def patch_lifetime(root: Path) -> None:
     for kind, cache in (("gfx", "pso_cache"), ("compute", "compute_pso_cache")):
         entry = f"d3d12_{kind}_pso_entry"
         anchor = f"struct {entry} {{\n"
-        replace(file, anchor, anchor + "   d3d12_context *owner;\n   uint64_t last_frame, last_use, dxil_bytes;\n")
+        replace(file, anchor, anchor + "   struct d3d12_context *owner;\n   uint64_t last_frame, last_use, dxil_bytes;\n")
         anchor = f"      data->key = ctx->{kind}_pipeline_state;"
         bytecode = ("for (auto shader : data->key.stages)\n"
                     "         if (shader) data->dxil_bytes += shader->bytecode_length;"
@@ -1247,13 +1247,13 @@ def patch_lifetime(root: Path) -> None:
                 "   nxbox_object_ref(data->pso, -1);\n   data->pso->Release();")
         # The trim helper follows remove_*_entry; a forward declaration covers the getter.
         anchor = f"ID3D12PipelineState *\nd3d12_get_{kind}_pipeline_state(struct d3d12_context *ctx)\n{{"
-        replace(file, anchor, f"static void nxbox_trim_{kind}(d3d12_context *ctx);\n\n" + anchor +
+        replace(file, anchor, f"static void nxbox_trim_{kind}(struct d3d12_context *ctx);\n\n" + anchor +
                 "\n   if (nxbox_device_lost.load(std::memory_order_relaxed)) return NULL;")
         anchor = f"      struct {entry} *data = (struct {entry} *)MALLOC(sizeof(struct {entry}));"
         replace(file, anchor, f"      nxbox_trim_{kind}(ctx);\n" + anchor)
         anchor = f"void\nd3d12_{kind}_pipeline_state_cache_destroy(struct d3d12_context *ctx)"
         helper = f'''static void
-nxbox_trim_{kind}(d3d12_context *ctx)
+nxbox_trim_{kind}(struct d3d12_context *ctx)
 {{
    /* Soft target: cold entries first. Hard ceiling: evict the LRU even during prewarming.
     * Both limits count cache references, not opaque driver allocations or unique DXIL.
