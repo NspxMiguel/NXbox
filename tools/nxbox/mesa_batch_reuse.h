@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #pragma once
 
+#include "nxbox_dred.h"
+
 /* Events and the cached d3d12_fence::signaled bit are notifications, not proof
  * that a batch's allocator, descriptors and suballocated upload BOs are idle.
  * Poll only at reuse; ordinary submissions remain asynchronous. A zero timeout
