@@ -75,6 +75,7 @@ def patch(root: Path) -> None:
         print("skipping the null fence patch")
     else:
         patch_fence(root)
+    patch_lifetime(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -1177,6 +1178,211 @@ def patch_dred(root: Path) -> None:
     for name, source in sources.items():
         (driver / name).write_text(source)
     (driver / "nxbox_dred.h").write_text(helper)
+
+
+def patch_lifetime(root: Path) -> None:
+    """Observe removal at API boundaries and bound context-owned PSO caches.
+
+    Applied after the older patches. Validate the complete transaction before writing.
+    """
+    driver = root / "src/gallium/drivers/d3d12"
+    names = ("pipeline_state", "context", "batch", "draw", "compiler", "descriptor_pool", "fence")
+    sources = {f"d3d12_{name}.cpp": (driver / f"d3d12_{name}.cpp").read_text() for name in names}
+    sources["d3d12_context.h"] = (driver / "d3d12_context.h").read_text()
+
+    def replace(name: str, old: str, new: str, count: int = 1) -> None:
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa lifetime anchor mismatch in {name}: {old[:100]}")
+        sources[name] = sources[name].replace(old, new)
+
+    for name in names:
+        file = f"d3d12_{name}.cpp"
+        if '#include "nxbox_dred.h"' not in sources[file]:
+            anchor = '#include "d3d12_screen.h"\n'
+            replace(file, anchor, anchor + '#include "nxbox_dred.h"\n')
+
+    file = "d3d12_pipeline_state.cpp"
+    # Wrap both graphics APIs without altering fallback semantics, including the skip=pso path.
+    import re
+    for api in ("CreatePipelineState", "CreateGraphicsPipelineState", "CreateComputePipelineState"):
+        pattern = rf"screen->dev->{api}\(([^,]+),\s*IID_PPV_ARGS\(&ret\)\)"
+        kind = "compute-pso" if api == "CreateComputePipelineState" else "gfx-pso"
+        def wrap(match: re.Match) -> str:
+            return (f'nxbox_create_pso(screen->dev, "{kind}", [&]() -> HRESULT {{\n'
+                    f'         HRESULT result = {match[0]};\n'
+                    '         if (SUCCEEDED(result)) nxbox_pso_created(ret);\n'
+                    '         return result;\n      })')
+        sources[file], count = re.subn(pattern, wrap, sources[file])
+        if count != 1:
+            raise RuntimeError(f"Pinned Mesa lifetime API mismatch: {api}")
+    if "nxbox_report_pso_mutex" in sources[file]:
+        raise RuntimeError("Unexpected PSO report mutex spelling")
+    if "nxbox_pso_report_mutex" in sources[file]:
+        anchor = 'static std::mutex nxbox_pso_report_mutex;'
+        replace(file, anchor, anchor + '\n#include "nxbox_pso_first.h"')
+        anchor = "   const auto original_v0 = original.GraphicsDescV0();"
+        replace(file, anchor, anchor + "\n   nxbox_pso_first(original, hr);")
+        replace(file, "(created & (created - 1)) == 0", "(created % 8) == 0")
+
+    # Entry metadata is owned by its context. Batch AddRef keeps evicted PSOs alive until reset.
+    for kind, cache in (("gfx", "pso_cache"), ("compute", "compute_pso_cache")):
+        entry = f"d3d12_{kind}_pso_entry"
+        anchor = f"struct {entry} {{\n"
+        replace(file, anchor, anchor + "   d3d12_context *owner;\n   uint64_t last_frame, last_use, dxil_bytes;\n")
+        anchor = f"      data->key = ctx->{kind}_pipeline_state;"
+        bytecode = ("for (auto shader : data->key.stages)\n"
+                    "         if (shader) data->dxil_bytes += shader->bytecode_length;"
+                    if kind == "gfx" else
+                    "if (data->key.stage) data->dxil_bytes = data->key.stage->bytecode_length;")
+        replace(file, anchor, anchor + "\n      data->owner = ctx;\n      data->dxil_bytes = 0;\n      " + bytecode)
+        anchor = f"      entry = _mesa_hash_table_insert_pre_hashed(ctx->{cache}, hash, &data->key, data);"
+        replace(file, anchor, f"      ctx->nxbox_{kind}_bytes += data->dxil_bytes;\n" + anchor)
+        anchor = f"   return ((struct {entry} *)(entry->data))->pso;"
+        replace(file, anchor, f"   auto data = (struct {entry} *)entry->data;\n"
+                "   data->last_frame = ctx->nxbox_frame;\n"
+                "   data->last_use = ++ctx->nxbox_use;\n   return data->pso;")
+        anchor = f"   struct {entry} *data = (struct {entry} *)entry->data;\n   data->pso->Release();"
+        replace(file, anchor, f"   struct {entry} *data = (struct {entry} *)entry->data;\n"
+                f"   data->owner->nxbox_{kind}_bytes -= data->dxil_bytes;\n"
+                "   nxbox_object_ref(data->pso, -1);\n   data->pso->Release();")
+        # The trim helper follows remove_*_entry; a forward declaration covers the getter.
+        anchor = f"ID3D12PipelineState *\nd3d12_get_{kind}_pipeline_state(struct d3d12_context *ctx)\n{{"
+        replace(file, anchor, f"static void nxbox_trim_{kind}(d3d12_context *ctx);\n\n" + anchor +
+                "\n   if (nxbox_device_lost.load(std::memory_order_relaxed)) return NULL;")
+        anchor = f"      struct {entry} *data = (struct {entry} *)MALLOC(sizeof(struct {entry}));"
+        replace(file, anchor, f"      nxbox_trim_{kind}(ctx);\n" + anchor)
+        anchor = f"void\nd3d12_{kind}_pipeline_state_cache_destroy(struct d3d12_context *ctx)"
+        helper = f'''static void
+nxbox_trim_{kind}(d3d12_context *ctx)
+{{
+   /* Soft target: cold entries first. Hard ceiling: evict the LRU even during prewarming.
+    * Both limits count cache references, not opaque driver allocations or unique DXIL.
+    */
+   while (ctx->{cache}->entries >= 2048 || ctx->nxbox_{kind}_bytes >= (1ull << 30)) {{
+      hash_entry *victim = nullptr;
+      uint64_t oldest = UINT64_MAX;
+      const bool hard = ctx->{cache}->entries >= 4096 || ctx->nxbox_{kind}_bytes >= (2ull << 30);
+      hash_table_foreach(ctx->{cache}, candidate) {{
+         auto data = (struct {entry} *)candidate->data;
+         if (data->pso == ctx->current_{kind}_pso)
+            continue;
+         if ((hard || ctx->nxbox_frame - data->last_frame >= 120) && data->last_use < oldest) {{
+            oldest = data->last_use;
+            victim = candidate;
+         }}
+      }}
+      if (!victim)
+         break;
+      remove_{kind}_entry(ctx, victim);
+      ++ctx->nxbox_evicted;
+   }}
+   char text[256];
+   snprintf(text, sizeof(text), "ctx=%p kind={kind} cached=%u attributed_dxil=%llu frame=%llu evicted=%llu soft=2048 hard=4096 age=120",
+            (void *)ctx, ctx->{cache}->entries, (unsigned long long)ctx->nxbox_{kind}_bytes,
+            (unsigned long long)ctx->nxbox_frame, (unsigned long long)ctx->nxbox_evicted);
+   SetEnvironmentVariableA("NXBOX_D3D12_CACHE", text);
+}}
+
+'''
+        replace(file, anchor, helper + anchor)
+
+    replace("d3d12_context.h", "   struct hash_table *pso_cache;",
+            "   uint64_t nxbox_frame, nxbox_use, nxbox_gfx_bytes, nxbox_compute_bytes, nxbox_evicted;\n"
+            "   struct hash_table *pso_cache;")
+    file = "d3d12_context.cpp"
+    anchor = "   struct d3d12_context *ctx = d3d12_context(pipe);\n   struct d3d12_batch *batch = d3d12_current_batch(ctx);"
+    replace(file, anchor, anchor + "\n   if (flags & PIPE_FLUSH_END_OF_FRAME) ++ctx->nxbox_frame;")
+    # Entry-point guards run before any command-list use (not merely before SetPipelineState).
+    for file, functions in {
+        "d3d12_context.cpp": ("d3d12_clear_render_target", "d3d12_clear_depth_stencil", "d3d12_clear"),
+        "d3d12_draw.cpp": ("d3d12_draw_vbo", "d3d12_launch_grid"),
+    }.items():
+        for function in functions:
+            pattern = rf"(\n{function}\([^{{]+\n\{{)"
+            sources[file], count = re.subn(pattern, r"\1\n   if (nxbox_device_lost.load(std::memory_order_acquire)) return;", sources[file])
+            if count != 1:
+                raise RuntimeError(f"Pinned Mesa lifetime entry point mismatch: {function}")
+
+    file = "d3d12_batch.cpp"
+    replace(file, "   object->Release();", "   nxbox_object_ref(object, -1);\n   object->Release();")
+    replace(file, "      object->AddRef();", "      object->AddRef();\n      nxbox_object_ref(object, 1);")
+    anchor = "   screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);"
+    replace(file, anchor, anchor + '\n   nxbox_observe(screen->dev, "execute-return");')
+    for function in ("d3d12_start_batch", "d3d12_end_batch"):
+        anchor = f"{function}(struct d3d12_context *ctx, struct d3d12_batch *batch)\n{{"
+        replace(file, anchor, anchor + "\n   if (nxbox_device_lost.load(std::memory_order_acquire)) {\n"
+                "      batch->has_errors = true;\n      return;\n   }")
+    replace(file, "   if (FAILED(batch->cmdalloc->Reset())) {", "   if (FAILED(batch->cmdalloc->Reset())) {") if False else None
+    # Cleanup on removal still releases the batch references, but never resets the dead allocator.
+    anchor = "   HRESULT nxbox_alloc_hr = batch->cmdalloc->Reset();"
+    replace(file, anchor, "   if (nxbox_device_lost.load(std::memory_order_acquire)) return true;\n" + anchor)
+    replace(file, "   if (!batch->sampler_heap && !batch->view_heap)", "   if (!batch->sampler_heap || !batch->view_heap)")
+
+    file = "d3d12_compiler.cpp"
+    anchor = "   blob_finish_get_buffer(&tmp, &shader->bytecode, &shader->bytecode_length);"
+    replace(file, anchor, anchor + "\n   nxbox_metrics[NxboxDxil] += shader->bytecode_length;\n   ++nxbox_metrics[NxboxVariants];")
+    anchor = "      free(shader->bytecode);"
+    replace(file, anchor, "      nxbox_metrics[NxboxDxil] -= shader->bytecode_length;\n"
+            "      --nxbox_metrics[NxboxVariants];\n" + anchor)
+
+    file = "d3d12_descriptor_pool.cpp"
+    replace(file, "   uint32_t next;", "   uint32_t next;\n   uint32_t nxbox_live;")
+    anchor = "   heap->dev = dev;"
+    replace(file, anchor, "   ++nxbox_metrics[NxboxHeaps];\n   nxbox_metrics[NxboxCapacity] += num_descriptors;\n" + anchor)
+    anchor = "   heap->heap->Release();"
+    replace(file, anchor, "   if (!heap) return;\n   --nxbox_metrics[NxboxHeaps];\n"
+            "   nxbox_metrics[NxboxCapacity] -= heap->desc.NumDescriptors;\n"
+            "   nxbox_metrics[NxboxHandles] -= heap->nxbox_live;\n" + anchor)
+    anchor = "   handle->cpu_handle.ptr = heap->cpu_base + offset;"
+    replace(file, anchor, "   ++heap->nxbox_live;\n   ++nxbox_metrics[NxboxHandles];\n" + anchor)
+    anchor = "   const uint32_t index = handle->cpu_handle.ptr - handle->heap->cpu_base;"
+    replace(file, anchor, "   --handle->heap->nxbox_live;\n   --nxbox_metrics[NxboxHandles];\n" + anchor)
+    anchor = "   heap->next += num_handles * heap->desc_size;"
+    replace(file, anchor, anchor + "\n   heap->nxbox_live += num_handles;\n   nxbox_metrics[NxboxHandles] += num_handles;")
+    anchor = "   heap->next = 0;"
+    replace(file, anchor, "   nxbox_metrics[NxboxHandles] -= heap->nxbox_live;\n   heap->nxbox_live = 0;\n" + anchor)
+    anchor = "      list_addtail(&valid_heap->link, &pool->heaps);"
+    replace(file, anchor, "      if (!valid_heap) return 0;\n" + anchor)
+    anchor = '      assert(0 && "No handles available in descriptor heap");'
+    replace(file, anchor, '      SetEnvironmentVariableA("NXBOX_D3D12_DESCRIPTOR_FAIL", "handle exhaustion");\n' + anchor)
+    anchor = "      FREE(heap);\n      return NULL;"
+    replace(file, anchor, '      nxbox_observe(dev, "descriptor-heap-create");\n'
+            '      SetEnvironmentVariableA("NXBOX_D3D12_DESCRIPTOR_FAIL", "heap creation failed");\n' + anchor)
+
+    file = "d3d12_fence.cpp"
+    anchor = "   if (FAILED(screen->cmdqueue->Signal(screen->fence, ret->value)))"
+    replace(file, anchor, "   HRESULT nxbox_signal = screen->cmdqueue->Signal(screen->fence, ret->value);\n"
+            '   nxbox_observe(screen->dev, "signal-return", nxbox_signal);\n   if (FAILED(nxbox_signal))')
+    # GetDevice gives the exact device even for externally imported fences. Bound infinite waits
+    # to 100 ms slices so a lost device cannot leave the frontend stuck in the wait forever.
+    old = "   bool complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;\n   if (!complete && timeout_ns)\n      complete = d3d12_fence_wait_event(fence->event, fence->event_fd, timeout_ns);"
+    new = '''   ID3D12Device *dev = nullptr;
+   fence->cmdqueue_fence->GetDevice(IID_PPV_ARGS(&dev));
+   if (dev) nxbox_observe(dev, "fence-before-wait");
+   bool complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;
+   uint64_t remaining = timeout_ns;
+   while (!complete && remaining && !nxbox_device_lost.load(std::memory_order_acquire)) {
+      const uint64_t slice = MIN2(remaining, 100000000ull);
+      complete = d3d12_fence_wait_event(fence->event, fence->event_fd, slice);
+      if (dev) nxbox_observe(dev, "fence-after-wait");
+      complete |= fence->cmdqueue_fence->GetCompletedValue() >= fence->value;
+      if (remaining != OS_TIMEOUT_INFINITE) remaining -= slice;
+   }
+   if (dev) {
+      nxbox_observe(dev, "fence-return");
+      dev->Release();
+   }
+   /* On removal UINT64_MAX is not GPU success; it permits releasing dead-device objects. */
+   complete |= nxbox_device_lost.load(std::memory_order_acquire);'''
+    replace(file, old, new)
+    helpers = {"nxbox_lifetime.h": "mesa_lifetime.h", "nxbox_pso_first.h": "mesa_pso_first.h"}
+    for target in helpers:
+        if (driver / target).exists():
+            raise RuntimeError(f"Pinned Mesa lifetime helper already exists: {target}")
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    for target, source in helpers.items():
+        (driver / target).write_text(Path(__file__).with_name(source).read_text())
 
 
 if __name__ == "__main__":

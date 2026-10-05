@@ -11,6 +11,8 @@ void nxbox_dred_submit(ID3D12Device *dev, const void *ctx, unsigned batch,
 
 void nxbox_dred_publish_batch(ID3D12Device *dev, const char *text);
 
+#include "nxbox_lifetime.h"
+
 #ifdef NXBOX_DRED_IMPLEMENTATION
 #include <mutex>
 #include <stdarg.h>
@@ -272,6 +274,8 @@ nxbox_dred_capture(ID3D12Device *dev, HRESULT removed, const char *where, const 
    if (state.captured)
       return;
    state.captured = true;
+   nxbox_device_lost.store(true, std::memory_order_release);
+   SetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", "1");
    NxboxDredText crumbs, page, contexts, batch;
    if (batch_text)
       batch.add("%s", batch_text);
