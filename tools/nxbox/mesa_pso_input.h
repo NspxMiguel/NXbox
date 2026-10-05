@@ -163,3 +163,25 @@ static void nxbox_pso_fix_blend(D3D12_BLEND_DESC &blend) {
          target.LogicOp = D3D12_LOGIC_OP_NOOP;
    }
 }
+
+/* Exact emitted shader pair from pipe6-6a7affd1e/botw-diag.txt. Sizes or IA
+ * semantics alone would suppress unrelated draws. This deliberately drops the
+ * affected draw; it does not claim to repair the driver or shader. Keep active
+ * even with NXBOX_PSO_FIX=0, which only controls IA/blend normalization.
+ */
+static uint64_t nxbox_shader_hash(const D3D12_SHADER_BYTECODE &shader) {
+   uint64_t hash = 14695981039346656037ull;
+   const auto *bytes =
+       static_cast<const unsigned char *>(shader.pShaderBytecode);
+   for (size_t i = 0; i < shader.BytecodeLength; ++i)
+      hash = (hash ^ bytes[i]) * 1099511628211ull;
+   return hash;
+}
+
+static bool nxbox_pso_quarantined(const D3D12_SHADER_BYTECODE &vs,
+                                  const D3D12_SHADER_BYTECODE &ps) {
+   return vs.pShaderBytecode && ps.pShaderBytecode &&
+          vs.BytecodeLength == 2492 && ps.BytecodeLength == 2192 &&
+          nxbox_shader_hash(vs) == 0xfee40f01e55da8b0ull &&
+          nxbox_shader_hash(ps) == 0x944713566752175eull;
+}

@@ -5,7 +5,7 @@
 
 /* Events and the cached d3d12_fence::signaled bit are notifications, not proof
  * that a batch's allocator, descriptors and suballocated upload BOs are idle.
- * Poll only at reuse; ordinary submissions remain asynchronous. A zero timeout
+ * This reuse guard also protects NXBOX_SYNC_BATCH=0 submissions. A zero timeout
  * is a nonblocking query and UINT64_MAX is removal, never successful GPU work.
  */
 static bool nxbox_batch_wait(ID3D12Device *dev, ID3D12Fence *fence, UINT64 target,

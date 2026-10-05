@@ -905,3 +905,68 @@ trouble. Zero VA does not exclude invalid API usage. GPU pipelining means the
 breadcrumb is not guaranteed to be the exact failing command; see Microsoft's
 [DRED interpretation and caveats](https://learn.microsoft.com/en-us/windows/win32/direct3d12/use-dred)
 and [factory configuration](https://microsoft.github.io/DirectX-Specs/d3d/IndependentDevices.html).
+
+## Synchronous submission and render safety (2026-10-05, host validation only)
+
+Evidence read from `~/.local/share/nxbox/artifacts/pipe5-4932c691e/` and
+`pipe6-6a7affd1e/`: with `NXBOX_SYNC_BATCH=1`, MK8D has 83 presentation windows
+covering 415.359 measured seconds (plus boot), with frames still advancing at the end;
+pipe6 stops presenting without a removal report. This supports a
+serialization workaround, not identification of the underlying asynchronous lifetime race.
+Batch submission now waits for GPU completion by default, under the existing submission
+mutex. Only the exact value `NXBOX_SYNC_BATCH=0` opts out. The existing journal stays enabled
+with synchronous submission; expect possible throughput and CPU overhead.
+
+The complete pipe6 BotW hex capture decodes to these DXBC-container signatures:
+
+| Stage | Signature | Semantic indices | Component type / mask |
+| --- | --- | --- | --- |
+| VS | Input | TEXCOORD 0, 1 | FLOAT32 / xyzw (registers 0, 1) |
+| VS | Output | TEXCOORD 0–3, SV_Position 0 | FLOAT32 / xyzw |
+| PS | Input | TEXCOORD 0–3 | FLOAT32 / xyzw |
+| PS | Output | SV_Target 0 | FLOAT32 / xyzw |
+
+The two IA elements are `TEXCOORD0/1`, `R32G32B32A32_FLOAT`, slot 0, offsets 0/16,
+per vertex. They match the VS declaration; the VS/PS varying declarations also match.
+The read mask is 1 for both VS inputs and for PS TEXCOORD0, zero for the other PS inputs;
+this does not justify changing the declaration's float4 format. No signature mismatch was
+found. This analysis decodes the container signatures, not the DXIL instruction stream.
+
+The 2492-byte VS hashes to FNV-1a `fee40f01e55da8b0`; the 2192-byte PS to
+`944713566752175e`. Both complete captures are retained in the host fixture
+`tests/port/fixtures/botw-pipe6-dxil.json`. The Mesa patch quarantines this exact shader pair
+before either PSO creation API, reports `D3D12_PSO_FIX ... draw skipped`, and uses the existing
+null-PSO draw guard. This is deliberately a missing-draw workaround, not a shader repair or
+proof that BotW renders. It remains active with `NXBOX_PSO_FIX=0` (that switch controls only
+IA/blend normalization). Unrelated bytecode, including equal-size shaders, passes through.
+Quarantined failures are not cached as PSOs and never enter the fallback ladder.
+
+Already-removed devices must not leave an unbounded query wait: query readiness now polls
+completion with removal checks instead of `SetEventOnCompletion(..., NULL)`. Lost queries
+return a zero result without mapping dead-device readback memory. An unsubmitted query's
+UINT64_MAX target is never waited on; the fence's UINT64_MAX removal sentinel also terminates
+synchronous waits. The frontend consumes the existing `NXBOX_D3D12_DEVICE_LOST` marker,
+records the failure diagnostics and enters the existing shutdown/exception path. This is a
+terminal session error, not device recovery; console teardown still needs verification.
+
+Static render fixes, not yet correlated to SM3DW's absent menus:
+
+- 3D texture UAV transition covers one array subresource per mip (previously zero).
+- Stencil resolve copy and its transition use the actual destination mip/layer and stencil
+  plane stride. Array-layer selection no longer leaks into the copy's Z coordinate.
+- Equal-sample MSAA partial copies fall back to the existing blitter; full copies also require
+  matching destination extent. D3D12 requires whole-subresource rectangles for multisampled
+  copies ([Microsoft CopyTextureRegion contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-copytextureregion)).
+
+Validation: all 52 Python tests under `tests/port` pass, including 24 Mesa tests. The four
+portable C++ tests (`demand_commit`, `update_version`, `protocol_uri`, `cheats_parse`) were
+compiled and run with Clang; CMake is not installed on this host. Windows-only sparse-memory
+integration and a full Mesa/UWP build were not run. Patch composition through lifetime,
+synchronous submission, batch reuse and render safety was also checked against locally
+available pinned Mesa sources. No Xbox access, deployment or push was performed.
+
+Console gates for the eventual candidate: run MK8D for at least 15 minutes with no sync
+override; pass BotW's previous PSO-creation failure point and inspect the effect of the skipped
+draw; verify SM3DW menus, stencil effects and MSAA transitions visually. Capture frame gaps,
+memory and device-removal diagnostics, and confirm any removal exits the session instead of
+freezing. Check P5R for regressions and measure the cost of default serialization.

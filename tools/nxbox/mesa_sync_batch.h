@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
- * Opt-in CPU journal. No COM references are retained and no commands are
- * changed. Include after d3d12_context.h; the context owns this lazily
- * allocated POD ring.
+ * Synchronous submission and CPU journal, enabled unless NXBOX_SYNC_BATCH=0.
+ * No COM references are retained by the journal. Include after d3d12_context.h;
+ * the context owns this lazily allocated POD ring.
  */
 #pragma once
 #include <atomic>
@@ -14,9 +14,9 @@
 inline bool nxbox_sync_batch_enabled() {
   static const bool enabled = [] {
     char value[4] = {};
-    return GetEnvironmentVariableA("NXBOX_SYNC_BATCH", value, sizeof(value)) ==
-               1 &&
-           value[0] == '1';
+    return !(GetEnvironmentVariableA("NXBOX_SYNC_BATCH", value,
+                                     sizeof(value)) == 1 &&
+             value[0] == '0');
   }();
   return enabled;
 }
@@ -313,7 +313,9 @@ inline HRESULT nxbox_sync_wait(ID3D12Device *dev, ID3D12Fence *fence,
     const HRESULT removed = dev->GetDeviceRemovedReason();
     if (FAILED(removed))
       return removed;
-    if (completed != UINT64_MAX && completed >= target)
+    if (completed == UINT64_MAX)
+      return DXGI_ERROR_DEVICE_REMOVED;
+    if (completed >= target)
       return dev->GetDeviceRemovedReason();
     Sleep(1);
   }

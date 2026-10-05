@@ -615,6 +615,22 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     };
     while (!closed.load(std::memory_order_acquire) &&
            !guest_exited.load(std::memory_order_acquire)) {
+        // Mesa cannot recover a removed device. Leave through the existing shutdown/error path
+        // instead of keeping a live guest behind a permanently frozen presentation surface.
+        char device_lost[2]{};
+        if (GetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", device_lost, sizeof(device_lost)) ==
+                1 &&
+            device_lost[0] == '1') {
+            for (const char* name : {"NXBOX_D3D12_DRED", "NXBOX_D3D12_DRED2",
+                                     "NXBOX_D3D12_PSO_FAIL_FIRST", "NXBOX_D3D12_FIRST_FAILURE"}) {
+                char report[8192]{};
+                const auto length = GetEnvironmentVariableA(name, report, sizeof(report));
+                if (length && length < sizeof(report)) {
+                    Diagnostic(std::string(name + 6) + " " + report);
+                }
+            }
+            throw std::runtime_error("D3D12 device removed; stopping the game");
+        }
         const int request = lifecycle.request.exchange(Lifecycle::None, std::memory_order_acq_rel);
         if (request == Lifecycle::Suspend) {
             if (!paused) {

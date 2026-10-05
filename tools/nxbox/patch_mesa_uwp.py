@@ -78,6 +78,7 @@ def patch(root: Path) -> None:
     patch_lifetime(root)
     patch_sync_batch(root)
     patch_batch_reuse(root)
+    patch_render_safety(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -92,7 +93,7 @@ def patch_null_pso(root: Path) -> None:
         "      assert(ctx->current_gfx_pso);\n"
         "   }\n"
     )
-    gfx_new = gfx_old + (
+    gfx_new = gfx_old.replace("      assert(ctx->current_gfx_pso);\n", "") + (
         "   if (!ctx->current_gfx_pso) {\n"
         "      if (index_buffer && dinfo->has_user_indices)\n"
         "         pipe_resource_reference(&index_buffer, NULL);\n"
@@ -104,7 +105,10 @@ def patch_null_pso(root: Path) -> None:
         "      assert(ctx->current_compute_pso);\n"
         "   }\n"
     )
-    compute_new = compute_old + "   if (!ctx->current_compute_pso)\n      return;\n"
+    compute_new = (
+        compute_old.replace("      assert(ctx->current_compute_pso);\n", "")
+        + "   if (!ctx->current_compute_pso)\n      return;\n"
+    )
     for old in (gfx_old, compute_old):
         if source.count(old) != 1:
             raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the null PSO patch")
@@ -540,6 +544,11 @@ nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
    D3D12_INPUT_ELEMENT_DESC nxbox_inputs[PIPE_MAX_ATTRIBS * 4];
    nxbox_pso_fix_inputs(pso_desc.VS, input_layout, nxbox_inputs, ARRAY_SIZE(nxbox_inputs));
    nxbox_pso_fix_blend((D3D12_BLEND_DESC &)pso_desc.BlendState);
+   /* Quarantine the captured device-removing pair before either driver API. */
+   if (nxbox_pso_quarantined(pso_desc.VS, pso_desc.PS)) {
+      SetEnvironmentVariableA("NXBOX_D3D12_PSO_FIX", "quarantined botw-pipe6 shader pair; draw skipped");
+      return NULL;
+   }
    ID3D12PipelineState *ret = NULL;
    cache_entry->fallback_level = 0;
    cache_entry->num_render_targets = render_targets.NumRenderTargets;
@@ -1398,7 +1407,7 @@ nxbox_trim_{kind}(struct d3d12_context *ctx)
 
 
 def patch_sync_batch(root: Path) -> None:
-    """Serialize GPU completion and retain the last 64 command records when opted in.
+    """Serialize GPU completion by default and retain the last 64 command records.
 
     Apply after lifetime instrumentation. Validate the entire patch before writing;
     command counts deliberately reject drift in the pinned graphics driver.
@@ -1668,6 +1677,97 @@ def patch_batch_reuse(root: Path) -> None:
     for name, source in sources.items():
         (driver / name).write_text(source)
     target.write_text(helper)
+
+
+def patch_render_safety(root: Path) -> None:
+    """Fix subresource ranges and retire lost-device queries without blocking."""
+    driver = root / "src/gallium/drivers/d3d12"
+    sources = {
+        name: (driver / name).read_text()
+        for name in ("d3d12_draw.cpp", "d3d12_blit.cpp", "d3d12_query.cpp")
+    }
+
+    def replace(name: str, old: str, new: str) -> None:
+        if sources[name].count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa render safety anchor mismatch in {name}: {old[:100]}")
+        sources[name] = sources[name].replace(old, new)
+
+    replace(
+        "d3d12_draw.cpp",
+        "               transition_array_size = 0;",
+        "               transition_array_size = 1; // One subresource per 3D mip, not per Z slice.",
+    )
+    # Equal-sample MSAA is the only MSAA case that reaches direct_copy_supported.
+    # It still requires full rectangles, even with programmable sample positions.
+    replace(
+        "d3d12_blit.cpp",
+        "        info->src.resource->nr_samples != info->dst.resource->nr_samples) {",
+        "        MAX2(info->src.resource->nr_samples, info->dst.resource->nr_samples) > 1) {",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "      if (info->dst.box.x != 0 ||",
+        """      if (info->dst.box.width != (int)u_minify(info->dst.resource->width0, info->dst.level) ||
+          info->dst.box.height != (int)u_minify(info->dst.resource->height0, info->dst.level))
+         return false;
+      if (info->dst.box.x != 0 ||""",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "   struct pipe_resource *tmp = resolve_stencil_to_temp(ctx, info);",
+        "   struct pipe_resource *tmp = resolve_stencil_to_temp(ctx, info);\n   if (!tmp) return;",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "                                       0, 1, 0, 1, 1, 1,",
+        """                                       info->dst.level, 1,
+                                       d3d12_subresource_id_uses_layer(dst->base.b.target) ? info->dst.box.z : 0,
+                                       1, 1, 1,""",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "   dst_loc.SubresourceIndex = 1;",
+        """   unsigned dst_z = info->dst.box.z;
+   dst_loc.SubresourceIndex = get_subresource_id(dst->base.b.target, info->dst.level,
+                                                dst->base.b.last_level + 1, dst_z, &dst_z,
+                                                dst->base.b.array_size, 1);""",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "                                   info->dst.box.y, info->dst.box.z,",
+        "                                   info->dst.box.y, dst_z,",
+    )
+    replace(
+        "d3d12_query.cpp",
+        '#include "d3d12_context.h"\n',
+        '#include "d3d12_context.h"\n#include "nxbox_query_wait.h"\n',
+    )
+    replace(
+        "d3d12_query.cpp",
+        """   if (screen->fence->GetCompletedValue() < query->fence_value){
+      if (!wait)
+         return false;
+
+      screen->fence->SetEventOnCompletion(query->fence_value, NULL);
+   }
+   return true;""",
+        """   return nxbox_query_ready(screen->dev, screen->fence, query->fence_value, wait);""",
+    )
+    replace(
+        "d3d12_query.cpp",
+        "   return accumulate_result_cpu(ctx, query, result);",
+        """   if (nxbox_device_lost.load(std::memory_order_acquire)) {
+      memset(result, 0, sizeof(*result));
+      return true; // Retire the query without mapping a dead-device readback resource.
+   }
+   return accumulate_result_cpu(ctx, query, result);""",
+    )
+    target = driver / "nxbox_query_wait.h"
+    if target.exists():
+        raise RuntimeError("Pinned Mesa query wait helper already exists")
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    target.write_text(Path(__file__).with_name("mesa_query_wait.h").read_text())
 
 
 if __name__ == "__main__":
