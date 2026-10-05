@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <cctype>
 #include <vector>
@@ -665,25 +666,58 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             // The patched Mesa publishes its reports in environment variables (pipeline states,
             // root signatures, batch failures, device removal); log each one when it changes.
             {
-                static std::array<std::string, 21> last;
-                static constexpr std::array<const char*, 21> names{
+                const auto collect = [](const char* name, std::string& previous) {
+                    char value[8192] = "";
+                    const auto length = GetEnvironmentVariableA(name, value, sizeof(value));
+                    if (length && length < sizeof(value) && previous != value) {
+                        previous = value;
+                        Diagnostic(std::string(name + 6) + " " + value); // drop "NXBOX_"
+                    }
+                };
+                static std::array<std::string, 11> last;
+                static constexpr std::array<const char*, 11> names{
                     "NXBOX_D3D12_PSO",           "NXBOX_D3D12_PSO_FAIL",
                     "NXBOX_D3D12_ROOTSIG",       "NXBOX_D3D12_REMOVED",
                     "NXBOX_D3D12_BATCH",         "NXBOX_D3D12_RESET",
                     "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_PSO_FAIL2",
                     "NXBOX_D3D12_PSO_FALLBACK",  "NXBOX_D3D12_DRED",
-                    "NXBOX_D3D12_DRED2",
+                    "NXBOX_D3D12_DRED2"};
+                for (std::size_t i = 0; i < names.size(); ++i) {
+                    collect(names[i], last[i]);
+                }
+                static constexpr const char* extended_names[]{
                     "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_BATCH_JOURNAL",
                     "NXBOX_D3D12_BATCH_JOURNAL_0", "NXBOX_D3D12_BATCH_JOURNAL_1",
                     "NXBOX_D3D12_BATCH_JOURNAL_2", "NXBOX_D3D12_BATCH_JOURNAL_3",
                     "NXBOX_D3D12_BATCH_JOURNAL_4", "NXBOX_D3D12_BATCH_JOURNAL_5",
-                    "NXBOX_D3D12_BATCH_JOURNAL_6", "NXBOX_D3D12_BATCH_JOURNAL_7"};
-                for (std::size_t i = 0; i < names.size(); ++i) {
-                    char value[8192] = "";
-                    if (GetEnvironmentVariableA(names[i], value, sizeof(value)) != 0 &&
-                        last[i] != value) {
-                        last[i] = value;
-                        Diagnostic(std::string(names[i] + 6) + " " + value); // drop "NXBOX_"
+                    "NXBOX_D3D12_BATCH_JOURNAL_6", "NXBOX_D3D12_BATCH_JOURNAL_7",
+                    "NXBOX_D3D12_PSO_FAIL_FIRST",  "NXBOX_D3D12_PSO_FIX",
+                    "NXBOX_D3D12_PSO_DXIL",        "NXBOX_D3D12_SYNC_ERROR"};
+                static std::array<std::string, std::size(extended_names)> extended_last;
+                for (std::size_t i = 0; i < std::size(extended_names); ++i) {
+                    collect(extended_names[i], extended_last[i]);
+                }
+                // The manifest is published after the chunks. Derive names dynamically so
+                // larger shaders are not silently cut off at a fixed number of chunks.
+                char manifest[8192] = "";
+                const auto length =
+                    GetEnvironmentVariableA("NXBOX_D3D12_PSO_DXIL", manifest, sizeof(manifest));
+                std::size_t bytes[2]{}, parts[2]{};
+                if (length && length < sizeof(manifest) &&
+                    std::sscanf(manifest, "vs_bytes=%zu vs_parts=%zu ps_bytes=%zu ps_parts=%zu",
+                                &bytes[0], &parts[0], &bytes[1], &parts[1]) == 4) {
+                    static std::array<std::vector<std::string>, 2> last_dxil;
+                    constexpr const char* stages[]{"VS", "PS"};
+                    for (std::size_t stage = 0; stage < 2; ++stage) {
+                        if (parts[stage] != bytes[stage] / 4095 + (bytes[stage] % 4095 != 0)) {
+                            continue;
+                        }
+                        last_dxil[stage].resize(parts[stage]);
+                        for (std::size_t part = 0; part < parts[stage]; ++part) {
+                            const auto name =
+                                fmt::format("NXBOX_D3D12_PSO_DXIL_{}_{}", stages[stage], part);
+                            collect(name.c_str(), last_dxil[stage][part]);
+                        }
                     }
                 }
             }

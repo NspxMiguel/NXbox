@@ -77,6 +77,7 @@ def patch(root: Path) -> None:
         patch_fence(root)
     patch_lifetime(root)
     patch_sync_batch(root)
+    patch_batch_reuse(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -535,7 +536,11 @@ nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
         "\n"
         "   return ret;"
     )
-    create_new = r"""   ID3D12PipelineState *ret = NULL;
+    create_new = r"""   const auto nxbox_original_inputs = input_layout;
+   D3D12_INPUT_ELEMENT_DESC nxbox_inputs[PIPE_MAX_ATTRIBS * 4];
+   nxbox_pso_fix_inputs(pso_desc.VS, input_layout, nxbox_inputs, ARRAY_SIZE(nxbox_inputs));
+   nxbox_pso_fix_blend((D3D12_BLEND_DESC &)pso_desc.BlendState);
+   ID3D12PipelineState *ret = NULL;
    cache_entry->fallback_level = 0;
    cache_entry->num_render_targets = render_targets.NumRenderTargets;
    cache_entry->has_dsv = (DXGI_FORMAT)pso_desc.DSVFormat != DXGI_FORMAT_UNKNOWN;
@@ -585,7 +590,8 @@ nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
     )
     call_old = "      data->pso = create_gfx_pipeline_state(ctx);"
     replacements = {
-        anchor: helper
+        anchor: '#include "nxbox_pso_input.h"\n'
+        + helper
         + anchor.replace(" *ctx)", " *ctx, struct d3d12_gfx_pso_entry *cache_entry)"),
         create_old: create_new,
         entry_old: entry_old
@@ -640,8 +646,13 @@ void d3d12_nxbox_set_render_targets(struct d3d12_context *ctx, unsigned count,
         source = source.replace(old, new, 1)
     for old, new in draw_replacements.items():
         draw_source = draw_source.replace(old, new, 1)
+    input_helper = Path(__file__).with_name("mesa_pso_input.h").read_text()
+    input_target = pso.with_name("nxbox_pso_input.h")
+    if input_target.exists():
+        raise RuntimeError("Pinned Mesa PSO input helper already exists")
     draw.write_text(draw_source)
     pso.write_text(source)
+    input_target.write_text(input_helper)
 
 
 def patch_dxil(root: Path) -> None:
@@ -1222,7 +1233,7 @@ def patch_lifetime(root: Path) -> None:
         anchor = 'static std::mutex nxbox_pso_report_mutex;'
         replace(file, anchor, anchor + '\n#include "nxbox_pso_first.h"')
         anchor = "   const auto original_v0 = original.GraphicsDescV0();"
-        replace(file, anchor, anchor + "\n   nxbox_pso_first(original, hr);")
+        replace(file, anchor, anchor + "\n   nxbox_pso_first(original, hr, nxbox_original_inputs);")
         replace(file, "(created & (created - 1)) == 0", "(created % 8) == 0")
 
     # Entry metadata is owned by its context. Batch AddRef keeps evicted PSOs alive until reset.
@@ -1521,6 +1532,139 @@ def patch_sync_batch(root: Path) -> None:
    }
 """,
     )
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    target.write_text(helper)
+
+
+def patch_batch_reuse(root: Path) -> None:
+    """Require actual GPU completion before recycling any batch-owned storage."""
+    driver = root / "src/gallium/drivers/d3d12"
+    names = (
+        "d3d12_batch.cpp",
+        "d3d12_context.h",
+        "d3d12_fence.cpp",
+        "d3d12_context.cpp",
+        "d3d12_draw.cpp",
+    )
+    sources = {name: (driver / name).read_text() for name in names}
+
+    def replace(name: str, old: str, new: str, count: int = 1) -> None:
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa batch reuse anchor mismatch in {name}: {old[:100]}")
+        sources[name] = sources[name].replace(old, new)
+
+    batch = "d3d12_batch.cpp"
+    anchor = '#include "nxbox_sync_batch.h"\n'
+    replace(batch, anchor, anchor + '#include "nxbox_batch_reuse.h"\n')
+    anchor = "   struct d3d12_batch batches[8];"
+    replace("d3d12_context.h", anchor, anchor + "\n   bool nxbox_unfenced_batches[8];")
+    anchor = "   // batch hasn't been submitted before"
+    replace(
+        batch,
+        anchor,
+        r"""   auto screen = d3d12_screen(ctx->base.screen);
+   if (ctx->nxbox_unfenced_batches[batch - ctx->batches]) {
+      const HRESULT removed = screen->dev->GetDeviceRemovedReason();
+      if (SUCCEEDED(removed))
+         return false; // A failed Signal gives no proof that reuse is safe.
+      nxbox_dred_capture(screen->dev, removed, "unfenced-batch-reuse");
+   }
+"""
+        + anchor,
+    )
+    anchor = "      if (!d3d12_fence_finish(batch->fence, timeout_ns))"
+    replace(
+        batch,
+        anchor,
+        "      if (!nxbox_batch_wait(screen->dev, batch->fence->cmdqueue_fence,\n"
+        "                            batch->fence->value, timeout_ns))",
+    )
+    anchor = "   d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE);"
+    # Both start and destroy must honor reset failure. Retain GPU-owned objects
+    # on an unfenced live device rather than releasing them during teardown.
+    replace(
+        batch,
+        anchor,
+        "   if (!d3d12_reset_batch(ctx, batch, OS_TIMEOUT_INFINITE)) {\n"
+        "      batch->has_errors = true;\n      nxbox_sync_stopped().store(true);\n      return;\n   }",
+        2,
+    )
+    anchor = "   if (!ctx->queries_disabled)\n      d3d12_suspend_queries(ctx);"
+    replace(batch, anchor, "   if (batch->has_errors) return;\n" + anchor)
+    anchor = "   batch->fence = d3d12_create_fence(screen);"
+    replace(
+        batch,
+        anchor,
+        anchor
+        + r"""
+   if (!batch->fence) {
+      /* Execute already happened. No fence must not mean 'never submitted'.
+       * Only this exceptional path drains immediately, under submit_mutex.
+       * Keep a poison bit if even the fallback Signal fails on a live device.
+       */
+      auto &unfenced = ctx->nxbox_unfenced_batches[batch - ctx->batches];
+      unfenced = true;
+      batch->has_errors = true;
+      const UINT64 target = ++screen->fence_value;
+      const HRESULT hr = screen->cmdqueue->Signal(screen->fence, target);
+      if (SUCCEEDED(hr))
+         unfenced = !nxbox_batch_wait(screen->dev, screen->fence, target, OS_TIMEOUT_INFINITE);
+      else
+         nxbox_dred_capture(screen->dev, screen->dev->GetDeviceRemovedReason(), "batch-fallback-signal");
+      if (unfenced) {
+         nxbox_sync_stopped().store(true);
+         SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", "unfenced batch retained; submissions stopped");
+      }
+   }
+""",
+    )
+    # Stop recording/submitting when safe recovery is impossible. Do not fold
+    # this latch into the device-loss flag: a failed Signal need not be removal.
+    for name, count in ((batch, 2), ("d3d12_context.cpp", 3), ("d3d12_draw.cpp", 2)):
+        suffix = " {" if name == batch else " return;"
+        anchor = "if (nxbox_device_lost.load(std::memory_order_acquire))" + suffix
+        replace(
+            name,
+            anchor,
+            "if (nxbox_device_lost.load(std::memory_order_acquire) || nxbox_sync_stopped().load())"
+            + suffix,
+            count,
+        )
+    # Descriptor exhaustion can flush in the middle of draw/dispatch. If starting
+    # the next batch failed, do not write that batch's still-live descriptor heap.
+    for compute in (False, True):
+        anchor = f"   if (!check_descriptors_left(ctx, {str(compute).lower()}))\n      d3d12_flush_cmdlist(ctx);\n   batch = d3d12_current_batch(ctx);"
+        cleanup = (
+            ""
+            if compute
+            else "      if (index_buffer && dinfo->has_user_indices)\n         pipe_resource_reference(&index_buffer, NULL);\n"
+        )
+        replace(
+            "d3d12_draw.cpp",
+            anchor,
+            anchor
+            + "\n   if (batch->has_errors || nxbox_sync_stopped().load()) {\n"
+            + cleanup
+            + "      return;\n   }",
+        )
+    # A wake-up must never be ORed into completion. Other users of fence_finish
+    # (including resource maps and GL sync) need the same counter-based proof.
+    fence = "d3d12_fence.cpp"
+    replace(
+        fence,
+        "      complete = d3d12_fence_wait_event(fence->event, fence->event_fd, slice);",
+        "      d3d12_fence_wait_event(fence->event, fence->event_fd, slice);",
+    )
+    replace(
+        fence,
+        "      complete |= fence->cmdqueue_fence->GetCompletedValue() >= fence->value;",
+        "      complete = fence->cmdqueue_fence->GetCompletedValue() >= fence->value;",
+    )
+    target = driver / "nxbox_batch_reuse.h"
+    if target.exists():
+        raise RuntimeError("Pinned Mesa batch reuse helper already exists")
+    helper = Path(__file__).with_name("mesa_batch_reuse.h").read_text()
     for name, source in sources.items():
         (driver / name).write_text(source)
     target.write_text(helper)
