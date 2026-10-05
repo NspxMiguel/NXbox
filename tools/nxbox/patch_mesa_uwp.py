@@ -1750,6 +1750,7 @@ def patch_render_safety(root: Path) -> None:
 
       screen->fence->SetEventOnCompletion(query->fence_value, NULL);
    }
+
    return true;""",
         """   return nxbox_query_ready(screen->dev, screen->fence, query->fence_value, wait);""",
     )

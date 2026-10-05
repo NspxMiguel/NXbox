@@ -20,6 +20,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
+
 #include "d3d12_query.h"
 #include "d3d12_compiler.h"
 #include "d3d12_compute_transforms.h"
@@ -32,6 +33,7 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_threaded_context.h"
+
 #include <dxguids/dxguids.h>
 
 static unsigned
@@ -46,6 +48,7 @@ num_sub_queries(unsigned query_type, unsigned index)
       return 1;
    }
 }
+
 static D3D12_QUERY_HEAP_TYPE
 d3d12_query_heap_type(unsigned query_type, unsigned sub_query)
 {
@@ -68,12 +71,14 @@ d3d12_query_heap_type(unsigned query_type, unsigned sub_query)
    case PIPE_QUERY_TIMESTAMP:
    case PIPE_QUERY_TIME_ELAPSED:
       return D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+
    default:
       debug_printf("unknown query: %s\n",
                    util_str_query_type(query_type, true));
       unreachable("d3d12: unknown query type");
    }
 }
+
 static D3D12_QUERY_TYPE
 d3d12_query_type(unsigned query_type, unsigned sub_query, unsigned index)
 {
@@ -104,6 +109,7 @@ d3d12_query_type(unsigned query_type, unsigned sub_query, unsigned index)
       unreachable("d3d12: unknown query type");
    }
 }
+
 static struct pipe_query *
 d3d12_create_query(struct pipe_context *pctx,
                    unsigned query_type, unsigned index)
@@ -115,6 +121,7 @@ d3d12_create_query(struct pipe_context *pctx,
 
    if (!query)
       return NULL;
+
    pipe_reference_init(&query->reference, 1);
    query->type = (pipe_query_type)query_type;
    query->index = index;
@@ -122,6 +129,7 @@ d3d12_create_query(struct pipe_context *pctx,
       assert(i < MAX_SUBQUERIES);
       query->subqueries[i].d3d12qtype = d3d12_query_type(query_type, i, index);
       query->subqueries[i].num_queries = 16;
+
       /* With timer queries we want a few more queries, especially since we need two slots
        * per query for TIME_ELAPSED queries
        * For TIMESTAMP, we don't need more than one slot, since there's nothing to accumulate */
@@ -129,9 +137,11 @@ d3d12_create_query(struct pipe_context *pctx,
          query->subqueries[i].num_queries = 64;
       else if (query_type == PIPE_QUERY_TIMESTAMP)
          query->subqueries[i].num_queries = 1;
+
       query->subqueries[i].curr_query = 0;
       desc.Count = query->subqueries[i].num_queries;
       desc.Type = d3d12_query_heap_type(query_type, i);
+
       switch (desc.Type) {
       case D3D12_QUERY_HEAP_TYPE_PIPELINE_STATISTICS:
          query->subqueries[i].query_size = sizeof(D3D12_QUERY_DATA_PIPELINE_STATISTICS);
@@ -148,6 +158,7 @@ d3d12_create_query(struct pipe_context *pctx,
          FREE(query);
          return NULL;
       }
+
       /* Query result goes into a readback buffer */
       size_t buffer_size = query->subqueries[i].query_size * query->subqueries[i].num_queries;
       u_suballocator_alloc(&ctx->query_allocator, buffer_size, 256,
@@ -158,6 +169,7 @@ d3d12_create_query(struct pipe_context *pctx,
 
    return (struct pipe_query *)query;
 }
+
 void
 d3d12_destroy_query(struct d3d12_query *query)
 {
@@ -169,6 +181,7 @@ d3d12_destroy_query(struct d3d12_query *query)
    }
    FREE(query);
 }
+
 static void
 d3d12_release_query(struct pipe_context *pctx,
                     struct pipe_query *q)
@@ -178,6 +191,7 @@ d3d12_release_query(struct pipe_context *pctx,
       d3d12_destroy_query(query);
    }
 }
+
 static bool
 accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent,
                          unsigned sub_query,
@@ -190,6 +204,7 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
    void *results;
 
    access |= PIPE_MAP_UNSYNCHRONIZED;
+
    results = pipe_buffer_map_range(&ctx->base, q->buffer, q->buffer_offset,
                                    q->num_queries * q->query_size,
                                    access, &transfer);
@@ -200,6 +215,7 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
    uint64_t *results_u64 = (uint64_t *)results;
    D3D12_QUERY_DATA_PIPELINE_STATISTICS *results_stats = (D3D12_QUERY_DATA_PIPELINE_STATISTICS *)results;
    D3D12_QUERY_DATA_SO_STATISTICS *results_so = (D3D12_QUERY_DATA_SO_STATISTICS *)results;
+
    memset(result, 0, sizeof(*result));
    for (unsigned i = 0; i < q->curr_query; ++i) {
       switch (q->d3d12qtype) {
@@ -210,12 +226,14 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
       case D3D12_QUERY_TYPE_OCCLUSION:
          result->u64 += results_u64[i];
          break;
+
       case D3D12_QUERY_TYPE_TIMESTAMP:
          if (q_parent->type == PIPE_QUERY_TIME_ELAPSED)
             result->u64 += results_u64[2 * i + 1] - results_u64[2 * i];
          else
             result->u64 = results_u64[i];
          break;
+
       case D3D12_QUERY_TYPE_PIPELINE_STATISTICS:
          result->pipeline_statistics.ia_vertices += results_stats[i].IAVertices;
          result->pipeline_statistics.ia_primitives += results_stats[i].IAPrimitives;
@@ -229,6 +247,7 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
          result->pipeline_statistics.ds_invocations += results_stats[i].DSInvocations;
          result->pipeline_statistics.cs_invocations += results_stats[i].CSInvocations;
          break;
+
       case D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0:
       case D3D12_QUERY_TYPE_SO_STATISTICS_STREAM1:
       case D3D12_QUERY_TYPE_SO_STATISTICS_STREAM2:
@@ -241,6 +260,7 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
             result->so_statistics.primitives_storage_needed += results_so[i].PrimitivesStorageNeeded;
          }
          break;
+
       default:
          debug_printf("unsupported query type: %s\n",
                       util_str_query_type(q_parent->type, true));
@@ -255,6 +275,7 @@ accumulate_subresult_cpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
 
    return true;
 }
+
 static bool
 accumulate_result_cpu(struct d3d12_context *ctx, struct d3d12_query *q,
                       union pipe_query_result *result)
@@ -266,10 +287,12 @@ accumulate_result_cpu(struct d3d12_context *ctx, struct d3d12_query *q,
       if (!accumulate_subresult_cpu(ctx, q, 0, &local_result))
          return false;
       result->u64 = local_result.so_statistics.primitives_storage_needed;
+
       if (q->index == 0) {
          if (!accumulate_subresult_cpu(ctx, q, 1, &local_result))
             return false;
          result->u64 += local_result.pipeline_statistics.gs_primitives;
+
          if (!accumulate_subresult_cpu(ctx, q, 2, &local_result))
             return false;
          result->u64 += local_result.pipeline_statistics.ia_primitives;
@@ -293,6 +316,7 @@ accumulate_result_cpu(struct d3d12_context *ctx, struct d3d12_query *q,
       return accumulate_subresult_cpu(ctx, q, 0, result);
    }
 }
+
 static bool
 subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsigned sub_query)
 {
@@ -313,11 +337,12 @@ subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsi
       return true;
    }
 }
-static bool
+
+static bool 
 query_ensure_ready(struct d3d12_screen* screen, struct d3d12_context* ctx, struct d3d12_query* query, bool wait)
 {
-   // If the query is not flushed, it won't have
-   // been submitted yet, and won't have a waitable
+   // If the query is not flushed, it won't have 
+   // been submitted yet, and won't have a waitable 
    // fence value
    if (query->fence_value == UINT64_MAX) {
       d3d12_flush_cmdlist(ctx);
@@ -329,6 +354,7 @@ query_ensure_ready(struct d3d12_screen* screen, struct d3d12_context* ctx, struc
 
       screen->fence->SetEventOnCompletion(query->fence_value, NULL);
    }
+
    return true;
 }
 
@@ -338,6 +364,7 @@ accumulate_subresult_gpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
 {
    d3d12_compute_transform_save_restore save;
    d3d12_save_compute_transform_state(ctx, &save);
+
    d3d12_compute_transform_key key;
    memset(&key, 0, sizeof(key));
    key.type = d3d12_compute_transform_type::query_resolve;
@@ -349,16 +376,19 @@ accumulate_subresult_gpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
    key.query_resolve.is_signed = false;
    key.query_resolve.timestamp_multiplier = 1.0;
    ctx->base.bind_compute_state(&ctx->base, d3d12_get_compute_transform(ctx, &key));
+
    ctx->transform_state_vars[0] = q_parent->subqueries[sub_query].curr_query;
    ctx->transform_state_vars[1] = 0;
    ctx->transform_state_vars[2] = 0;
    ctx->transform_state_vars[3] = 0;
    ctx->transform_state_vars[4] = 0;
+
    pipe_shader_buffer new_cs_ssbos[1];
    new_cs_ssbos[0].buffer = q_parent->subqueries[sub_query].buffer;
    new_cs_ssbos[0].buffer_offset = q_parent->subqueries[sub_query].buffer_offset;
    new_cs_ssbos[0].buffer_size = q_parent->subqueries[sub_query].query_size * q_parent->subqueries[sub_query].num_queries;
    ctx->base.set_shader_buffers(&ctx->base, PIPE_SHADER_COMPUTE, 0, 1, new_cs_ssbos, 1);
+
    pipe_grid_info grid = {};
    grid.block[0] = grid.block[1] = grid.block[2] = 1;
    grid.grid[0] = grid.grid[1] = grid.grid[2] = 1;
@@ -366,6 +396,7 @@ accumulate_subresult_gpu(struct d3d12_context *ctx, struct d3d12_query *q_parent
 
    d3d12_restore_compute_transform_state(ctx, &save);
 }
+
 static void
 accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
                       struct pipe_resource *dst, uint32_t dst_offset,
@@ -373,6 +404,7 @@ accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
 {
    d3d12_compute_transform_save_restore save;
    d3d12_save_compute_transform_state(ctx, &save);
+
    d3d12_compute_transform_key key;
    memset(&key, 0, sizeof(key));
    key.type = d3d12_compute_transform_type::query_resolve;
@@ -384,6 +416,7 @@ accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
    key.query_resolve.is_signed = result_type == PIPE_QUERY_TYPE_I32 || result_type == PIPE_QUERY_TYPE_I64;
    key.query_resolve.timestamp_multiplier = d3d12_screen(ctx->base.screen)->timestamp_multiplier;
    ctx->base.bind_compute_state(&ctx->base, d3d12_get_compute_transform(ctx, &key));
+
    pipe_shader_buffer new_cs_ssbos[5];
    uint32_t num_ssbos = 0;
    for (uint32_t i = 0; i < key.query_resolve.num_subqueries; ++i) {
@@ -393,6 +426,7 @@ accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
       new_cs_ssbos[num_ssbos].buffer_size = q->subqueries[i].query_size * q->subqueries[i].num_queries;
       num_ssbos++;
    }
+
    assert(dst_offset % (key.query_resolve.is_64bit ? 8 : 4) == 0);
    ctx->transform_state_vars[4] = dst_offset / (key.query_resolve.is_64bit ? 8 : 4);
 
@@ -400,8 +434,9 @@ accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
    new_cs_ssbos[num_ssbos].buffer_offset = 0;
    new_cs_ssbos[num_ssbos].buffer_size = dst->width0;
    num_ssbos++;
-
+   
    ctx->base.set_shader_buffers(&ctx->base, PIPE_SHADER_COMPUTE, 0, num_ssbos, new_cs_ssbos, 1 << (num_ssbos - 1));
+
    pipe_grid_info grid = {};
    grid.block[0] = grid.block[1] = grid.block[2] = 1;
    grid.grid[0] = grid.grid[1] = grid.grid[2] = 1;
@@ -409,6 +444,7 @@ accumulate_result_gpu(struct d3d12_context *ctx, struct d3d12_query *q,
 
    d3d12_restore_compute_transform_state(ctx, &save);
 }
+
 static void
 begin_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned sub_query)
 {
@@ -422,6 +458,7 @@ begin_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned
    ctx->cmdlist->BeginQuery(q->query_heap, q->d3d12qtype, q->curr_query);
    q->active = true;
 }
+
 static void
 begin_query(struct d3d12_context *ctx, struct d3d12_query *q_parent, bool restart)
 {
@@ -436,6 +473,7 @@ begin_query(struct d3d12_context *ctx, struct d3d12_query *q_parent, bool restar
    }
 }
 
+
 static void
 begin_timer_query(struct d3d12_context *ctx, struct d3d12_query *q_parent, bool restart)
 {
@@ -444,6 +482,7 @@ begin_timer_query(struct d3d12_context *ctx, struct d3d12_query *q_parent, bool 
    /* For PIPE_QUERY_TIME_ELAPSED we record one time with BeginQuery and one in
     * EndQuery, so we need two query slots */
    unsigned query_index = 2 * q->curr_query;
+
    if (restart) {
       q->curr_query = 0;
       query_index = 0;
@@ -456,6 +495,7 @@ begin_timer_query(struct d3d12_context *ctx, struct d3d12_query *q_parent, bool 
    ctx->cmdlist->EndQuery(q->query_heap, q->d3d12qtype, query_index);
    q->active = true;
 }
+
 static bool
 d3d12_begin_query(struct pipe_context *pctx,
                   struct pipe_query *q)
@@ -474,6 +514,7 @@ d3d12_begin_query(struct pipe_context *pctx,
 
    return true;
 }
+
 static void
 end_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned sub_query)
 {
@@ -487,6 +528,7 @@ end_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned s
    /* For TIMESTAMP, there's only one slot */
    if (q_parent->type == PIPE_QUERY_TIMESTAMP)
       q->curr_query = 0;
+
    /* With QUERY_TIME_ELAPSED we have recorded one value at
       * (2 * q->curr_query), and now we record a value at (2 * q->curr_query + 1)
       * and when resolving the query we subtract the latter from the former */
@@ -494,12 +536,14 @@ end_subquery(struct d3d12_context *ctx, struct d3d12_query *q_parent, unsigned s
    unsigned resolve_count = q_parent->type == PIPE_QUERY_TIME_ELAPSED ? 2 : 1;
    unsigned resolve_index = resolve_count * q->curr_query;
    unsigned end_index = resolve_index + resolve_count - 1;
+
    offset += q->buffer_offset + resolve_index * q->query_size;
    ctx->cmdlist->EndQuery(q->query_heap, q->d3d12qtype, end_index);
    d3d12_transition_resource_state(ctx, res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_TRANSITION_FLAG_INVALIDATE_BINDINGS);
    d3d12_apply_resource_states(ctx, false);
    ctx->cmdlist->ResolveQueryData(q->query_heap, q->d3d12qtype, resolve_index,
       resolve_count, d3d12_res, offset);
+
    d3d12_batch_reference_object(batch, q->query_heap);
    d3d12_batch_reference_resource(batch, res, true);
 
@@ -515,6 +559,7 @@ end_query(struct d3d12_context *ctx, struct d3d12_query *q_parent)
       struct d3d12_query_impl *q = &q_parent->subqueries[i];
       if (!q->active)
          continue;
+
       end_subquery(ctx, q_parent, i);
    }
 }
@@ -531,11 +576,13 @@ d3d12_end_query(struct pipe_context *pctx,
    d3d12_batch_reference_query(d3d12_current_batch(ctx), query);
 
    end_query(ctx, query);
+
    if (query->type != PIPE_QUERY_TIMESTAMP &&
        query->type != PIPE_QUERY_TIME_ELAPSED)
       list_delinit(&query->active_list);
    return true;
 }
+
 static bool
 d3d12_get_query_result(struct pipe_context *pctx,
                       struct pipe_query *q,
@@ -551,6 +598,7 @@ d3d12_get_query_result(struct pipe_context *pctx,
 
    return accumulate_result_cpu(ctx, query, result);
 }
+
 static void
 d3d12_get_query_result_resource(struct pipe_context *pctx,
                                 struct pipe_query *q,
@@ -561,11 +609,13 @@ d3d12_get_query_result_resource(struct pipe_context *pctx,
                                 unsigned offset)
 {
    struct d3d12_context *ctx = d3d12_context(pctx);
+
    if (index == -1) {
       /* Write the "available" bit, which is always true */
       struct d3d12_resource *res = d3d12_resource(resource);
       d3d12_transition_resource_state(ctx, res, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_TRANSITION_FLAG_NONE);
       d3d12_apply_resource_states(ctx, false);
+
       D3D12_GPU_VIRTUAL_ADDRESS gpuva_base = d3d12_resource_gpu_virtual_address(res) + offset;
       D3D12_WRITEBUFFERIMMEDIATE_PARAMETER params[2] = {
          { gpuva_base, 1 },
@@ -576,6 +626,7 @@ d3d12_get_query_result_resource(struct pipe_context *pctx,
                                           params, modes);
       return;
    }
+
    struct d3d12_query *query = (struct d3d12_query *)q;
    accumulate_result_gpu(ctx, query, resource, offset, index, result_type);
 }
@@ -595,12 +646,14 @@ d3d12_resume_queries(struct d3d12_context *ctx)
       begin_query(ctx, query, false);
    }
 }
+
 void
 d3d12_validate_queries(struct d3d12_context *ctx)
 {
    /* Nothing to do, all queries are suspended */
    if (ctx->queries_disabled)
       return;
+
    list_for_each_entry(struct d3d12_query, query, &ctx->active_queries, active_list) {
       for (unsigned i = 0; i < num_sub_queries(query->type, query->index); ++i) {
          if (query->subqueries[i].active && !subquery_should_be_active(ctx, query, i))
@@ -610,6 +663,7 @@ d3d12_validate_queries(struct d3d12_context *ctx)
       }
    }
 }
+
 static void
 d3d12_set_active_query_state(struct pipe_context *pctx, bool enable)
 {
@@ -621,6 +675,7 @@ d3d12_set_active_query_state(struct pipe_context *pctx, bool enable)
    else
       d3d12_suspend_queries(ctx);
 }
+
 static void
 d3d12_render_condition(struct pipe_context *pctx,
                        struct pipe_query *pquery,
@@ -635,6 +690,7 @@ d3d12_render_condition(struct pipe_context *pctx,
       ctx->current_predication = nullptr;
       return;
    }
+
    if (!query->predicate)
       query->predicate = d3d12_resource(pipe_buffer_create(pctx->screen, 0,
                                                            PIPE_USAGE_DEFAULT, sizeof(uint64_t)));
@@ -643,10 +699,12 @@ d3d12_render_condition(struct pipe_context *pctx,
 
    d3d12_transition_resource_state(ctx, query->predicate, D3D12_RESOURCE_STATE_PREDICATION, D3D12_TRANSITION_FLAG_NONE);
    d3d12_apply_resource_states(ctx, false);
+
    ctx->current_predication = query->predicate;
    ctx->predication_condition = condition;
    d3d12_enable_predication(ctx);
 }
+
 void
 d3d12_enable_predication(struct d3d12_context *ctx)
 {
@@ -659,6 +717,7 @@ d3d12_enable_predication(struct d3d12_context *ctx)
                                 ctx->predication_condition ? D3D12_PREDICATION_OP_NOT_EQUAL_ZERO :
                                 D3D12_PREDICATION_OP_EQUAL_ZERO);
 }
+
 void
 d3d12_context_query_init(struct pipe_context *pctx)
 {
@@ -667,6 +726,7 @@ d3d12_context_query_init(struct pipe_context *pctx)
 
    u_suballocator_init(&ctx->query_allocator, &ctx->base, 4096, 0, PIPE_USAGE_STAGING,
                          0, true);
+
    pctx->create_query = d3d12_create_query;
    pctx->destroy_query = d3d12_release_query;
    pctx->begin_query = d3d12_begin_query;

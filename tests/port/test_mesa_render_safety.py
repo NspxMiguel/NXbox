@@ -48,7 +48,7 @@ class MesaRenderSafetyTests(unittest.TestCase):
     def test_fixture_integrity_and_session_loss_exit(self):
         expected = {
             "d3d12_blit.cpp": "d1d0133d5f3d0b2714b8492a97b19f00777165210e5b97ae8f0460db46707631",
-            "d3d12_query.cpp": "d8d30980b0b399cc61e6f2375fc354b5c7e19dcdecf86f4533b9a9f07695cdac",
+            "d3d12_query.cpp": "1926cc2731ef817e9b05a63b68f5494e7a66b1116f2b2c10e8de604a45f4cdab",
         }
         for name, digest in expected.items():
             self.assertEqual(hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest(), digest)
