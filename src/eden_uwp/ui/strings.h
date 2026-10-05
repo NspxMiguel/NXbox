@@ -221,6 +221,12 @@ enum class Text {
     CreditsRowHint,
     CreditsTitle,
     CreditsBody,
+    LaunchLookup,
+    LaunchKeys,
+    LaunchShaders,
+    LaunchStarting,
+    LaunchMissing,
+    LaunchFailed,
     Count,
 };
 

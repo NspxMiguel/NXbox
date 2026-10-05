@@ -154,7 +154,10 @@ std::size_t FindStringAfterKey(const std::string& text, const std::string& key, 
 } // namespace
 
 struct BannerSource::Impl : std::enable_shared_from_this<BannerSource::Impl> {
-    explicit Impl(fs::path local_state_in) : local_state(std::move(local_state_in)) {}
+    explicit Impl(fs::path local_state_in, bool fetch_icon_in)
+        : fetch_icon(fetch_icon_in), local_state(std::move(local_state_in)) {}
+
+    bool fetch_icon = false;
 
     fs::path local_state;
     std::mutex mutex;
@@ -223,6 +226,32 @@ struct BannerSource::Impl : std::enable_shared_from_this<BannerSource::Impl> {
         return id;
     }
 
+    void FetchIcon(const std::string& title_id) {
+        const fs::path file = local_state / "library" / (title_id + ".jpg");
+        std::error_code ec;
+        if (fs::exists(file, ec) && fs::file_size(file, ec) > 0)
+            return;
+        std::string id;
+        std::size_t after = 0;
+        if (FindStringAfterKey(index, title_id, 0, id, &after) == std::string::npos)
+            return;
+        // The second string in the same array is the icon, never the next title's banner.
+        const auto comma = index.find_first_not_of(" \r\n\t", after);
+        if (comma == std::string::npos || index[comma] != ',')
+            return;
+        const auto begin = index.find_first_not_of(" \r\n\t", comma + 1);
+        if (begin == std::string::npos || index[begin] != '"')
+            return;
+        const auto end = index.find('"', begin + 1);
+        if (end == std::string::npos || end == begin + 1)
+            return;
+        id = index.substr(begin + 1, end - begin - 1);
+        std::vector<std::uint8_t> bytes;
+        if (HttpGet(base + id + extension, kMaxBannerBytes, bytes) && WriteBytes(file, bytes)) {
+            Diagnostic("UI art icon " + title_id + " cached");
+        }
+    }
+
     BannerState Fetch(const std::string& title_id) {
         const fs::path file = BannerFile(title_id);
         std::error_code ec;
@@ -270,6 +299,8 @@ struct BannerSource::Impl : std::enable_shared_from_this<BannerSource::Impl> {
                 }
                 BannerState result = BannerState::None;
                 try {
+                    if (fetch_icon)
+                        FetchIcon(title_id);
                     result = Fetch(title_id);
                 } catch (const winrt::hresult_error& error) {
                     Diagnostic("UI art fetch failed " + winrt::to_string(error.message()));
@@ -285,8 +316,8 @@ struct BannerSource::Impl : std::enable_shared_from_this<BannerSource::Impl> {
     }
 };
 
-BannerSource::BannerSource(fs::path local_state)
-    : impl_(std::make_shared<Impl>(std::move(local_state))) {
+BannerSource::BannerSource(fs::path local_state, bool fetch_icon)
+    : impl_(std::make_shared<Impl>(std::move(local_state), fetch_icon)) {
     // The thread owns a reference, so the screen can go away while a download finishes.
     std::thread([impl = impl_] { impl->Loop(); }).detach();
 }

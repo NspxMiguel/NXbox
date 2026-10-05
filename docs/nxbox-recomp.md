@@ -18,7 +18,11 @@ route NXbox already uses, so shipping the game's code as ordinary compiled C++ i
 
 1. **Per-game dashboard tiles (done).** `package_launcher.py` and `package-game-tile.yml` make a package per game
    with its own name and art. Opening it starts NXbox directly in that game (`nxbox://play?title=...`),
-   so the game appears on the dashboard as a game.
+   with a game-specific splash, localized boot phases and shader progress. Protocol launches bypass
+   library/setup/USB/update/SaveSync prompts and never fall back to another game. The running identity
+   still says NXbox, and the OS still switches packages. Full runtime packages could give each title
+   its own running identity, but shared saves and migration need console validation first; see
+   [the full-package analysis and recommendation](nxbox-native-tiles.md). This is still emulation.
 2. **Persistent translation cache (planned, task 83).** Keep each game's translated code between runs, the
    closest generic equivalent of recompiling: no CPU translation work after the first run, no emulator
    warm-up stalls. The cost today is JIT time at scene loads (see `jit-stall-investigation.md`).

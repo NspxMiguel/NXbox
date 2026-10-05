@@ -86,7 +86,10 @@ class LauncherTests(unittest.TestCase):
         visual = tree.find(f".//{{{UAP}}}VisualElements")
         self.assertEqual(visual.attrib["DisplayName"], 'Link & "Zelda" <3')
         self.assertIsNotNone(visual.find(f"{{{UAP}}}DefaultTile"))
-        self.assertIsNotNone(visual.find(f"{{{UAP}}}SplashScreen"))
+        splash = visual.find(f"{{{UAP}}}SplashScreen")
+        self.assertIsNotNone(splash)
+        self.assertEqual(splash.attrib["BackgroundColor"], "#000000")
+        self.assertEqual(visual.attrib["BackgroundColor"], "#000000")
         self.assertIsNotNone(tree.find(f"{{{foundation}}}Dependencies/{{{foundation}}}PackageDependency"))
         # The launcher never owns the protocol; only NXbox does.
         self.assertNotIn("windows.protocol", manifest)
@@ -113,6 +116,8 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(image.convert("RGB").getpixel((300, 300)), (255, 0, 0))
         with Image.open(self.destination / "Assets/Wide310x150Logo.png") as image:
             self.assertEqual(image.convert("RGB").getpixel((620, 300)), (0, 0, 255))
+        with Image.open(self.destination / "Assets/SplashScreen.png") as image:
+            self.assertEqual(image.convert("RGB").getpixel((1240, 600)), (0, 0, 255))
         with self.assertRaises(FileExistsError):
             launcher.stage(self.exe, self.destination, TITLE, "Zelda", "1.0.0.0", icon, banner)
 

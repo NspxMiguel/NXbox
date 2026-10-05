@@ -38,6 +38,8 @@ add_executable(eden-uwp WIN32
     ui/cheats_screen.h
     ui/input.cpp
     ui/input.h
+    ui/launch_screen.cpp
+    ui/launch_screen.h
     ui/library.cpp
     ui/library.h
     ui/library_screen.cpp

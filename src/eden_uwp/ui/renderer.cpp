@@ -136,18 +136,27 @@ void Renderer::Initialize(const winrt::Windows::UI::Core::CoreWindow& window) {
     desc.BufferCount = 2;
     desc.Scaling = DXGI_SCALING_STRETCH;
     desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-    CheckHr(dxgi_factory->CreateSwapChainForCoreWindow(d3d_device_.Get(),
-                                                       winrt::get_unknown(window), &desc, nullptr,
-                                                       &swap_chain_),
-            "CreateSwapChainForCoreWindow");
+    if (window) {
+        CheckHr(dxgi_factory->CreateSwapChainForCoreWindow(
+                    d3d_device_.Get(), winrt::get_unknown(window), &desc, nullptr, &swap_chain_),
+                "CreateSwapChainForCoreWindow");
 
-    ComPtr<IDXGISurface> back_buffer;
-    CheckHr(swap_chain_->GetBuffer(0, IID_PPV_ARGS(&back_buffer)), "GetBuffer");
-    const auto target_properties = D2D1::BitmapProperties1(
-        D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
-        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
-    CheckHr(context_->CreateBitmapFromDxgiSurface(back_buffer.Get(), &target_properties, &target_),
+        ComPtr<IDXGISurface> back_buffer;
+        CheckHr(swap_chain_->GetBuffer(0, IID_PPV_ARGS(&back_buffer)), "GetBuffer");
+        const auto target_properties = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+        CheckHr(
+            context_->CreateBitmapFromDxgiSurface(back_buffer.Get(), &target_properties, &target_),
             "CreateBitmapFromDxgiSurface");
+    } else {
+        const auto properties = D2D1::BitmapProperties1(
+            D2D1_BITMAP_OPTIONS_TARGET,
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+        CheckHr(context_->CreateBitmap(D2D1::SizeU(desc.Width, desc.Height), nullptr, 0,
+                                       &properties, &target_),
+                "CreateBitmap offscreen");
+    }
     context_->SetTarget(target_.Get());
     context_->SetDpi(96.0f, 96.0f);
     // Grayscale text: ClearType assumes an LCD panel and an opaque background, and the UI draws
@@ -278,12 +287,44 @@ void Renderer::BeginFrame() {
     context_->SetTransform(canvas_);
 }
 
-void Renderer::EndFrame() {
+void Renderer::EndFrame(Pixels* capture) {
     context_->SetTransform(D2D1::Matrix3x2F::Identity());
     drawing_ = false;
     CheckHr(context_->EndDraw(), "EndDraw");
+    if (capture)
+        ReadFrame(*capture);
     const DXGI_PRESENT_PARAMETERS parameters{};
-    CheckHr(swap_chain_->Present1(1, 0, &parameters), "Present1");
+    if (swap_chain_) {
+        CheckHr(swap_chain_->Present1(1, 0, &parameters), "Present1");
+    }
+}
+
+void Renderer::ReadFrame(Pixels& pixels) {
+    const auto size = target_->GetPixelSize();
+    const auto properties = D2D1::BitmapProperties1(
+        D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, target_->GetPixelFormat());
+    ComPtr<ID2D1Bitmap1> staging;
+    CheckHr(context_->CreateBitmap(size, nullptr, 0, &properties, &staging),
+            "CreateBitmap readback");
+    CheckHr(staging->CopyFromBitmap(nullptr, target_.Get(), nullptr), "CopyFromBitmap");
+    D2D1_MAPPED_RECT mapped{};
+    CheckHr(staging->Map(D2D1_MAP_OPTIONS_READ, &mapped), "Map readback");
+    pixels.width = size.width;
+    pixels.height = size.height;
+    try {
+        pixels.bgra.resize(static_cast<std::size_t>(size.width) * size.height * 4);
+        for (UINT32 y = 0; y < size.height; ++y) {
+            std::copy_n(mapped.bits + y * mapped.pitch, size.width * 4,
+                        pixels.bgra.data() + static_cast<std::size_t>(y) * size.width * 4);
+        }
+    } catch (...) {
+        staging->Unmap();
+        throw;
+    }
+    CheckHr(staging->Unmap(), "Unmap readback");
+    // The CoreWindow compositor expects opaque alpha, including D2D's IGNORE targets.
+    for (std::size_t i = 3; i < pixels.bgra.size(); i += 4)
+        pixels.bgra[i] = 255;
 }
 
 void Renderer::SetLocalTransform(const D2D1::Matrix3x2F& local) {

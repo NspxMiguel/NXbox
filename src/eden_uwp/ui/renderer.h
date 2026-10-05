@@ -88,12 +88,14 @@ public:
     Renderer& operator=(const Renderer&) = delete;
 
     void Initialize(const winrt::Windows::UI::Core::CoreWindow& window);
+    // A null window creates a bitmap target, without taking ownership of a CoreWindow.
+    void ReadFrame(Pixels& pixels);
     void Shutdown();
     // Frees memory the driver can spare; the system asks for it when the app is suspended.
     void Trim();
 
     void BeginFrame();
-    void EndFrame(); // presents with vsync
+    void EndFrame(Pixels* capture = nullptr); // captures before presenting with vsync
 
     // A transform applied inside the canvas transform, for the lifted tile.
     void SetLocalTransform(const D2D1::Matrix3x2F& local);

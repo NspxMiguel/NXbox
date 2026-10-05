@@ -24,7 +24,7 @@ enum class BannerState {
 // screen now before what was passed.
 class BannerSource {
 public:
-    explicit BannerSource(std::filesystem::path local_state);
+    explicit BannerSource(std::filesystem::path local_state, bool fetch_icon = false);
     ~BannerSource(); // the worker finishes its current download in the background
 
     BannerSource(const BannerSource&) = delete;

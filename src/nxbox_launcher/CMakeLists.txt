@@ -13,7 +13,7 @@ project(NXboxLauncher LANGUAGES CXX)
 
 add_executable(nxbox-launcher WIN32 main.cpp)
 target_compile_features(nxbox-launcher PRIVATE cxx_std_20)
-target_link_libraries(nxbox-launcher PRIVATE WindowsApp.lib)
+target_link_libraries(nxbox-launcher PRIVATE WindowsApp.lib d3d11 d2d1 dxgi windowscodecs)
 if (MSVC)
     target_compile_options(nxbox-launcher PRIVATE /EHsc)
     # AppContainer executable: required for a sideloadable UWP package.

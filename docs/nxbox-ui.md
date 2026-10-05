@@ -346,15 +346,20 @@ How it works:
   (`eden_uwp/protocol_uri.h`, unit-tested in `tests/port/protocol_uri.cpp`) and hands the title ID
   to `SetProtocolPlayTitle`. `Run()` pumps the dispatcher for up to 2 s so the activation is known
   before anything is shown.
-- `RunGameView` (`game_session.cpp`) then scans the library (`LibraryScan`, cached, so quick),
-  and for the game with that title ID takes the same path as a library choice
-  (`RememberChosenGame`, `chosen_in_library`, SwitchSaveSync before and after), skipping the
-  library screen. Log lines: `PROTOCOL_LAUNCH <id>`; when no game matches, the library opens
-  normally and `PROTOCOL_GAME_NOT_FOUND <id>` is logged. A launch while NXbox already runs only
-  logs the activation; the running session is not replaced.
+- `RunGameView` takes a protocol-only path before setup, maintenance, USB, updates or SaveSync.
+  It scans without NSZ conversion and passes the matching path directly to `RunGame`; it never
+  opens the library or falls back to the last game. Missing games/keys show a localized error with
+  B to exit. Pending cloud sync is left for a normal launch; protocol sessions use local saves.
+- `ui/launch_screen.*` shows the cached name and eShop banner/icon on black, fetching missing art
+  through `art.cpp`. The phase line shows lookup, keys, shader count and starting in PT/EN. The
+  Direct2D CoreWindow target is released before OpenGL takes over; offscreen Direct2D frames are
+  then presented through the game's context during shader loading. The final splash remains until
+  the first guest frame. See [native tiles](nxbox-native-tiles.md) for ownership, diagnostic lines,
+  cold/warm activation limits and console acceptance tests.
 - The tile is a separate package, `NSPX.NXbox.Game.<TITLEID>`: `src/nxbox_launcher` is a tiny UWP
   app that reads `title.txt` from its package, calls `Launcher.LaunchUriAsync` with the URI above
-  and exits. One binary serves every game. `tools/nxbox/package_launcher.py` bundles it with
+  and exits as soon as acceptance arrives. It paints the packaged splash while waiting, without
+  network work. One binary serves every game. `tools/nxbox/package_launcher.py` bundles it with
   `title.txt`, the display name and Square44/150, Wide310x150, StoreLogo and SplashScreen PNGs
   generated from the eShop art (`dist/art/eshop-art.json`: icon for the square tiles, banner for the
   wide ones; NXbox's own logo when the title has no art), and signs it with the NXbox certificate.
@@ -370,3 +375,7 @@ Adding a tile:
 
 Locally: `python tools/nxbox/package_launcher.py --exe nxbox-launcher.exe --title-id <ID> --name
 "<Name>" --stage-only` stages the package without the Windows SDK (needs Pillow).
+
+This improves presentation; the running dashboard identity is still NXbox and the OS still switches
+between packages. Full per-game runtime packages are deferred until shared data, migration and
+recovery are safe; [the analysis](nxbox-native-tiles.md) records the payload, path audit and blockers.

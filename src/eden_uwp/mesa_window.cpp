@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "common/nxbox_stall.h"
+#include "common/scope_exit.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/mesa_window.h"
+#include "eden_uwp/ui/renderer.h"
 
 #include <algorithm>
 #include <array>
@@ -308,11 +310,79 @@ std::unique_ptr<Core::Frontend::GraphicsContext> MesaWindow::CreateSharedContext
     return std::make_unique<MesaGraphicsContext>(runtime, context, surfaceless);
 }
 
+void MesaWindow::PresentLaunchFrame(const Ui::Pixels& pixels, bool bootstrap) {
+    if (bootstrap && !runtime->make_current(runtime->dc, runtime->context)) {
+        throw std::runtime_error("Cannot activate launch context");
+    }
+    SCOPE_EXIT {
+        if (bootstrap) {
+            runtime->make_current(nullptr, nullptr);
+        }
+    };
+    GLint read = 0, draw = 0, texture = 0, unpack = 0;
+    GLint alignment = 0, row_length = 0, skip_rows = 0, skip_pixels = 0;
+    glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+    glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture);
+    glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack);
+    glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+    glGetIntegerv(GL_UNPACK_ROW_LENGTH, &row_length);
+    glGetIntegerv(GL_UNPACK_SKIP_ROWS, &skip_rows);
+    glGetIntegerv(GL_UNPACK_SKIP_PIXELS, &skip_pixels);
+    const bool scissor = glIsEnabled(GL_SCISSOR_TEST);
+    const bool srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
+    GLuint image = 0, framebuffer = 0;
+    glGenTextures(1, &image);
+    glGenFramebuffers(1, &framebuffer);
+    SCOPE_EXIT {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, read);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpack);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+        glPixelStorei(GL_UNPACK_SKIP_ROWS, skip_rows);
+        glPixelStorei(GL_UNPACK_SKIP_PIXELS, skip_pixels);
+        if (scissor)
+            glEnable(GL_SCISSOR_TEST);
+        if (srgb)
+            glEnable(GL_FRAMEBUFFER_SRGB);
+        glDeleteFramebuffers(1, &framebuffer);
+        glDeleteTextures(1, &image);
+    };
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_FRAMEBUFFER_SRGB);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glBindTexture(GL_TEXTURE_2D, image);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, pixels.width, pixels.height, 0, GL_BGRA,
+                 GL_UNSIGNED_BYTE, pixels.bgra.data());
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image, 0);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
+        throw std::runtime_error("Launch framebuffer is incomplete");
+    }
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    // WIC/Direct2D rows start at the top; the GL framebuffer starts at the bottom.
+    glBlitFramebuffer(0, 0, pixels.width, pixels.height, 0, 1080, 1920, 0, GL_COLOR_BUFFER_BIT,
+                      GL_LINEAR);
+    const auto swap = runtime->Function<BOOL(WINAPI*)(HDC)>("wglSwapBuffers");
+    if (!swap(runtime->dc)) {
+        throw std::runtime_error("Launch presentation failed");
+    }
+}
+
 bool MesaWindow::IsShown() const {
     return true;
 }
 void MesaWindow::OnFrameDisplayed() {
-    frames.fetch_add(1, std::memory_order_relaxed);
+    if (frames.fetch_add(1, std::memory_order_relaxed) == 0) {
+        Diagnostic("GAME_FIRST_FRAME");
+    }
 }
 u64 MesaWindow::FrameCount() const {
     return frames.load(std::memory_order_relaxed);

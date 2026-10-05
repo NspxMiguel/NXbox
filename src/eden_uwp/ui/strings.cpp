@@ -302,6 +302,17 @@ constexpr Entry kTable[] = {
          L"CNX Updater is a fork of AIO-Switch-Updater by HamletDuFromage (GPL-3.0), built on Borealis by natinusala. Their feature set inspired the downloads and cheats in NXbox.\n"
          L"\n"
          L"The full notices are in NOTICE.md in the repository."}, // CreditsBody
+        {L"Procurando o jogo", L"Looking up the game"},            // LaunchLookup
+        {L"Carregando chaves", L"Loading keys"},                   // LaunchKeys
+        {L"Preparando shaders", L"Building shaders"},              // LaunchShaders
+        {L"Iniciando", L"Starting"},                               // LaunchStarting
+        {L"Jogo indisponível. Conecte a unidade ou abra o NXbox para conferir o jogo e as chaves. "
+         L"Pressione B para sair.",
+         L"Game unavailable. Connect the drive or open NXbox to check the game and keys. Press B "
+         L"to exit."}, // LaunchMissing
+        {L"Não foi possível iniciar. Abra o NXbox para conferir o jogo e as chaves. Pressione B "
+         L"para sair.",
+         L"Could not start. Open NXbox to check the game and keys. Press B to exit."}, // LaunchFailed
 };
 static_assert(std::size(kTable) == static_cast<std::size_t>(Text::Count),
               "every Text needs a row in kTable");

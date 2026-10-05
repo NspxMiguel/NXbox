@@ -39,7 +39,7 @@ ASSET_SIZES = {
     "Wide310x150Logo": (1240, 600),
     "SplashScreen": (2480, 1200),
 }
-BACKGROUND = (13, 13, 16, 255)  # NXbox's near-black
+BACKGROUND = (0, 0, 0, 255)  # Match the loading screen.
 
 
 def validate_title_id(title_id: str) -> str:
@@ -146,9 +146,9 @@ def build_manifest(title_id: str, name: str, version: str) -> str:
     <Application Id="App" Executable="nxbox-launcher.exe" EntryPoint="NXbox.GameLauncher">
       <uap:VisualElements DisplayName={display} Description={display}
         Square150x150Logo="Assets\\Square150x150Logo.png"
-        Square44x44Logo="Assets\\Square44x44Logo.png" BackgroundColor="#0D0D10">
+        Square44x44Logo="Assets\\Square44x44Logo.png" BackgroundColor="#000000">
         <uap:DefaultTile Wide310x150Logo="Assets\\Wide310x150Logo.png" />
-        <uap:SplashScreen Image="Assets\\SplashScreen.png" BackgroundColor="#0D0D10" />
+        <uap:SplashScreen Image="Assets\\SplashScreen.png" BackgroundColor="#000000" />
       </uap:VisualElements>
     </Application>
   </Applications>

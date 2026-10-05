@@ -10,6 +10,9 @@
 #include "core/frontend/graphics_context.h"
 
 namespace EdenXbox {
+namespace Ui {
+struct Pixels;
+}
 struct MesaRuntime;
 class MesaWindow final : public Core::Frontend::EmuWindow {
 public:
@@ -19,6 +22,9 @@ public:
     bool IsShown() const override;
     void OnFrameDisplayed() override;
     u64 FrameCount() const;
+    // Frontend-only splash blit, before the GPU thread starts. With bootstrap=false the caller
+    // owns the current renderer context. No second CoreWindow swap chain is created.
+    void PresentLaunchFrame(const Ui::Pixels& pixels, bool bootstrap = false);
 
 private:
     winrt::Windows::UI::Core::CoreWindow window;

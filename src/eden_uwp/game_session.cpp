@@ -15,6 +15,7 @@
 #include <fstream>
 #include <future>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <mutex>
@@ -52,6 +53,8 @@
 #include "eden_uwp/mesa_window.h"
 #include "eden_uwp/save_sync.h"
 #include "eden_uwp/setup_ui.h"
+#include "eden_uwp/ui/input.h"
+#include "eden_uwp/ui/launch_screen.h"
 #include "eden_uwp/ui/library.h"
 #include "eden_uwp/ui/library_screen.h"
 #include "eden_uwp/ui/mods.h"
@@ -345,7 +348,8 @@ void CheckGameReads(const std::string& path) {
 
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle,
-             bool chosen_in_library) {
+             bool chosen_in_library, const std::string& protocol_path, Ui::LaunchScreen* splash,
+             Ui::LaunchStatus& launch_status) {
     Diagnostic("GAME_BEGIN");
     const auto memory_stage = [](const char* stage) {
         Diagnostic(fmt::format("MEM {} commit={} MiB limit={} MiB", stage,
@@ -353,7 +357,15 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                winrt::Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
     };
     memory_stage("begin");
-    const std::string path = ResolveGamePath(bundled_path, chosen_in_library);
+    const std::string path =
+        protocol_path.empty() ? ResolveGamePath(bundled_path, chosen_in_library) : protocol_path;
+    SCOPE_EXIT {
+        if (splash)
+            splash->Release();
+    };
+    if (splash) {
+        splash->InitializeOffscreen();
+    }
     if (const char* check = std::getenv("NXBOX_READ_CHECK"); check != nullptr && check[0] == '1') {
         CheckGameReads(path);
     }
@@ -469,6 +481,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     const auto result = system.Load(window, path, parameters);
     memory_stage("after_load");
     if (result != Core::SystemResultStatus::Success) {
+        launch_status.phase.store(Ui::LaunchPhase::Failed);
         Diagnostic("GAME_LOAD_FAILED status=" + std::to_string(static_cast<int>(result)));
         return;
     }
@@ -488,10 +501,33 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     // GPU thread takes it: a second GL context cannot be made current on the Xbox's Mesa.
     // Without this every session compiled each shader the first time it appeared, stalling for
     // seconds at scene changes. NXBOX_SHADER_CACHE=0 in LocalState\nxbox_env.txt disables it.
+    Ui::Pixels launch_pixels;
+    auto last_launch_frame = std::chrono::steady_clock::time_point{};
+    const auto present_launch = [&](bool force) {
+        if (!splash || closed.load())
+            return;
+        const auto now = std::chrono::steady_clock::now();
+        if (!force && now - last_launch_frame < std::chrono::milliseconds(250))
+            return;
+        splash->Draw(launch_status);
+        splash->ReadFrame(launch_pixels);
+        window.PresentLaunchFrame(launch_pixels);
+        last_launch_frame = now;
+    };
     const char* shader_cache = std::getenv("NXBOX_SHADER_CACHE");
     if (Settings::values.use_disk_shader_cache.GetValue() &&
         !(shader_cache != nullptr && std::string_view{shader_cache} == "0")) {
         const auto title_id = system.GetApplicationProcessProgramID();
+        if (splash) {
+            launch_status.phase.store(Ui::LaunchPhase::Shaders);
+            Diagnostic("PROTOCOL_PHASE shaders");
+            auto& context = system.Renderer().Context();
+            context.MakeCurrent();
+            SCOPE_EXIT {
+                context.DoneCurrent();
+            };
+            present_launch(true);
+        }
         // The shared copy may be what crashed, so a session after a crash skips it too.
         if (BeginShaderCacheLoad(title_id)) {
             Diagnostic("SHADER_CACHE previous load crashed; cache set aside");
@@ -502,9 +538,22 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         {
             auto& render_context = system.Renderer().Context();
             render_context.MakeCurrent();
+            SCOPE_EXIT {
+                render_context.DoneCurrent();
+            };
+            present_launch(true);
+            std::stop_source shader_stop;
             system.Renderer().ReadRasterizer()->LoadDiskResources(
-                system.GetApplicationProcessProgramID(), std::stop_token{},
-                [](VideoCore::LoadCallbackStage stage, size_t value, size_t total) {
+                system.GetApplicationProcessProgramID(), shader_stop.get_token(),
+                [&](VideoCore::LoadCallbackStage stage, size_t value, size_t total) {
+                    if (closed.load())
+                        shader_stop.request_stop();
+                    if (stage == VideoCore::LoadCallbackStage::Build) {
+                        // The final callback has value=0 and total=N: retain the completed count.
+                        launch_status.built.store(total > 0 && value == 0 ? total : value);
+                        launch_status.total.store(total);
+                        present_launch(false);
+                    }
                     // Progress goes to the flushed diagnostic file, so a load that hangs or
                     // dies shows how far it got.
                     // Inline builds report a running count with no total; the final call
@@ -519,11 +568,26 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                        : fmt::format("SHADER_CACHE total {}", total));
                     }
                 });
-            render_context.DoneCurrent();
         }
         EndShaderCacheLoad(title_id);
         Diagnostic("SHADER_CACHE ready");
         memory_stage("shader_cache");
+    }
+    if (closed.load())
+        return;
+    if (splash) {
+        launch_status.phase.store(Ui::LaunchPhase::Starting);
+        Diagnostic("PROTOCOL_PHASE starting");
+        auto& context = system.Renderer().Context();
+        context.MakeCurrent();
+        SCOPE_EXIT {
+            context.DoneCurrent();
+        };
+        present_launch(true);
+        // The last splash stays presented until the guest presents its first frame.
+        splash->Release();
+        launch_pixels = {};
+        Diagnostic("PROTOCOL_HANDOFF");
     }
     system.GPU().Start();
     system.GetCpuManager().OnGpuReady();
@@ -724,13 +788,16 @@ std::string TakeProtocolPlayTitle() {
 // `choice` with what the library screen would have returned for that game.
 bool FindLibraryGame(const winrt::Windows::UI::Core::CoreWindow& window,
                      const std::filesystem::path& local_state, const std::string& title_id,
-                     Ui::ChosenGame& choice) {
+                     Ui::ChosenGame& choice, Ui::LaunchScreen& splash, Ui::LaunchStatus& status,
+                     const std::atomic<bool>& closed) {
     using namespace winrt::Windows::UI::Core;
     Ui::LibraryScan scan(local_state, /*convert_nsz=*/false);
-    while (!scan.Finished()) {
+    while (!scan.Finished() && !closed.load()) {
         window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
-        Sleep(1);
+        splash.Draw(status);
     }
+    if (closed.load())
+        return false;
     for (const Ui::GameEntry& game : scan.Take()) {
         if (_stricmp(game.title_id.c_str(), title_id.c_str()) != 0) {
             continue;
@@ -830,10 +897,21 @@ void SetProtocolPlayTitle(std::string title_id) {
 
 void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::string& path) {
     using namespace winrt::Windows::UI::Core;
+    const std::string protocol_title = TakeProtocolPlayTitle();
+    const bool protocol_launch = !protocol_title.empty();
+    std::atomic<bool> closed{false};
+    const auto close_token = window.Closed([&](const auto&, const auto&) { closed.store(true); });
+    SCOPE_EXIT {
+        window.Closed(close_token);
+    };
+    Ui::LaunchStatus launch_status;
+    std::unique_ptr<Ui::LaunchScreen> splash;
+    std::string protocol_path;
     // LocalState\usb_scan_test.txt: a one-off trigger to test the setup screen's render pipeline
     // (Direct2D/DirectWrite on this same CoreWindow, before Mesa/OpenGL takes it over) together
     // with the USB scanner, without wiring either into the real boot flow yet.
-    if (std::filesystem::exists(
+    if (!protocol_launch &&
+        std::filesystem::exists(
             std::filesystem::path(winrt::to_string(
                 winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
             "usb_scan_test.txt")) {
@@ -871,7 +949,43 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
     Ui::SyncGame sync_game;
     const std::filesystem::path local_state(
         winrt::to_string(winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
-    if (std::filesystem::exists(local_state / "move.txt")) {
+    const auto show_failure = [&](Ui::Text message) {
+        // Called only after all GL objects have gone away, or before Mesa was constructed.
+        splash.reset();
+        Ui::LaunchScreen error_screen(window, local_state, protocol_title);
+        Ui::Input input(window);
+        launch_status.phase.store(Ui::LaunchPhase::Failed);
+        while (!closed.load()) {
+            window.Dispatcher().ProcessEvents(CoreProcessEventsOption::ProcessAllIfPresent);
+            input.Update();
+            if (input.Pressed(Ui::Button::B))
+                break;
+            error_screen.Draw(launch_status, message);
+        }
+    };
+    if (protocol_launch) {
+        splash = std::make_unique<Ui::LaunchScreen>(window, local_state, protocol_title);
+        splash->Draw(launch_status);
+        Diagnostic("PROTOCOL_PHASE lookup");
+        Ui::ChosenGame choice;
+        if (!FindLibraryGame(window, local_state, protocol_title, choice, *splash, launch_status,
+                             closed)) {
+            if (!closed.load()) {
+                Diagnostic("PROTOCOL_GAME_NOT_FOUND " + protocol_title);
+                show_failure(Ui::Text::LaunchMissing);
+            }
+            return;
+        }
+        protocol_path = choice.path;
+        splash->SetName(choice.display_name);
+        launch_status.phase.store(Ui::LaunchPhase::Keys);
+        splash->Draw(launch_status);
+        Diagnostic("PROTOCOL_LAUNCH " + protocol_title);
+        Diagnostic("PROTOCOL_PHASE keys");
+        // Direct launches neither resolve game.url nor mutate game.txt, pending sync, or moves.
+        // SaveSync needs an explicit conflict policy before it can run without its prompts.
+    }
+    if (!protocol_launch && std::filesystem::exists(local_state / "move.txt")) {
         // A worker does the copying; the window keeps pumping so the system sees a live app.
         auto mover = std::async(std::launch::async, [&local_state] {
             winrt::init_apartment(winrt::apartment_type::multi_threaded);
@@ -884,7 +998,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             Sleep(16);
         }
     }
-    if (!std::filesystem::exists(local_state / "skip_library.txt")) {
+    if (!protocol_launch && !std::filesystem::exists(local_state / "skip_library.txt")) {
         if (Ui::HasPendingSync(local_state)) {
             ApplyEdenSettingsFile(); // the active profile decides which save folder is synced
             if (Ui::RunPendingSync(window, local_state)) {
@@ -893,21 +1007,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         }
         Ui::ChosenGame choice;
         std::string chosen;
-        // A per-game tile ("Install as game") starts NXbox with nxbox://play?title=<ID>: boot that
-        // game through the same path as a library choice, without showing the library. When no
-        // game matches, fall through to the library.
-        const std::string protocol_title = TakeProtocolPlayTitle();
-        if (!protocol_title.empty()) {
-            if (FindLibraryGame(window, local_state, protocol_title, choice)) {
-                Diagnostic("PROTOCOL_LAUNCH " + protocol_title);
-                chosen = choice.path;
-            } else {
-                Diagnostic("PROTOCOL_GAME_NOT_FOUND " + protocol_title);
-            }
-        }
-        if (chosen.empty()) {
-            chosen = Ui::RunLibrary(window, &choice);
-        }
+        chosen = Ui::RunLibrary(window, &choice);
         if (!chosen.empty()) {
             RememberChosenGame(local_state, chosen);
             chosen_in_library = true;
@@ -923,9 +1023,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
             }
         }
     }
-    std::atomic<bool> closed{false};
     std::atomic<bool> done{false};
-    const auto close_token = window.Closed([&](const auto&, const auto&) { closed.store(true); });
     auto gamepad = std::make_shared<XboxGamepad>();
     // Handled so the system does not treat B or Menu as navigation while a game runs.
     const auto key_down_token = window.KeyDown([gamepad](const auto&, const KeyEventArgs& args) {
@@ -950,31 +1048,52 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         lifecycle.request.store(Lifecycle::Resume, std::memory_order_release);
     });
     SCOPE_EXIT {
-        window.Closed(close_token);
         window.KeyDown(key_down_token);
         window.KeyUp(key_up_token);
         CoreApplication::Suspending(suspending_token);
         CoreApplication::Resuming(resuming_token);
     };
     // The driver targets the current HDMI surface. Layout remains 16:9 until resize handling lands.
-    auto graphics = std::make_shared<MesaWindow>(window, 1920, 1080);
+    Ui::Pixels initial_frame;
+    if (splash) {
+        splash->Draw(launch_status, Ui::Text::LaunchFailed, &initial_frame);
+        splash->Release();
+    }
+    std::shared_ptr<MesaWindow> graphics;
+    try {
+        graphics = std::make_shared<MesaWindow>(window, 1920, 1080);
+        if (splash)
+            graphics->PresentLaunchFrame(initial_frame, true);
+    } catch (...) {
+        graphics.reset();
+        if (!protocol_launch)
+            throw;
+        Diagnostic("PROTOCOL_GRAPHICS_FAILED");
+        show_failure(Ui::Text::LaunchFailed);
+        return;
+    }
+    initial_frame = {};
     std::thread worker([&, graphics = std::move(graphics)]() mutable {
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         SCOPE_EXIT {
             // Keep the UI dispatcher alive while the graphics driver releases its resources.
             graphics.reset();
+            lifecycle.CompleteDeferral();
             winrt::uninit_apartment();
             done.store(true, std::memory_order_release);
         };
         try {
-            RunGame(*graphics, path, closed, gamepad, lifecycle, chosen_in_library);
+            RunGame(*graphics, path, closed, gamepad, lifecycle, chosen_in_library, protocol_path,
+                    splash.get(), launch_status);
             // The game is over and Eden released the save files: this is the safe point to upload.
             if (sync_after_exit) {
                 Ui::SyncAfterExitHeadless(local_state, sync_game);
             }
         } catch (const winrt::hresult_error& error) {
+            launch_status.phase.store(Ui::LaunchPhase::Failed);
             Diagnostic("GAME_FAIL " + winrt::to_string(error.message()));
         } catch (const std::exception& error) {
+            launch_status.phase.store(Ui::LaunchPhase::Failed);
             Diagnostic(std::string("GAME_FAIL ") + error.what());
         }
     });
@@ -983,5 +1102,9 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         Sleep(1);
     }
     worker.join();
+    if (protocol_launch && !closed.load() &&
+        launch_status.phase.load() == Ui::LaunchPhase::Failed) {
+        show_failure(Ui::Text::LaunchFailed);
+    }
 }
 } // namespace EdenXbox
