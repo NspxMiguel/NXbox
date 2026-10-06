@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: MIT
  * Synchronous submission and CPU journal, enabled unless NXBOX_SYNC_BATCH=0.
  * No COM references are retained by the journal. Include after d3d12_context.h;
- * the context owns this lazily allocated POD ring.
+ * the context owns this lazily allocated journal (sync diagnostics only).
  */
 #pragma once
 #include <atomic>
@@ -11,7 +11,9 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 inline bool nxbox_sync_batch_enabled() {
   static const bool enabled = [] {
@@ -28,8 +30,7 @@ struct NxboxBatchJournal {
   ID3D12PipelineState *pso;
   ID3D12RootSignature *graphics_root, *compute_root;
   char targets[256];
-  char entries[64][480];
-  char fixup_entries[64][480];
+  std::vector<std::string> entries, fixup_entries;
 };
 
 inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
@@ -39,6 +40,8 @@ inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
     journal = new (std::nothrow) NxboxBatchJournal{};
   if (journal) {
     journal->next = journal->fixup_next = 0;
+    journal->entries.clear();
+    journal->fixup_entries.clear();
     journal->pso = nullptr; // CommandList::Reset starts with a null PSO.
     journal->graphics_root = journal->compute_root = nullptr;
     journal->targets[0] = 0;
@@ -51,8 +54,7 @@ inline void nxbox_journal_add(NxboxBatchJournal *journal, const char *list,
     return;
   const bool fixup = strcmp(list, "fixup") == 0;
   const uint64_t sequence = fixup ? journal->fixup_next++ : journal->next++;
-  char *text = fixup ? journal->fixup_entries[sequence % 64]
-                     : journal->entries[sequence % 64];
+  char text[480];
   int prefix =
       snprintf(text, 480, "%llu %s ", (unsigned long long)sequence, list);
   va_list args;
@@ -61,6 +63,7 @@ inline void nxbox_journal_add(NxboxBatchJournal *journal, const char *list,
   va_end(args);
   if (size < 0 || size >= 480 - prefix)
     memcpy(text + 475, "...", 4);
+  (fixup ? journal->fixup_entries : journal->entries).emplace_back(text);
 }
 
 /* A temporary wrapper preserves argument evaluation and unbraced if/else
@@ -303,20 +306,25 @@ inline std::atomic<bool> &nxbox_sync_stopped() {
 inline void nxbox_sync_publish(const NxboxBatchJournal *journal,
                                const void *ctx, unsigned batch, uint64_t submit,
                                uint64_t fence, HRESULT removed,
-                               bool fixup_executed, bool completed) {
+                               bool fixup_executed, bool completed,
+                               bool previous = false) {
   const uint64_t fixup = journal && fixup_executed ? journal->fixup_next : 0;
   const uint64_t next = journal ? fixup + journal->next : 0;
-  const uint64_t first = next > 64 ? next - 64 : 0;
+  const uint64_t first = 0;
+  const char *key = previous ? "NXBOX_D3D12_PREVIOUS_GOOD_BATCH"
+                             : "NXBOX_D3D12_FIRST_BAD_BATCH";
+  const char *prefix = previous ? "NXBOX_D3D12_BATCH_JOURNAL_PREVIOUS"
+                                : "NXBOX_D3D12_BATCH_JOURNAL";
   char text[4096], name[64];
   unsigned part = 0;
   size_t used = 0;
   for (uint64_t i = first; i < next; ++i) {
-    const char *entry = i < fixup ? journal->fixup_entries[i % 64]
-                                  : journal->entries[(i - fixup) % 64];
+    const char *entry = i < fixup ? journal->fixup_entries[i].c_str()
+                                  : journal->entries[i - fixup].c_str();
     const size_t length = strlen(entry);
     if (used + length + 1 >= sizeof(text)) {
       text[used] = 0;
-      snprintf(name, sizeof(name), "NXBOX_D3D12_BATCH_JOURNAL_%u", part++);
+      snprintf(name, sizeof(name), "%s_%u", prefix, part++);
       SetEnvironmentVariableA(name, text);
       used = 0;
     }
@@ -326,36 +334,43 @@ inline void nxbox_sync_publish(const NxboxBatchJournal *journal,
   }
   if (used) {
     text[used] = 0;
-    snprintf(name, sizeof(name), "NXBOX_D3D12_BATCH_JOURNAL_%u", part++);
+    snprintf(name, sizeof(name), "%s_%u", prefix, part++);
     SetEnvironmentVariableA(name, text);
   }
   snprintf(text, sizeof(text),
-           "NXBOX_D3D12_FIRST_BAD_BATCH id=%llu ctx=%p batch=%u removed=0x%08x "
+           "%s id=%llu ctx=%p batch=%u removed=0x%08x "
            "fence=%llu "
            "parts=%u entries=%llu dropped=%llu journal=%s order=execution "
            "gpu_order=fixup,main fixup_executed=%u completed=%u attribution=%s",
-           (unsigned long long)submit, ctx, batch, (unsigned)removed,
+           key, (unsigned long long)submit, ctx, batch, (unsigned)removed,
            (unsigned long long)fence, part, (unsigned long long)(next - first),
            (unsigned long long)first, journal ? "ok" : "allocation-failed",
            fixup_executed ? 1u : 0u, completed ? 1u : 0u,
-           completed ? "last-completed-submit" : "in-flight-submit");
-  SetEnvironmentVariableA("NXBOX_D3D12_FIRST_BAD_BATCH", text);
+           previous ? "checked-good-submit"
+                    : (completed ? "delayed-after-checked-submit"
+                                 : "in-flight-submit"));
+  SetEnvironmentVariableA(key, text);
   /* The current frontend already reads this key; full journal parts use the
    * keys above. */
-  SetEnvironmentVariableA("NXBOX_D3D12_FIRST_FAILURE", text);
+  if (!previous)
+    SetEnvironmentVariableA("NXBOX_D3D12_FIRST_FAILURE", text);
 }
 
-/* One immutable submission snapshot per device. DRED can run on another worker,
- * after a context reset, or before the submitting thread returns from Signal.
- * Never call DRED while holding this mutex (DRED takes it to publish before
- * loss).
+/* Immutable current and preceding checked-good submission snapshots per device.
+ * DRED can run on another worker, after a context reset, or before the
+ * submitting thread returns from Signal. Never call DRED while holding this
+ * mutex (DRED takes it to publish before loss).
  */
-struct NxboxSubmittedJournal {
+struct NxboxSubmission {
   NxboxBatchJournal journal{};
   const void *ctx = nullptr;
   unsigned batch = 0;
   uint64_t submit = 0, fence = 0;
-  bool allocated = false, fixup = false, completed = false, captured = false;
+  bool allocated = false, fixup = false, completed = false;
+};
+struct NxboxSubmittedJournal : NxboxSubmission {
+  NxboxSubmission previous;
+  bool captured = false;
 };
 inline std::mutex &nxbox_submission_mutex() {
   static std::mutex mutex;
@@ -376,6 +391,8 @@ inline void nxbox_sync_submit(ID3D12Device *dev,
   auto &s = nxbox_submissions()[dev];
   if (s.captured)
     return;
+  if (s.completed)
+    s.previous = static_cast<const NxboxSubmission &>(s);
   if (journal)
     s.journal = *journal;
   s.allocated = journal != nullptr;
@@ -391,7 +408,7 @@ inline void nxbox_sync_completed(ID3D12Device *dev) {
     return;
   std::lock_guard<std::mutex> lock(nxbox_submission_mutex());
   auto it = nxbox_submissions().find(dev);
-  if (it != nxbox_submissions().end())
+  if (it != nxbox_submissions().end() && !it->second.captured)
     it->second.completed = true;
 }
 inline void nxbox_sync_capture(ID3D12Device *dev, HRESULT removed) {
@@ -405,6 +422,10 @@ inline void nxbox_sync_capture(ID3D12Device *dev, HRESULT removed) {
   if (s.captured)
     return;
   s.captured = true;
+  const auto &p = s.previous;
+  if (p.completed)
+    nxbox_sync_publish(p.allocated ? &p.journal : nullptr, p.ctx, p.batch,
+                       p.submit, p.fence, S_OK, p.fixup, true, true);
   nxbox_sync_publish(s.allocated ? &s.journal : nullptr, s.ctx, s.batch,
                      s.submit, s.fence, removed, s.fixup, s.completed);
 }

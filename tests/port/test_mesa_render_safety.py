@@ -53,6 +53,13 @@ class MesaRenderSafetyTests(unittest.TestCase):
         for name, digest in expected.items():
             self.assertEqual(hashlib.sha256((FIXTURES / name).read_bytes()).hexdigest(), digest)
         session = (ROOT / "src/eden_uwp/game_session.cpp").read_text()
+        report_header = (
+            (ROOT / "src/eden_uwp/diagnostic_report.h").read_text().replace("#pragma once", "")
+        )
+        report_helpers = session.split("    const auto read_report =", 1)[1].split(
+            "    while (!closed.load", 1
+        )[0]
+        report_helpers = "    const auto read_report =" + report_helpers
         guard = session.split("        char device_lost[2]{};", 1)[1].split(
             "        const int request =", 1
         )[0]
@@ -69,8 +76,11 @@ unsigned GetEnvironmentVariableA(const char *name, char *value, size_t) {
  value[0]='1'; value[1]=0; return 1;
 }
 void Diagnostic(const std::string &) {}
-void check() { char device_lost[2]{};
 """
+            + report_header
+            + "\nusing namespace EdenXbox;\nvoid check() {\n"
+            + report_helpers
+            + "char device_lost[2]{};\n"
             + guard
             + r"""
 }

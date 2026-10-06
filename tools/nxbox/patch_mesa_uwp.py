@@ -1495,7 +1495,7 @@ def patch_sync_batch(root: Path) -> None:
     replace(
         file,
         "fence_target=%llu fence_ok=%u",
-        "fence_target=%llu fence_present=%u sync=%u journal=2",
+        "fence_target=%llu fence_present=%u sync=%u journal=3",
     )
     replace(
         file,
@@ -1523,24 +1523,25 @@ def patch_sync_batch(root: Path) -> None:
    }
 """,
     )
-    anchor = "   batch->fence = d3d12_create_fence(screen);"
+    anchor = "   screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);"
     replace(
         file,
         anchor,
         anchor
         + r"""
    if (nxbox_sync_batch_enabled()) {
-      /* Keep submit_mutex until this batch completes: no context can queue the next one.
-       * If fence allocation/event registration failed, enqueue a fallback target on the
-       * same queue/fence. Polling it does not need an event or a d3d12_fence allocation.
-       */
-      UINT64 target = batch->fence ? batch->fence->value : ++screen->fence_value;
-      HRESULT signal = batch->fence ? S_OK : screen->cmdqueue->Signal(screen->fence, target);
+      /* No observer or fence allocation between Execute and its dedicated drain.
+       * submit_mutex prevents another context from replacing the submission snapshot. */
+      const UINT64 target = ++screen->fence_value;
+      const HRESULT signal = screen->cmdqueue->Signal(screen->fence, target);
       HRESULT removed = SUCCEEDED(signal) ? nxbox_sync_wait(screen->dev, screen->fence, target)
                                          : screen->dev->GetDeviceRemovedReason();
+      const HRESULT after_wait = screen->dev->GetDeviceRemovedReason();
+      if (FAILED(after_wait))
+         removed = after_wait;
       if (FAILED(removed)) {
          nxbox_sync_capture(screen->dev, removed);
-         nxbox_dred_capture(screen->dev, removed, "sync-batch");
+         nxbox_dred_capture(screen->dev, removed, "sync-submit-fence");
          batch->has_errors = true;
       } else if (FAILED(signal)) {
          /* Attribution is no longer possible. Do not submit another batch unsynchronized. */

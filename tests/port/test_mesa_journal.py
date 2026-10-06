@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Execute the complete command journal on a host with mock D3D12 objects."""
 
+import ast
 from pathlib import Path
 
 import unittest
@@ -32,7 +33,10 @@ void SetEnvironmentVariableA(const char *name, const char *value) {
  env[name]=value; published.emplace_back(name);
 }
 void Sleep(unsigned) {}
-struct ID3D12Device { HRESULT GetDeviceRemovedReason() { return S_OK; } };
+struct ID3D12Device {
+ unsigned checks=0, fail_at=0;
+ HRESULT GetDeviceRemovedReason() { return ++checks >= fail_at && fail_at ? -2 : S_OK; }
+};
 struct ID3D12Fence { UINT64 GetCompletedValue() { return 42; } };
 struct ID3D12PipelineState {};
 struct ID3D12RootSignature {};
@@ -97,7 +101,7 @@ class MesaJournalTests(unittest.TestCase):
             + r"""
 std::string journal() {
  std::string result;
- for(unsigned i=0;i<8;++i) result += env["NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i)];
+ for(unsigned i=0;env.count("NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i));++i) result += env["NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i)];
  return result;
 }
 int main() {
@@ -139,25 +143,31 @@ int main() {
  assert(text.find("fixup")<text.find("main"));
  auto manifest=env["NXBOX_D3D12_FIRST_BAD_BATCH"];
  assert(manifest.find("id=123")!=std::string::npos);
- assert(manifest.find("entries=64 dropped=51")!=std::string::npos);
+ assert(manifest.find("entries=115 dropped=0")!=std::string::npos);
  assert(manifest.find("completed=0 attribution=in-flight-submit")!=std::string::npos);
  assert(published[published.size()-2]=="NXBOX_D3D12_FIRST_BAD_BATCH");
  auto count=published.size(); nxbox_sync_capture(&dev,-3); assert(published.size()==count);
  nxbox_sync_forget(&dev);
  env.clear(); published.clear(); j=nullptr; nxbox_journal_reset(j);
- // Bound every chunk and exercise exactly eight maximum-sized chunks.
+ // Bound each chunk without limiting the total number of entries or chunks.
  char payload[600]; memset(payload,'x',599); payload[599]=0;
+ for(unsigned i=0;i<80;++i) nxbox_journal_add(j,"main","%s",payload);
+ nxbox_sync_submit(&dev,j,&list,0,123,42,false); nxbox_sync_completed(&dev);
+ nxbox_journal_reset(j);
  for(unsigned i=0;i<80;++i) nxbox_journal_add(j,"main","%s",payload);
  nxbox_sync_submit(&dev,j,&list,0,124,43,false); nxbox_sync_completed(&dev);
  nxbox_sync_capture(&dev,-2);
  manifest=env["NXBOX_D3D12_FIRST_BAD_BATCH"];
- assert(manifest.find("parts=8 entries=64 dropped=16")!=std::string::npos);
- assert(manifest.find("completed=1 attribution=last-completed-submit")!=std::string::npos);
- for(unsigned i=0;i<8;++i) {
+ assert(manifest.find("parts=10 entries=80 dropped=0")!=std::string::npos);
+ assert(manifest.find("completed=1 attribution=delayed-after-checked-submit")!=std::string::npos);
+ for(unsigned i=0;i<10;++i) {
    auto &part=env["NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i)];
    assert(!part.empty() && part.size()<4096);
  }
- assert(env.count("NXBOX_D3D12_BATCH_JOURNAL_8")==0);
+ assert(env.count("NXBOX_D3D12_BATCH_JOURNAL_10")==0);
+ assert(env["NXBOX_D3D12_PREVIOUS_GOOD_BATCH"].find("id=123")!=std::string::npos);
+ assert(env["NXBOX_D3D12_PREVIOUS_GOOD_BATCH"].find("checked-good-submit")!=std::string::npos);
+ assert(env["NXBOX_D3D12_BATCH_JOURNAL_PREVIOUS_9"].find("79 main")!=std::string::npos);
  nxbox_sync_forget(&dev); delete j;
  // Opt-out forwards calls without allocation or logging (enabled is process-cached).
  auto empty=nxbox_journal_commands(nullptr,&list); empty.DrawInstanced(1,1,0,0);
@@ -165,6 +175,72 @@ int main() {
 }
 """
         )
+
+    def test_submit_drain_checks_removal_before_marking_complete(self):
+        tree = ast.parse((ROOT / "tools/nxbox/patch_mesa_uwp.py").read_text())
+        blocks = [
+            node.value
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "/* No observer or fence allocation" in node.value
+        ]
+        self.assertEqual(len(blocks), 1)
+        header = (ROOT / "tools/nxbox/mesa_sync_batch.h").read_text().replace("#pragma once", "")
+        self.compile_run(
+            MOCK
+            + header
+            + r"""
+#define SUCCEEDED(hr) ((hr)>=0)
+struct Queue {
+ unsigned signals=0; HRESULT result=0;
+ HRESULT Signal(ID3D12Fence *, UINT64 value) { ++signals; assert(value==42); return result; }
+};
+struct Screen { ID3D12Device *dev; ID3D12Fence *fence; Queue *cmdqueue; UINT64 fence_value=41; };
+struct Batch { bool has_errors=false; };
+void nxbox_dred_capture(ID3D12Device *, HRESULT hr, const char *site) {
+ assert(hr==-2); assert(strcmp(site,"sync-submit-fence")==0);
+}
+void execute_return(Screen *screen, Batch *batch) {
+"""
+            + blocks[0]
+            + r"""
+}
+int main(int argc, char **argv) {
+ assert(argc==2);
+ const bool enabled=argv[1][0]=='1';
+ if(!enabled) env["NXBOX_SYNC_BATCH"]="0";
+ for(unsigned scenario=0;scenario<4;++scenario) {
+   ID3D12Device dev; ID3D12Fence fence; Queue queue; Batch batch;
+   Screen screen{&dev,&fence,&queue};
+   // Healthy, removal during polling, removal on the explicit post-wait check,
+   // and failed Signal on a still-live device.
+   if(scenario==1) dev.fail_at=1;
+   if(scenario==2) dev.fail_at=3;
+   if(scenario==3) queue.result=-3;
+   nxbox_sync_submit(&dev,nullptr,nullptr,0,123,42,false);
+   execute_return(&screen,&batch);
+   assert(queue.signals==unsigned(enabled));
+   assert(batch.has_errors==(enabled && scenario!=0));
+   if(enabled) {
+     const auto &snapshot=nxbox_submissions().at(&dev);
+     assert(snapshot.completed==(scenario==0));
+     assert(snapshot.captured==(scenario==1 || scenario==2));
+     assert(nxbox_sync_stopped().load()==(scenario==3));
+     if(scenario==2) assert(dev.checks==3);
+     if(snapshot.captured)
+       assert(env["NXBOX_D3D12_FIRST_BAD_BATCH"].find("completed=0 attribution=in-flight-submit")!=std::string::npos);
+   } else assert(dev.checks==0);
+   nxbox_sync_forget(&dev); nxbox_sync_stopped().store(false); env.clear();
+ }
+}
+""",
+            args=("1",),
+        )
+        # Run the same compiled executable in a fresh process for the cached opt-out.
+        import subprocess
+
+        subprocess.run([str(self.root / "test"), "0"], check=True, timeout=10)
 
     def test_dred_publishes_journal_before_exit_notification(self):
         source = (ROOT / "tools/nxbox/mesa_dred.h").read_text()
@@ -179,6 +255,13 @@ int main() {
 
     def test_frontend_collects_every_chunk_on_immediate_loss(self):
         session = (ROOT / "src/eden_uwp/game_session.cpp").read_text()
+        report_header = (
+            (ROOT / "src/eden_uwp/diagnostic_report.h").read_text().replace("#pragma once", "")
+        )
+        report_helpers = session.split("    const auto read_report =", 1)[1].split(
+            "    while (!closed.load", 1
+        )[0]
+        report_helpers = "    const auto read_report =" + report_helpers
         guard = session.split("        char device_lost[2]{};", 1)[1].split(
             "        const int request =", 1
         )[0]
@@ -188,22 +271,30 @@ int main() {
 #include <stdexcept>
 std::string diagnostic_log;
 void Diagnostic(const std::string &line) { diagnostic_log += line + "\n"; }
-void check() { char device_lost[2]{};
 """
+            + report_header
+            + "\nusing namespace EdenXbox;\nvoid check() {\n"
+            + report_helpers
+            + "char device_lost[2]{};\n"
             + guard
             + r"""
 }
 int main() {
  check(); assert(diagnostic_log.empty());
  env["NXBOX_D3D12_DEVICE_LOST"]="1";
- env["NXBOX_D3D12_FIRST_BAD_BATCH"]="id=123 parts=8";
+ env["NXBOX_D3D12_FIRST_BAD_BATCH"]="id=123 parts=10";
+ env["NXBOX_D3D12_PREVIOUS_GOOD_BATCH"]="id=122 parts=1";
+ env["NXBOX_D3D12_BATCH_JOURNAL_PREVIOUS_0"]="0 main good\n1 main good\r\n";
  env["NXBOX_D3D12_BATCH"]="removed=0x887a0001";
- for(unsigned i=0;i<8;++i) env["NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i)]=std::string(3840,'x');
+ for(unsigned i=0;i<10;++i) env["NXBOX_D3D12_BATCH_JOURNAL_"+std::to_string(i)]="0 main first\n1 main second\r\n2 main last";
  try { check(); assert(false); } catch(const std::runtime_error &) {}
- assert(diagnostic_log.find("D3D12_FIRST_BAD_BATCH id=123 parts=8")!=std::string::npos);
+ assert(diagnostic_log.find("D3D12_FIRST_BAD_BATCH id=123 parts=10")!=std::string::npos);
  assert(diagnostic_log.find("D3D12_BATCH removed=0x887a0001")!=std::string::npos);
- for(unsigned i=0;i<8;++i)
-   assert(diagnostic_log.find("D3D12_BATCH_JOURNAL_"+std::to_string(i)+" "+std::string(3840,'x'))!=std::string::npos);
+ for(unsigned i=0;i<10;++i) {
+   const auto prefix="D3D12_BATCH_JOURNAL_"+std::to_string(i)+" ";
+   assert(diagnostic_log.find(prefix+"0 main first\n"+prefix+"1 main second\n"+prefix+"2 main last\n")!=std::string::npos);
+ }
+ assert(diagnostic_log.find("D3D12_BATCH_JOURNAL_PREVIOUS_0 1 main good\n")!=std::string::npos);
 }
 """
         )

@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <mutex>
+#include <map>
 #include <optional>
 #include <thread>
 #include <winrt/Windows.ApplicationModel.Core.h>
@@ -46,6 +47,7 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/perf_stats.h"
 #include "eden_uwp/diagnostic.h"
+#include "eden_uwp/diagnostic_report.h"
 #include "common/fs/file.h"
 #include "eden_uwp/await_bounded.h"
 #include "eden_uwp/game_download.h"
@@ -613,6 +615,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     SCOPE_EXIT {
         lifecycle.CompleteDeferral();
     };
+    const auto read_report = [](const char* name) -> std::string {
+        char report[8192]{};
+        const auto length = GetEnvironmentVariableA(name, report, sizeof(report));
+        return length && length < sizeof(report) ? std::string(report, length) : std::string{};
+    };
+    const auto log_report = [](const char* name, const std::string& value) {
+        DiagnosticReportLines(name, value, Diagnostic);
+    };
     while (!closed.load(std::memory_order_acquire) &&
            !guest_exited.load(std::memory_order_acquire)) {
         // Mesa cannot recover a removed device. Leave through the existing shutdown/error path
@@ -623,18 +633,10 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             device_lost[0] == '1') {
             for (const char* name :
                  {"NXBOX_D3D12_DRED", "NXBOX_D3D12_DRED2", "NXBOX_D3D12_PSO_FAIL_FIRST",
-                  "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_BATCH", "NXBOX_D3D12_SYNC_ERROR",
-                  "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_BATCH_JOURNAL_0",
-                  "NXBOX_D3D12_BATCH_JOURNAL_1", "NXBOX_D3D12_BATCH_JOURNAL_2",
-                  "NXBOX_D3D12_BATCH_JOURNAL_3", "NXBOX_D3D12_BATCH_JOURNAL_4",
-                  "NXBOX_D3D12_BATCH_JOURNAL_5", "NXBOX_D3D12_BATCH_JOURNAL_6",
-                  "NXBOX_D3D12_BATCH_JOURNAL_7"}) {
-                char report[8192]{};
-                const auto length = GetEnvironmentVariableA(name, report, sizeof(report));
-                if (length && length < sizeof(report)) {
-                    Diagnostic(std::string(name + 6) + " " + report);
-                }
+                  "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_BATCH", "NXBOX_D3D12_SYNC_ERROR"}) {
+                log_report(name, read_report(name));
             }
+            CollectBatchJournals(read_report, log_report);
             throw std::runtime_error("D3D12 device removed; stopping the game");
         }
         const int request = lifecycle.request.exchange(Lifecycle::None, std::memory_order_acq_rel);
@@ -688,12 +690,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             // The patched Mesa publishes its reports in environment variables (pipeline states,
             // root signatures, batch failures, device removal); log each one when it changes.
             {
-                const auto collect = [](const char* name, std::string& previous) {
+                const auto collect = [&](const char* name, std::string& previous) {
                     char value[8192] = "";
                     const auto length = GetEnvironmentVariableA(name, value, sizeof(value));
                     if (length && length < sizeof(value) && previous != value) {
                         previous = value;
-                        Diagnostic(std::string(name + 6) + " " + value); // drop "NXBOX_"
+                        log_report(name, value);
                     }
                 };
                 static std::array<std::string, 11> last;
@@ -708,17 +710,20 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     collect(names[i], last[i]);
                 }
                 static constexpr const char* extended_names[]{
-                    "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_BATCH_JOURNAL",
-                    "NXBOX_D3D12_BATCH_JOURNAL_0", "NXBOX_D3D12_BATCH_JOURNAL_1",
-                    "NXBOX_D3D12_BATCH_JOURNAL_2", "NXBOX_D3D12_BATCH_JOURNAL_3",
-                    "NXBOX_D3D12_BATCH_JOURNAL_4", "NXBOX_D3D12_BATCH_JOURNAL_5",
-                    "NXBOX_D3D12_BATCH_JOURNAL_6", "NXBOX_D3D12_BATCH_JOURNAL_7",
-                    "NXBOX_D3D12_PSO_FAIL_FIRST",  "NXBOX_D3D12_PSO_FIX",
-                    "NXBOX_D3D12_PSO_DXIL",        "NXBOX_D3D12_SYNC_ERROR"};
+                    "NXBOX_D3D12_PSO_FAIL_FIRST", "NXBOX_D3D12_PSO_FIX", "NXBOX_D3D12_PSO_DXIL",
+                    "NXBOX_D3D12_SYNC_ERROR"};
                 static std::array<std::string, std::size(extended_names)> extended_last;
                 for (std::size_t i = 0; i < std::size(extended_names); ++i) {
                     collect(extended_names[i], extended_last[i]);
                 }
+                static std::map<std::string, std::string> last_journal;
+                CollectBatchJournals(read_report, [&](const char* name, const std::string& value) {
+                    auto& previous = last_journal[name];
+                    if (previous != value) {
+                        previous = value;
+                        log_report(name, value);
+                    }
+                });
                 // The manifest is published after the chunks. Derive names dynamically so
                 // larger shaders are not silently cut off at a fixed number of chunks.
                 char manifest[8192] = "";

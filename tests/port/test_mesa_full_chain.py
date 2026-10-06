@@ -56,6 +56,20 @@ class MesaFullChainTests(unittest.TestCase):
                 self.assertIn("return nxbox_query_ready(", query)
                 self.assertNotIn("SetEventOnCompletion(query->fence_value, NULL)", query)
                 self.assertTrue((driver / "nxbox_query_wait.h").is_file())
+                batch = (driver / "d3d12_batch.cpp").read_text()
+                submission = batch.split(
+                    "screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);", 1
+                )[1]
+                sequence = [
+                    "screen->cmdqueue->Signal(screen->fence, target)",
+                    "nxbox_sync_wait(screen->dev, screen->fence, target)",
+                    "const HRESULT after_wait = screen->dev->GetDeviceRemovedReason()",
+                    "nxbox_sync_completed(screen->dev)",
+                    'nxbox_observe(screen->dev, "execute-return")',
+                    "batch->fence = d3d12_create_fence(screen)",
+                ]
+                positions = [submission.index(item) for item in sequence]
+                self.assertEqual(positions, sorted(positions))
                 outputs.append(
                     {path.name: path.read_text() for path in driver.iterdir() if path.is_file()}
                 )
