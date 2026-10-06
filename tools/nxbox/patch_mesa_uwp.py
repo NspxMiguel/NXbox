@@ -82,6 +82,7 @@ def patch(root: Path) -> None:
     patch_invalid_commands(root)
     patch_first_bad_batch(root)
     patch_heap_policy(root)
+    patch_query_policy(root)
     patch_device_api_ring(root)
 
 
@@ -2515,7 +2516,64 @@ def patch_device_api_ring(root: Path) -> None:
     )
 
 
+def patch_query_policy(root: Path) -> None:
+    """Keep pipeline-statistics and stream-output statistics queries off the Xbox GPU.
+
+    Both Breath of the Wild and Mario Kart 8 lose the device right after a batch that begins an
+    occlusion, a pipeline-statistics and a stream-output-statistics query (D3D12 query types 0, 3
+    and 4); the API ring shows Reset, SetDescriptorHeaps, three BeginQuery calls and then the
+    removal. Those two statistics types never feed anything Eden presents, so they become software
+    queries that report zero, unless NXBOX_D3D12_QUERIES=full."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_query.cpp"
+    source = path.read_text()
+
+    def replace(old, new):
+        nonlocal source
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa query policy anchor mismatch: {old[:80]}")
+        source = source.replace(old, new)
+
+    replace(
+        "#include <dxguids/dxguids.h>\n",
+        "#include <dxguids/dxguids.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <string.h>\n"
+        "\n"
+        "static bool\n"
+        "nxbox_soft_subquery(const struct d3d12_query *q, unsigned sub_query)\n"
+        "{\n"
+        "   static int full = -1;\n"
+        "   if (full < 0) {\n"
+        "      const char *mode = getenv(\"NXBOX_D3D12_QUERIES\");\n"
+        "      full = mode && !strcmp(mode, \"full\");\n"
+        "   }\n"
+        "   if (full)\n"
+        "      return false;\n"
+        "   D3D12_QUERY_TYPE type = q->subqueries[sub_query].d3d12qtype;\n"
+        "   return type == D3D12_QUERY_TYPE_PIPELINE_STATISTICS ||\n"
+        "          (type >= D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0 &&\n"
+        "           type <= D3D12_QUERY_TYPE_SO_STATISTICS_STREAM3);\n"
+        "}\n",
+    )
+    replace(
+        "   struct pipe_transfer *transfer = NULL;\n",
+        "   struct pipe_transfer *transfer = NULL;\n"
+        "   if (nxbox_soft_subquery(q_parent, sub_query)) {\n"
+        "      memset(result, 0, sizeof(*result));\n"
+        "      return true;\n"
+        "   }\n",
+    )
+    replace(
+        "subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsigned sub_query)\n{\n",
+        "subquery_should_be_active(struct d3d12_context *ctx, struct d3d12_query *q, unsigned sub_query)\n{\n"
+        "   if (nxbox_soft_subquery(q, sub_query))\n"
+        "      return false;\n",
+    )
+    path.write_text(source)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     patch(parser.parse_args().root)
+
