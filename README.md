@@ -100,20 +100,35 @@ Written up in the [port notes](docs/nxbox-port.md).
 
 - **There is no release date.** Nothing is promised until it is stable; releases will appear on the
   [releases page](https://github.com/NspxMiguel/NXbox/releases) when there is something to try.
-- **No game is playable yet.** Persona 5 Royal is the closest and is still badly broken.
-  Breath of the Wild and Mario Kart 8 Deluxe run for a few minutes and then the Direct3D 12 device
-  is removed; I have not verified that their picture is right either. Super Mario 3D World's menus
-  and gameplay do not render correctly. The target games are Persona 5 Royal, Breath of the Wild,
-  Mario Kart 8 Deluxe, Super Mario 3D World and then Bayonetta.
-- **What is being fixed right now:** tracing the device removal with the D3D12 debug layer found the
-  first real cause (block-compressed texture uploads with unaligned copy boxes); the work continues
-  on the next one.
+- **No game is playable yet.** The table below is the honest state of each target.
+- **Current focus: The Legend of Zelda: Breath of the Wild**, at the request of a person who asked
+  for it. Super Mario 3D World, Mario Kart 8 Deluxe and Bayonetta wait until it is playable and
+  renders without graphical glitches.
+- **What is being fixed right now:** Breath of the Wild draws its intro (the Nintendo logo and the
+  Zelda title with its lens flare) and then the Direct3D 12 device is removed about two minutes in.
+  Two real causes are already fixed: block-compressed texture uploads with unaligned copy boxes,
+  and a workaround that was skipping draws and left the picture black. The next cause is still
+  being traced.
 - **How it is built:** by one person in their spare time, with AI coding tools doing much of the
   hard work on a small budget. Progress comes in bursts, and long waits are usually tool limits.
 - **What you need:** an Xbox in Developer Mode, and your own game dumps, firmware and keys.
   NXbox ships none of them.
 - **Asking for a game:** open an issue naming the title and version you own. Games the maintainer
   can buy and test move faster.
+
+## Compatibility
+
+Measured on a retail Xbox Series X in Developer Mode, with copies of the games the maintainer owns.
+"Playable" means someone can play it from start to finish without graphical or stability problems:
+nothing is there yet.
+
+| Game | State | What happens |
+| --- | --- | --- |
+| The Legend of Zelda: Breath of the Wild | **In focus**, not playable | Boots and draws its intro (Nintendo logo, Zelda title, lens flare), then the GPU is lost about two minutes in, before the title screen is usable |
+| Persona 5 Royal | Not playable | The closest: boots, plays cutscenes and reaches the first playable area, with audio, but it still stutters on loads and has serious bugs |
+| Mario Kart 8 Deluxe | Not playable | Boots, then the GPU is lost after under a minute; the picture has not been checked |
+| Super Mario 3D World | Not playable | Boots; menus and gameplay do not render correctly |
+| Bayonetta | Not tested | Planned after Breath of the Wild |
 
 ## How it works
 
