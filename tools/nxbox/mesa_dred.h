@@ -14,6 +14,7 @@ void nxbox_dred_publish_batch(ID3D12Device *dev, const char *text);
 #include "nxbox_lifetime.h"
 
 #ifdef NXBOX_DRED_IMPLEMENTATION
+#include "nxbox_sync_batch.h"
 #include <mutex>
 #include <stdarg.h>
 #include <stdio.h>
@@ -243,6 +244,7 @@ static void
 nxbox_dred_forget(ID3D12Device *dev) {
    std::lock_guard<std::mutex> lock(nxbox_dred_mutex);
    nxbox_dred_states.erase(dev);
+   nxbox_sync_forget(dev);
 }
 } // namespace
 
@@ -275,7 +277,7 @@ nxbox_dred_capture(ID3D12Device *dev, HRESULT removed, const char *where, const 
       return;
    state.captured = true;
    nxbox_device_lost.store(true, std::memory_order_release);
-   SetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", "1");
+   nxbox_sync_capture(dev, removed);
    NxboxDredText crumbs, page, contexts, batch;
    if (batch_text)
       batch.add("%s", batch_text);
@@ -331,5 +333,7 @@ nxbox_dred_capture(ID3D12Device *dev, HRESULT removed, const char *where, const 
    page.add("%s", contexts.text);
    SetEnvironmentVariableA("NXBOX_D3D12_DRED2", page.text);
    SetEnvironmentVariableA("NXBOX_D3D12_DRED", crumbs.text);
+   // Publish the exit notification only after the complete journal and DRED reports.
+   SetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", "1");
 }
 #endif

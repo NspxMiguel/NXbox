@@ -621,8 +621,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         if (GetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", device_lost, sizeof(device_lost)) ==
                 1 &&
             device_lost[0] == '1') {
-            for (const char* name : {"NXBOX_D3D12_DRED", "NXBOX_D3D12_DRED2",
-                                     "NXBOX_D3D12_PSO_FAIL_FIRST", "NXBOX_D3D12_FIRST_FAILURE"}) {
+            for (const char* name :
+                 {"NXBOX_D3D12_DRED", "NXBOX_D3D12_DRED2", "NXBOX_D3D12_PSO_FAIL_FIRST",
+                  "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_BATCH", "NXBOX_D3D12_SYNC_ERROR",
+                  "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_BATCH_JOURNAL_0",
+                  "NXBOX_D3D12_BATCH_JOURNAL_1", "NXBOX_D3D12_BATCH_JOURNAL_2",
+                  "NXBOX_D3D12_BATCH_JOURNAL_3", "NXBOX_D3D12_BATCH_JOURNAL_4",
+                  "NXBOX_D3D12_BATCH_JOURNAL_5", "NXBOX_D3D12_BATCH_JOURNAL_6",
+                  "NXBOX_D3D12_BATCH_JOURNAL_7"}) {
                 char report[8192]{};
                 const auto length = GetEnvironmentVariableA(name, report, sizeof(report));
                 if (length && length < sizeof(report)) {

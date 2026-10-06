@@ -162,7 +162,7 @@ int main() {
 #include <cstring>
 #include <cstdlib>
 using UINT64=uint64_t; using HRESULT=int32_t;
-constexpr HRESULT DXGI_ERROR_DEVICE_REMOVED = -1;
+constexpr HRESULT S_OK = 0, DXGI_ERROR_DEVICE_REMOVED = -1;
 #define FAILED(hr) ((hr)<0)
 unsigned ticks=0;
 void Sleep(unsigned) { ++ticks; }

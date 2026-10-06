@@ -79,6 +79,7 @@ def patch(root: Path) -> None:
     patch_sync_batch(root)
     patch_batch_reuse(root)
     patch_render_safety(root)
+    patch_invalid_commands(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -1478,7 +1479,7 @@ def patch_sync_batch(root: Path) -> None:
     # No CopyResource calls exist in this pin, but the wrapper supports it. Reject any
     # uninstrumented graphics call (including new files/aliases) instead of silently missing it.
     methods = sorted(
-        {method for entries in calls.values() for method in entries} | {"CopyResource"}
+        {method for entries in calls.values() for method in entries} | {"CopyResource", "ExecuteBundle"}
     )
     pattern = re.compile(r"->\s*(?:" + "|".join(methods) + r")\s*\(")
     for path in driver.glob("d3d12_*.cpp"):
@@ -1489,6 +1490,18 @@ def patch_sync_batch(root: Path) -> None:
             raise RuntimeError(f"Pinned Mesa sync batch unjournaled command in {path.name}")
 
     file = "d3d12_batch.cpp"
+    # A non-null fence is not evidence of GPU completion. Report the selected
+    # mode and journal revision so the next console capture identifies the DLL.
+    replace(
+        file,
+        "fence_target=%llu fence_ok=%u",
+        "fence_target=%llu fence_present=%u sync=%u journal=2",
+    )
+    replace(
+        file,
+        "fence, batch->fence ? 1u : 0u);",
+        "fence, batch->fence ? 1u : 0u, nxbox_sync_batch_enabled() ? 1u : 0u);",
+    )
     anchor = "   mtx_lock(&screen->submit_mutex);"
     replace(
         file,
@@ -1526,8 +1539,7 @@ def patch_sync_batch(root: Path) -> None:
       HRESULT removed = SUCCEEDED(signal) ? nxbox_sync_wait(screen->dev, screen->fence, target)
                                          : screen->dev->GetDeviceRemovedReason();
       if (FAILED(removed)) {
-         nxbox_sync_publish(ctx->nxbox_journal, ctx, (unsigned)(batch - ctx->batches),
-                            batch->submit_id, target, removed, has_state_fixup);
+         nxbox_sync_capture(screen->dev, removed);
          nxbox_dred_capture(screen->dev, removed, "sync-batch");
          batch->has_errors = true;
       } else if (FAILED(signal)) {
@@ -1537,9 +1549,45 @@ def patch_sync_batch(root: Path) -> None:
          SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", text);
          nxbox_sync_stopped().store(true);
          batch->has_errors = true;
+      } else {
+         nxbox_sync_completed(screen->dev);
       }
    }
 """,
+    )
+    anchor = "   screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);"
+    replace(
+        file,
+        anchor,
+        "   nxbox_sync_submit(screen->dev, ctx->nxbox_journal, ctx, (unsigned)(batch - ctx->batches),\n"
+        "                     batch->submit_id, nxbox_fence_target, has_state_fixup);\n" + anchor,
+    )
+    anchor = "   struct pipe_stream_output_target **so_targets = ctx->fake_so_buffer_factor ? ctx->fake_so_targets"
+    replace(
+        "d3d12_draw.cpp",
+        anchor,
+        r"""   if (ctx->nxbox_journal) {
+      unsigned rtv[8] = {};
+      for (unsigned i = 0; i < ctx->gfx_pipeline_state.num_cbufs; ++i)
+         rtv[i] = (unsigned)d3d12_rtv_format(ctx, i);
+      snprintf(ctx->nxbox_journal->targets, sizeof(ctx->nxbox_journal->targets),
+               "pso_rtv=%u,%u,%u,%u,%u,%u,%u,%u pso_dsv=%u samples=%u",
+               rtv[0], rtv[1], rtv[2], rtv[3], rtv[4], rtv[5], rtv[6], rtv[7],
+               (unsigned)ctx->gfx_pipeline_state.dsv_format, ctx->gfx_pipeline_state.samples);
+      for (unsigned i = 0; i < 8; ++i) {
+         rtv[i] = i < ctx->fb.nr_cbufs && ctx->fb.cbufs[i] ?
+            (unsigned)(conversion_modes[i] == D3D12_SURFACE_CONVERSION_NONE ?
+               d3d12_get_resource_rt_format(ctx->fb.cbufs[i]->format) : DXGI_FORMAT_R8G8B8A8_UINT) : 0;
+      }
+      const size_t used = strlen(ctx->nxbox_journal->targets);
+      snprintf(ctx->nxbox_journal->targets + used, sizeof(ctx->nxbox_journal->targets) - used,
+               " bound_rtv=%u,%u,%u,%u,%u,%u,%u,%u bound_dsv=%u",
+               rtv[0], rtv[1], rtv[2], rtv[3], rtv[4], rtv[5], rtv[6], rtv[7],
+               ctx->fb.zsbuf ? (unsigned)d3d12_get_resource_rt_format(ctx->fb.zsbuf->format) : 0);
+   }
+
+"""
+        + anchor,
     )
     for name, source in sources.items():
         (driver / name).write_text(source)
@@ -1769,6 +1817,107 @@ def patch_render_safety(root: Path) -> None:
     for name, source in sources.items():
         (driver / name).write_text(source)
     target.write_text(Path(__file__).with_name("mesa_query_wait.h").read_text())
+
+
+def patch_invalid_commands(root: Path) -> None:
+    """Keep promotions read-only and preserve array layers in planar copies."""
+    driver = root / "src/gallium/drivers/d3d12"
+    sources = {
+        name: (driver / name).read_text()
+        for name in ("d3d12_resource_state.cpp", "d3d12_blit.cpp", "d3d12_draw.cpp")
+    }
+
+    def replace(name: str, old: str, new: str, count: int = 1) -> None:
+        if sources[name].count(old) != count:
+            raise RuntimeError(
+                f"Pinned Mesa invalid command anchor mismatch in {name}: {old[:100]}"
+            )
+        sources[name] = sources[name].replace(old, new)
+
+    # CBV, SRV, sampler, SSBO and image tables can all be dirty in every stage.
+    replace(
+        "d3d12_draw.cpp",
+        "#define MAX_DESCRIPTOR_TABLES (D3D12_GFX_SHADER_STAGES * 4)",
+        "#define MAX_DESCRIPTOR_TABLES (D3D12_GFX_SHADER_STAGES * 5)",
+    )
+    replace(
+        "d3d12_resource_state.cpp",
+        "      if (current_state->is_promoted &&",
+        "      if (current_state->is_promoted &&\n"
+        "          !d3d12_is_write_state(desired_state) &&\n"
+        "          !d3d12_is_write_state(current_state->state) &&",
+    )
+    # Even the first COMMON -> exact read promotion must retain its promotion bit.
+    # A subsequent read -> write requires an explicit barrier, not a read/write union.
+    replace(
+        "d3d12_resource_state.cpp", "   } else if (after != state_if_promoted) {", "   } else {"
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "       dst->base.b.format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {\n      stencil_src_res_offset",
+        "       src->base.b.format == PIPE_FORMAT_Z32_FLOAT_S8X24_UINT) {\n      stencil_src_res_offset",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "       util_format_get_depth_only(dst) == src)\n      return true;",
+        "       util_format_get_depth_only(dst) == src)\n"
+        "      return d3d12_get_typeless_format(src) == d3d12_get_typeless_format(dst);",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "   dst_box.height = psrc_box->height;",
+        "   dst_box.height = psrc_box->height;\n   dst_box.depth = psrc_box->depth;",
+    )
+    # CopyTextureRegion addresses one array subresource at a time. Gallium's
+    # box.depth instead counts array layers; split before recording transitions.
+    anchor = """                  unsigned mask)
+{
+   struct d3d12_batch *batch = d3d12_current_batch(ctx);
+
+   unsigned src_subres ="""
+    replace(
+        "d3d12_blit.cpp",
+        anchor,
+        """                  unsigned mask)
+{
+   if (psrc_box->depth > 1 &&
+       (d3d12_subresource_id_uses_layer(src->base.b.target) ||
+        d3d12_subresource_id_uses_layer(dst->base.b.target))) {
+      struct pipe_box src_slice = *psrc_box, dst_slice = *pdst_box;
+      src_slice.depth = dst_slice.depth = 1;
+      for (int layer = 0; layer < psrc_box->depth; ++layer) {
+         src_slice.z = psrc_box->z + layer;
+         dst_slice.z = pdst_box->z + layer;
+         d3d12_direct_copy(ctx, dst, dst_level, &dst_slice, src, src_level, &src_slice, mask);
+      }
+      return;
+   }
+   struct d3d12_batch *batch = d3d12_current_batch(ctx);
+
+   unsigned src_subres =""",
+    )
+    # get_subresource_id normalizes a layer into a Z offset. Do not feed that
+    # normalized Z back into the next plane, or plane 1 uses layer zero.
+    replace(
+        "d3d12_blit.cpp",
+        "   unsigned src_z = psrc_box->z;",
+        "   unsigned src_z = psrc_box->z;\n   const unsigned dst_layer = dstz;",
+    )
+    replace(
+        "d3d12_blit.cpp",
+        "      src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;",
+        "      src_z = psrc_box->z;\n      dstz = dst_layer;\n"
+        "      src_loc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;",
+    )
+    # Full array-layer copies have a nonzero box.z but zero subresource-local Z.
+    # Test the latter to emit a null box for depth/stencil and MSAA layer copies.
+    replace(
+        "d3d12_blit.cpp",
+        "psrc_box->x == 0 && psrc_box->y == 0 && psrc_box->z == 0",
+        "psrc_box->x == 0 && psrc_box->y == 0 && src_z == 0",
+    )
+    for name, source in sources.items():
+        (driver / name).write_text(source)
 
 
 if __name__ == "__main__":
