@@ -53,7 +53,7 @@ Everything below was measured on a retail Xbox Series X in Developer Mode.
 | Movies | Decoded on the CPU with FFmpeg |
 | Textures | ASTC decoded on the CPU. The GPU decoder is being fixed for D3D12 |
 | Input | Xbox controller, mapped to a Pro Controller |
-| Compatibility | No game is fully playable yet. Persona 5 Royal boots and reaches gameplay with stutters and bugs. Breath of the Wild and Mario Kart 8 Deluxe boot and render at about 30 FPS, then lose the GPU after a while (see below). Super Mario 3D World boots, with menus that do not render correctly yet |
+| Compatibility | No game is playable. Persona 5 Royal is the closest: it boots and reaches gameplay, with serious bugs. Breath of the Wild and Mario Kart 8 Deluxe boot and submit frames, but I have not confirmed that the picture is correct, and both lose the GPU after a few minutes. Super Mario 3D World boots, with menus and gameplay that do not render correctly |
 
 The hard parts so far, each found on the console and written up in the [port notes](docs/nxbox-port.md):
 
@@ -71,12 +71,14 @@ The hard parts so far, each found on the console and written up in the [port not
 
 - **There is no release date.** Nothing is promised until it is stable; releases will appear on the
   [releases page](https://github.com/NspxMiguel/NXbox/releases) when there is something to try.
-- **What is being fixed right now:** Breath of the Wild and Mario Kart 8 Deluxe run for a few
-  minutes and then the Direct3D 12 device is removed. Tracing it with the D3D12 debug layer found
-  the first real cause (block-compressed texture uploads with unaligned copy boxes), and the work
-  continues on the next one. Super Mario 3D World's menus are the next rendering problem. The
-  target games are Persona 5 Royal, Breath of the Wild, Mario Kart 8 Deluxe, Super Mario 3D World
-  and then Bayonetta.
+- **No game is playable yet.** Persona 5 Royal is the closest and is still badly broken.
+  Breath of the Wild and Mario Kart 8 Deluxe run for a few minutes and then the Direct3D 12 device
+  is removed; I have not verified that their picture is right either. Super Mario 3D World's menus
+  and gameplay do not render correctly. The target games are Persona 5 Royal, Breath of the Wild,
+  Mario Kart 8 Deluxe, Super Mario 3D World and then Bayonetta.
+- **What is being fixed right now:** tracing the device removal with the D3D12 debug layer found the
+  first real cause (block-compressed texture uploads with unaligned copy boxes); the work continues
+  on the next one.
 - **How it is built:** by one person in their spare time, with AI coding tools doing much of the
   hard work on a small budget. Progress comes in bursts, and long waits are usually tool limits.
 - **What you need:** an Xbox in Developer Mode, and your own game dumps, firmware and keys.
