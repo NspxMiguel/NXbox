@@ -16,6 +16,9 @@ ARM64 code runs through a JIT, and its graphics go through OpenGL on Direct3D 12
 [Builds](https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml) ·
 [Credits](#credits-and-lineage) · [License](LICENSE.txt)
 
+**Support the project (Bitcoin):** `bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg`. Optional, and it
+does not buy a release date or a specific game; it only helps pay for the tools that do the work.
+
 <table>
   <tr>
     <td><img src="docs/assets/screenshots/p5r-title.jpg" alt="Persona 5 Royal title screen on Xbox Series X"></td>
