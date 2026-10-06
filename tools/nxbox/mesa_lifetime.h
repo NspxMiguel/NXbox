@@ -17,16 +17,22 @@ extern std::atomic<unsigned long long> nxbox_pso_calls;
 extern std::atomic<unsigned> nxbox_pso_active;
 
 /* Samples every attempt, including fallbacks and compute. A pre-existing loss is terminal. */
-template <typename Create>
-HRESULT nxbox_create_pso(ID3D12Device *dev, const char *kind, Create create) {
+template <typename Create, typename Report>
+HRESULT nxbox_create_pso(ID3D12Device *dev, const char *kind, Create create, Report report) {
    const auto call = ++nxbox_pso_calls;
    const unsigned concurrent = ++nxbox_pso_active;
    const HRESULT before = dev->GetDeviceRemovedReason();
    const HRESULT hr = SUCCEEDED(before) ? create() : before;
    const HRESULT after = dev->GetDeviceRemovedReason();
+   report(before, hr, after);
    nxbox_pso_sample(dev, kind, hr, before, after, call, concurrent);
    --nxbox_pso_active;
-   return hr;
+   return FAILED(after) ? after : hr;
+}
+
+template <typename Create>
+HRESULT nxbox_create_pso(ID3D12Device *dev, const char *kind, Create create) {
+   return nxbox_create_pso(dev, kind, create, [](HRESULT, HRESULT, HRESULT) {});
 }
 
 #ifdef NXBOX_DRED_IMPLEMENTATION
@@ -104,7 +110,8 @@ void nxbox_pso_sample(ID3D12Device *dev, const char *kind, HRESULT api, HRESULT 
       std::lock_guard<std::mutex> lock(nxbox_lifetime_mutex);
       if (SUCCEEDED(api))
          ++nxbox_created;
-      const bool first = FAILED(api) && !nxbox_first_pso_failure;
+      const bool first =
+          (FAILED(api) || FAILED(before) || FAILED(after)) && !nxbox_first_pso_failure;
       if (first || (SUCCEEDED(api) && (nxbox_created % 8 == 0 || nxbox_created <= 4))) {
          char budget[240], text[1024];
          nxbox_budget(dev, budget, sizeof(budget));

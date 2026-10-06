@@ -636,6 +636,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                   "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_BATCH", "NXBOX_D3D12_SYNC_ERROR"}) {
                 log_report(name, read_report(name));
             }
+            CollectPsoDxil(read_report, log_report);
             CollectBatchJournals(read_report, log_report);
             throw std::runtime_error("D3D12 device removed; stopping the game");
         }
@@ -724,29 +725,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                         log_report(name, value);
                     }
                 });
-                // The manifest is published after the chunks. Derive names dynamically so
-                // larger shaders are not silently cut off at a fixed number of chunks.
-                char manifest[8192] = "";
-                const auto length =
-                    GetEnvironmentVariableA("NXBOX_D3D12_PSO_DXIL", manifest, sizeof(manifest));
-                std::size_t bytes[2]{}, parts[2]{};
-                if (length && length < sizeof(manifest) &&
-                    std::sscanf(manifest, "vs_bytes=%zu vs_parts=%zu ps_bytes=%zu ps_parts=%zu",
-                                &bytes[0], &parts[0], &bytes[1], &parts[1]) == 4) {
-                    static std::array<std::vector<std::string>, 2> last_dxil;
-                    constexpr const char* stages[]{"VS", "PS"};
-                    for (std::size_t stage = 0; stage < 2; ++stage) {
-                        if (parts[stage] != bytes[stage] / 4095 + (bytes[stage] % 4095 != 0)) {
-                            continue;
-                        }
-                        last_dxil[stage].resize(parts[stage]);
-                        for (std::size_t part = 0; part < parts[stage]; ++part) {
-                            const auto name =
-                                fmt::format("NXBOX_D3D12_PSO_DXIL_{}_{}", stages[stage], part);
-                            collect(name.c_str(), last_dxil[stage][part]);
-                        }
+                static std::map<std::string, std::string> last_dxil;
+                CollectPsoDxil(read_report, [&](const char* name, const std::string& value) {
+                    auto& previous = last_dxil[name];
+                    if (previous != value) {
+                        previous = value;
+                        log_report(name, value);
                     }
-                }
+                });
             }
 #if NXBOX_STALL_PROFILE
             // Host work in the window, as total/longest milliseconds and call count, so each

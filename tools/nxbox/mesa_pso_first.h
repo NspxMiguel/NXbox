@@ -3,9 +3,9 @@
 #include <stdarg.h>
 #include <string>
 
-/* First rejection only. Chunks fit the frontend's 8192-byte buffer, including
- * NUL. Publish the manifest last; failed environment writes are never called a
- * complete capture. No size cap silently truncates a large shader.
+/* First heuristic skip, first known pair, then first rejection (highest priority). Chunks fit the
+ * frontend's 8192-byte buffer, including NUL. Publish the manifest last; failed environment writes
+ * are never called a complete capture. No size cap silently truncates a large shader.
  */
 static size_t nxbox_pso_dxil(const char *stage, const D3D12_SHADER_BYTECODE &shader,
                              bool &complete) {
@@ -39,18 +39,23 @@ static size_t nxbox_pso_dxil(const char *stage, const D3D12_SHADER_BYTECODE &sha
 static void nxbox_pso_first(const CD3DX12_PIPELINE_STATE_STREAM3 &stream, HRESULT hr,
                             const D3D12_INPUT_LAYOUT_DESC &unfixed) {
    std::lock_guard<std::mutex> lock(nxbox_pso_report_mutex);
-   static bool captured = false;
-   if (captured)
-      return;
-   captured = true;
    const auto d = stream.GraphicsDescV0();
+   // A known pair supersedes a heuristic skip; a real failure supersedes both.
+   static unsigned captured_priority = 0;
+   const unsigned priority = hr != S_FALSE ? 3 : (nxbox_pso_quarantined(d.VS, d.PS) ? 2 : 1);
+   if (captured_priority >= priority)
+      return;
+   captured_priority = priority;
+   SetEnvironmentVariableA("NXBOX_D3D12_PSO_DXIL", nullptr);
    bool complete = true;
    const size_t vs_parts = nxbox_pso_dxil("VS", d.VS, complete);
    const size_t ps_parts = nxbox_pso_dxil("PS", d.PS, complete);
    char manifest[192];
    snprintf(manifest, sizeof(manifest),
-            "vs_bytes=%zu vs_parts=%zu ps_bytes=%zu ps_parts=%zu chunk_bytes=4095 complete=%u",
-            d.VS.BytecodeLength, vs_parts, d.PS.BytecodeLength, ps_parts, complete ? 1u : 0u);
+            "vs_bytes=%zu vs_parts=%zu ps_bytes=%zu ps_parts=%zu chunk_bytes=4095 complete=%u "
+            "capture=%u",
+            d.VS.BytecodeLength, vs_parts, d.PS.BytecodeLength, ps_parts, complete ? 1u : 0u,
+            priority);
    SetEnvironmentVariableA("NXBOX_D3D12_PSO_DXIL", manifest);
    std::string text;
    auto add = [&](const char *format, ...) {

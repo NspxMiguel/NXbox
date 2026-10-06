@@ -546,9 +546,11 @@ nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
    D3D12_INPUT_ELEMENT_DESC nxbox_inputs[PIPE_MAX_ATTRIBS * 4];
    nxbox_pso_fix_inputs(pso_desc.VS, input_layout, nxbox_inputs, ARRAY_SIZE(nxbox_inputs));
    nxbox_pso_fix_blend((D3D12_BLEND_DESC &)pso_desc.BlendState);
-   /* Quarantine the captured device-removing pair before either driver API. */
-   if (nxbox_pso_quarantined(pso_desc.VS, pso_desc.PS)) {
-      SetEnvironmentVariableA("NXBOX_D3D12_PSO_FIX", "quarantined botw-pipe6 shader pair; draw skipped");
+   nxbox_pso_fix_depth((D3D12_DEPTH_STENCIL_DESC2 &)pso_desc.DepthStencilState);
+   /* Quarantine known pairs and related shapes before either driver API. */
+   if (nxbox_pso_quarantined(pso_desc.VS, pso_desc.PS) ||
+       nxbox_pso_suspect_shape(pso_desc.GraphicsDescV0())) {
+      SetEnvironmentVariableA("NXBOX_D3D12_PSO_FIX", "quarantined graphics signature; draw skipped; canary=unverified-isolation");
       return NULL;
    }
    ID3D12PipelineState *ret = NULL;
@@ -601,7 +603,7 @@ nxbox_simplify_pso(CD3DX12_PIPELINE_STATE_STREAM3 &desc,
     )
     call_old = "      data->pso = create_gfx_pipeline_state(ctx);"
     replacements = {
-        anchor: '#include "nxbox_pso_input.h"\n'
+        anchor: '#include "nxbox_pso_input.h"\n#include "nxbox_pso_guard.h"\n'
         + helper
         + anchor.replace(" *ctx)", " *ctx, struct d3d12_gfx_pso_entry *cache_entry)"),
         create_old: create_new,
@@ -657,6 +659,10 @@ void d3d12_nxbox_set_render_targets(struct d3d12_context *ctx, unsigned count,
         source = source.replace(old, new, 1)
     for old, new in draw_replacements.items():
         draw_source = draw_source.replace(old, new, 1)
+    guard_helper = Path(__file__).with_name("mesa_pso_guard.h").read_text()
+    guard_target = pso.with_name("nxbox_pso_guard.h")
+    if guard_target.exists():
+        raise RuntimeError("Pinned Mesa PSO guard helper already exists")
     input_helper = Path(__file__).with_name("mesa_pso_input.h").read_text()
     input_target = pso.with_name("nxbox_pso_input.h")
     if input_target.exists():
@@ -664,6 +670,7 @@ void d3d12_nxbox_set_render_targets(struct d3d12_context *ctx, unsigned count,
     draw.write_text(draw_source)
     pso.write_text(source)
     input_target.write_text(input_helper)
+    guard_target.write_text(guard_helper)
 
 
 def patch_dxil(root: Path) -> None:
@@ -1231,10 +1238,30 @@ def patch_lifetime(root: Path) -> None:
         pattern = rf"screen->dev->{api}\(([^,]+),\s*IID_PPV_ARGS\(&ret\)\)"
         kind = "compute-pso" if api == "CreateComputePipelineState" else "gfx-pso"
         def wrap(match: re.Match) -> str:
-            return (f'nxbox_create_pso(screen->dev, "{kind}", [&]() -> HRESULT {{\n'
-                    f'         HRESULT result = {match[0]};\n'
-                    '         if (SUCCEEDED(result)) nxbox_pso_created(ret);\n'
-                    '         return result;\n      })')
+            report = ", [&](HRESULT before, HRESULT result, HRESULT after) {\n"
+            if kind == "gfx-pso" and "nxbox_original_inputs" in sources[file]:
+                # Publish capture before sampling publishes DEVICE_LOST to the frontend.
+                report += (
+                    "         if (FAILED(before) || FAILED(result) || FAILED(after))\n"
+                    "            nxbox_pso_first(pso_desc, FAILED(before) ? before : "
+                    "(FAILED(after) ? after : result), nxbox_original_inputs);\n"
+                )
+            else:
+                report += "         (void)before;\n"
+            report += (
+                "         if (SUCCEEDED(result) && FAILED(after) && ret) {\n"
+                "            nxbox_object_ref(ret, -1);\n"
+                "            ret->Release();\n"
+                "            ret = NULL;\n"
+                "         }\n      }"
+            )
+            return (
+                f'nxbox_create_pso(screen->dev, "{kind}", [&]() -> HRESULT {{\n'
+                f"         HRESULT result = {match[0]};\n"
+                "         if (SUCCEEDED(result)) nxbox_pso_created(ret);\n"
+                f"         return result;\n      }}{report})"
+            )
+
         sources[file], count = re.subn(pattern, wrap, sources[file])
         if count != 1:
             raise RuntimeError(f"Pinned Mesa lifetime API mismatch: {api}")
@@ -1243,6 +1270,12 @@ def patch_lifetime(root: Path) -> None:
     if "nxbox_pso_report_mutex" in sources[file]:
         anchor = 'static std::mutex nxbox_pso_report_mutex;'
         replace(file, anchor, anchor + '\n#include "nxbox_pso_first.h"')
+        anchor = '      SetEnvironmentVariableA("NXBOX_D3D12_PSO_FIX", "quarantined graphics signature; draw skipped; canary=unverified-isolation");'
+        replace(
+            file,
+            anchor,
+            anchor + "\n      nxbox_pso_first(pso_desc, S_FALSE, nxbox_original_inputs);",
+        )
         anchor = "   const auto original_v0 = original.GraphicsDescV0();"
         replace(file, anchor, anchor + "\n   nxbox_pso_first(original, hr, nxbox_original_inputs);")
         replace(file, "(created & (created - 1)) == 0", "(created % 8) == 0")

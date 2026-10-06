@@ -79,6 +79,19 @@ class MesaFullChainTests(unittest.TestCase):
                 ]
                 positions = [submission.index(item) for item in sequence]
                 self.assertEqual(positions, sorted(positions))
+                pipeline = (driver / "d3d12_pipeline_state.cpp").read_text()
+                self.assertTrue((driver / "nxbox_pso_guard.h").is_file())
+                self.assertLess(
+                    pipeline.index("nxbox_pso_suspect_shape("),
+                    pipeline.index("auto create = [&]()"),
+                )
+                self.assertEqual(pipeline.count("nxbox_pso_first(pso_desc, FAILED(before)"), 2)
+                self.assertEqual(pipeline.count("ret->Release();"), 3)
+                lifetime = (driver / "nxbox_lifetime.h").read_text()
+                self.assertLess(
+                    lifetime.index("report(before, hr, after);"),
+                    lifetime.index("nxbox_pso_sample(dev, kind, hr"),
+                )
                 outputs.append(
                     {path.name: path.read_text() for path in driver.iterdir() if path.is_file()}
                 )
