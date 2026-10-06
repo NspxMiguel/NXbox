@@ -81,6 +81,7 @@ def patch(root: Path) -> None:
     patch_render_safety(root)
     patch_invalid_commands(root)
     patch_first_bad_batch(root)
+    patch_device_api_ring(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2071,6 +2072,237 @@ def patch_first_bad_batch(root: Path) -> None:
     )
     for name, source in sources.items():
         (driver / name).write_text(source)
+
+
+def patch_device_api_ring(root: Path) -> None:
+    """Instrument all matching calls, including video and generated helper headers.
+
+    Mask comments/strings before matching. Fail closed on new receiver syntax so
+    a pin update cannot silently introduce an unchecked call. Keep a per-call
+    source inventory beside the patched driver for host verification.
+    """
+    import json
+    import re
+
+    driver = root / "src/gallium/drivers/d3d12"
+    helper = Path(__file__).with_name("mesa_api_ring.h").read_text()
+    methods = re.findall(r"NXBOX_API_METHOD\((\w+)\)", helper)
+    methods.remove("name")
+    methods.extend(("CopyBufferRegion", "CopyDescriptors"))
+    api = "|".join(methods)
+    token = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
+
+    def masked(source):
+        return token.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m[0]), source)
+
+    sources = {p.name: p.read_text() for p in driver.iterdir() if p.suffix in (".cpp", ".h")}
+
+    def replace(name, old, new, count=1):
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa API anchor mismatch in {name}: {old[:80]}")
+        sources[name] = sources[name].replace(old, new)
+
+    # Do not issue another MakeResident for an already-resident resource, and
+    # remove permanent resources from the eviction LRU before changing status.
+    replace(
+        "d3d12_residency.cpp",
+        """      /* Mark as permanently resident*/
+      base_bo->residency_status = d3d12_permanently_resident;
+
+      /* If it wasn't made resident before, make it*/
+      bool was_made_resident = (base_bo->residency_status == d3d12_resident);""",
+        """      const bool was_made_resident = (base_bo->residency_status == d3d12_resident);
+      if (was_made_resident)
+         list_del(&base_bo->residency_list_entry);
+
+      /* If it wasn't made resident before, make it*/""",
+    )
+    replace(
+        "d3d12_residency.cpp",
+        """         assert(SUCCEEDED(hr));
+      }
+   }
+   mtx_unlock""",
+        """         if (FAILED(hr)) {
+            mtx_unlock(&screen->submit_mutex);
+            return;
+         }
+      }
+      base_bo->residency_status = d3d12_permanently_resident;
+   }
+   mtx_unlock""",
+    )
+    # Retry a full pending batch after OOM; do not gather it twice. Retire
+    # accepted partial batches as well, so their BOs are not made resident twice.
+    replace(
+        "d3d12_residency.cpp",
+        "if ((available_memory || !anything_to_wait_for) && batch_count < residency_batch_size)",
+        "if (available_memory > 0 || !anything_to_wait_for || batch_count)",
+    )
+    replace(
+        "d3d12_residency.cpp",
+        "for (; entry; entry = _mesa_set_next_entry(base_bo_set, entry))",
+        "for (; entry && batch_count < residency_batch_size; entry = _mesa_set_next_entry(base_bo_set, entry))",
+    )
+    replace(
+        "d3d12_residency.cpp",
+        """         if (SUCCEEDED(hr) && batch_count == residency_batch_size) {
+            batch_count = 0;
+            size_to_make_resident -= batch_memory_size;
+            continue;
+         }""",
+        """         if (SUCCEEDED(hr) && batch_count) {
+            if (batch_count == residency_batch_size)
+               entry = _mesa_set_next_entry(base_bo_set, entry);
+            batch_count = 0;
+            size_to_make_resident -= batch_memory_size;
+            batch_memory_size = 0;
+            if (!entry)
+               break;
+            continue;
+         }""",
+    )
+    replace(
+        "d3d12_residency.cpp",
+        "   screen->fence->SetEventOnCompletion(target_fence, nullptr);",
+        """   if (FAILED(screen->fence->SetEventOnCompletion(target_fence, nullptr)) ||
+       screen->fence->GetCompletedValue() == UINT64_MAX ||
+       screen->fence->GetCompletedValue() < target_fence)
+      return; // Never evict allocations whose completion was not established.""",
+    )
+    # Both draw paths must recheck after flushing: a single draw can exceed an
+    # empty heap too. Never append descriptors or set tables after that failure.
+    for compute in ("false", "true"):
+        replace(
+            "d3d12_draw.cpp",
+            f"   if (!check_descriptors_left(ctx, {compute}))\n      d3d12_flush_cmdlist(ctx);",
+            f"""   if (!check_descriptors_left(ctx, {compute})) {{
+      d3d12_flush_cmdlist(ctx);
+      if (!check_descriptors_left(ctx, {compute})) {{
+         SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", "descriptor capacity exceeded; draw skipped");
+         {"if (index_buffer && dinfo->has_user_indices) pipe_resource_reference(&index_buffer, nullptr);" if compute == "false" else ""}
+         return;
+      }}
+   }}""",
+        )
+    replace(
+        "d3d12_descriptor_pool.cpp",
+        "      list_addtail(&valid_heap->link, &pool->heaps);",
+        "      if (!valid_heap)\n         return 0;\n      list_addtail(&valid_heap->link, &pool->heaps);",
+    )
+    # Video completion helpers previously treated removal's UINT64_MAX as
+    # completion, and release builds discarded failed/timeout wait results.
+    for name, fence in (
+        ("d3d12_video_dec.cpp", "fence"),
+        ("d3d12_video_proc.cpp", "pD3D12Proc->m_spFence"),
+    ):
+        ending = (
+            "\n}\n\nbool\nd3d12_video_decoder_sync_completion"
+            if name.endswith("dec.cpp")
+            else "\n\nensure_fence_finished_fail:"
+        )
+        replace(
+            name,
+            "   return wait_result;" + ending,
+            f"""   completedValue = {fence}->GetCompletedValue();
+   return wait_result && completedValue != UINT64_MAX && completedValue >= fenceValueToWaitOn;"""
+            + ending,
+        )
+        replace(name, "   assert(wait_result);", "   if (!wait_result)\n      return false;")
+        replace(name, "assert(wait_res);", "if (!wait_res) return;")
+    replace(
+        "d3d12_video_enc.cpp",
+        "      d3d12_video_encoder_ensure_fence_finished(codec, fenceValueToWaitOn, timeout_ns);",
+        """      d3d12_video_encoder_ensure_fence_finished(codec, fenceValueToWaitOn, timeout_ns);
+      const uint64_t verified = pD3D12Enc->m_spFence->GetCompletedValue();
+      if (verified == UINT64_MAX || verified < fenceValueToWaitOn)
+         return; // Preserve in-flight resources and allocator on timeout/removal.""",
+    )
+    # The PSO boundary must enter the ring before an attempted creation.
+    replace(
+        "nxbox_lifetime.h",
+        "   const HRESULT before = dev->GetDeviceRemovedReason();",
+        """   const HRESULT before = dev->GetDeviceRemovedReason();
+   nxbox_api_record(dev, kind, "pso-boundary", "phase=before", S_OK, before);""",
+    )
+    replace(
+        "nxbox_lifetime.h",
+        "   const HRESULT after = dev->GetDeviceRemovedReason();",
+        """   const HRESULT after = dev->GetDeviceRemovedReason();
+   nxbox_api_record(dev, kind, "pso-boundary", "phase=after", hr, after);""",
+    )
+    replace(
+        "nxbox_dred.h",
+        '#include "nxbox_lifetime.h"',
+        '#include "nxbox_api_ring.h"\n#include "nxbox_lifetime.h"',
+    )
+    replace(
+        "nxbox_dred.h",
+        """   if (SUCCEEDED(removed))
+      return;
+   std::lock_guard<std::mutex> lock(nxbox_dred_mutex);""",
+        """   if (SUCCEEDED(removed))
+      return;
+   nxbox_api_capture(dev, removed, where);
+   std::lock_guard<std::mutex> lock(nxbox_dred_mutex);""",
+    )
+    # Member receivers in this pin include ComPtr and indexed video allocators.
+    receiver = r"[A-Za-z_]\w*(?:(?:->|\.)[A-Za-z_]\w*|\[[^]\n]+\]|\(\))*"
+    pattern = re.compile(rf"(?P<object>{receiver})->(?P<api>{api})\s*\(")
+    inventory = []
+    for name, source in sources.items():
+        if name == "nxbox_api_ring.h":
+            continue
+        mask = masked(source)
+        matches = list(pattern.finditer(mask))
+        expected = len(re.findall(rf"->(?:{api})\s*\(", mask))
+        if len(matches) != expected:
+            raise RuntimeError(f"Unrecognized D3D12 receiver in {name}")
+        for m in reversed(matches):
+            line = source.count("\n", 0, m.start()) + 1
+            obj, method = source[m.start("object") : m.end("object")], m["api"]
+            site = f"{name}:{line}"
+            inventory.append({"file": name, "line": line, "api": method, "receiver": obj})
+            # NULL loses its null-pointer-constant semantics in forwarding
+            # templates. In these APIs all NULL arguments are pointer values.
+            end, depth = m.end(), 1
+            while depth:
+                if mask[end] == "(":
+                    depth += 1
+                if mask[end] == ")":
+                    depth -= 1
+                end += 1
+            arguments = source[m.end() : end]
+            arguments = re.sub(r"\bNULL\b", "nullptr", arguments)
+            source = (
+                source[: m.start()]
+                + f'nxbox_api({obj}, "{site}").{method}('
+                + arguments
+                + source[end:]
+            )
+        if matches:
+            if name.endswith(".cpp"):
+                # Some first headers (notably blit.h) contain only forward
+                # declarations. Import the COM types explicitly before the ring.
+                anchor = re.search(r'^#include "d3d12_[^"\n]+".*$', source, re.M)
+                if not anchor:
+                    raise RuntimeError(f"Missing D3D12 include in {name}")
+                source = (
+                    source[: anchor.end()]
+                    + '\n#include "d3d12_common.h"\n#include "nxbox_api_ring.h"'
+                    + source[anchor.end() :]
+                )
+            else:
+                source = source.replace(
+                    "#pragma once", '#pragma once\n#include "nxbox_api_ring.h"', 1
+                )
+        sources[name] = source
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    (driver / "nxbox_api_ring.h").write_text(helper)
+    (driver / "nxbox_api_inventory.json").write_text(
+        json.dumps(sorted(inventory, key=lambda x: (x["file"], x["line"])), indent=2) + "\n"
+    )
 
 
 if __name__ == "__main__":

@@ -3,11 +3,14 @@
 
 import hashlib
 import os
+import json
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import test_mesa_render_safety as safety
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,6 +26,77 @@ def snapshot(root):
 
 
 class MesaFullChainTests(unittest.TestCase):
+    def check_residency_batches(self, driver, temporary):
+        source = (driver / "d3d12_residency.cpp").read_text()
+        loop = source.split("   while (true) {", 1)[1].split(
+            "   _mesa_set_destroy(base_bo_set, nullptr);", 1
+        )[0]
+        runner = safety.MesaRenderSafetyTests()
+        runner.root = Path(temporary)
+        runner.compile_run(
+            r"""
+#include <cassert>
+#include <cstdint>
+#include <vector>
+#define SUCCEEDED(hr) ((hr)>=0)
+#define FAILED(hr) ((hr)<0)
+using HRESULT=int;
+constexpr int S_OK=0, D3D12_RESIDENCY_FLAG_NONE=0;
+struct ID3D12Pageable { unsigned index=0, resident=0; };
+struct d3d12_bo { ID3D12Pageable *res; uint64_t estimated_size=1, last_used_fence=1; };
+struct set_entry { d3d12_bo *key; };
+struct Set { std::vector<set_entry> entries; };
+set_entry *_mesa_set_next_entry(Set *set, set_entry *entry) {
+ auto index=entry?entry-set->entries.data()+1:0;
+ return index<(long)set->entries.size()?&set->entries[index]:nullptr;
+}
+struct d3d12_memory_info { uint64_t budget=0, usage=0; };
+struct Device {
+ bool fail_once=true; unsigned accepted=0, attempts=0; uint64_t usage=0;
+ HRESULT EnqueueMakeResident(int,unsigned count,ID3D12Pageable **items,void *,uint64_t) {
+  ++attempts; assert(attempts<20);
+  if(fail_once) { fail_once=false; return -1; }
+  for(unsigned i=0;i<count;++i) { assert(items[i]->resident++==0); ++accepted; }
+  usage+=count;
+  return 0;
+ }
+};
+template <typename T> T &nxbox_api(T *value,const char *) { return *value; }
+struct Screen {
+ Device *dev; d3d12_bo residency_list{}; uint64_t residency_fence_value=0, budget=0;
+ void *residency_fence=nullptr;
+ void get_memory_info(Screen *,d3d12_memory_info *out) { *out={budget,dev->usage}; }
+};
+bool list_is_empty(d3d12_bo *) { return false; }
+#define list_first_entry(list,type,member) (list)
+void evict_to_fence_or_budget(Screen *screen,uint64_t,uint64_t,uint64_t) { screen->dev->usage=0; }
+void run(unsigned count,unsigned budget) {
+ Device dev; Screen screen_storage{&dev}; screen_storage.budget=budget;
+ Screen *screen=&screen_storage;
+ std::vector<ID3D12Pageable> pages(count); std::vector<d3d12_bo> bos(count);
+ Set storage; for(unsigned i=0;i<count;++i) { bos[i].res=&pages[i]; storage.entries.push_back({&bos[i]}); }
+ Set *base_bo_set=&storage;
+ auto *entry=_mesa_set_next_entry(base_bo_set,nullptr);
+ constexpr unsigned residency_batch_size=128;
+ unsigned batch_count=0;
+ ID3D12Pageable *to_make_resident[residency_batch_size];
+ uint64_t batch_memory_size=0, size_to_make_resident=count, pending_fence_value=5;
+ d3d12_memory_info mem_info;
+ while(true) {
+"""
+            + loop
+            + r"""
+ assert(dev.accepted==count && size_to_make_resident==0);
+ for(const auto &page:pages) assert(page.resident==1);
+}
+int main() {
+ for(unsigned count:{1u,127u,128u,129u,256u,257u}) {
+  run(count,1024); run(count,63);
+ }
+}
+"""
+        )
+
     @unittest.skipUnless(SOURCE.is_dir(), "Set NXBOX_MESA_SRC or provide /tmp/mesa-pin")
     def test_pristine_chain_and_repeat_rejection(self):
         environment = os.environ.copy()
@@ -66,11 +140,11 @@ class MesaFullChainTests(unittest.TestCase):
                 self.assertNotIn("SetEventOnCompletion(query->fence_value, NULL)", query)
                 self.assertTrue((driver / "nxbox_query_wait.h").is_file())
                 batch = (driver / "d3d12_batch.cpp").read_text()
-                submission = batch.split(
-                    "screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);", 1
-                )[1]
+                submission = batch.split(".ExecuteCommandLists(count_to_execute, to_execute);", 1)[
+                    1
+                ]
                 sequence = [
-                    "screen->cmdqueue->Signal(screen->fence, target)",
+                    ".Signal(screen->fence, target)",
                     "nxbox_sync_wait(screen->dev, screen->fence, target)",
                     "const HRESULT after_wait = screen->dev->GetDeviceRemovedReason()",
                     "nxbox_sync_completed(screen->dev)",
@@ -91,6 +165,51 @@ class MesaFullChainTests(unittest.TestCase):
                 self.assertLess(
                     lifetime.index("report(before, hr, after);"),
                     lifetime.index("nxbox_pso_sample(dev, kind, hr"),
+                )
+                self.check_residency_batches(driver, temporary)
+                inventory = json.loads((driver / "nxbox_api_inventory.json").read_text())
+                self.assertEqual(sum(item["api"] == "ExecuteCommandLists" for item in inventory), 4)
+                for method in (
+                    "CreateCommittedResource",
+                    "CreatePlacedResource",
+                    "Evict",
+                    "MakeResident",
+                    "EnqueueMakeResident",
+                    "CreateDescriptorHeap",
+                    "CopyDescriptors",
+                    "Signal",
+                    "Wait",
+                    "SetEventOnCompletion",
+                    "Reset",
+                    "SetDescriptorHeaps",
+                    "SetGraphicsRootDescriptorTable",
+                    "SetComputeRootDescriptorTable",
+                    "ResolveQueryData",
+                ):
+                    self.assertTrue(any(item["api"] == method for item in inventory), method)
+                # The final helper also covers APIs absent in this pin. Check all
+                # real matching calls are proxied, including generated headers.
+                helper = (driver / "nxbox_api_ring.h").read_text()
+                methods = re.findall(r"NXBOX_API_METHOD\((\w+)\)", helper) + [
+                    "CopyBufferRegion",
+                    "CopyDescriptors",
+                ]
+                for path in driver.iterdir():
+                    if path.suffix not in (".cpp", ".h") or path.name == "nxbox_api_ring.h":
+                        continue
+                    source = path.read_text()
+                    if path.suffix == ".cpp" and '#include "nxbox_api_ring.h"' in source:
+                        self.assertIn(
+                            '#include "d3d12_common.h"\n#include "nxbox_api_ring.h"', source
+                        )
+                    source = re.sub(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"', "", source)
+                    self.assertIsNone(
+                        re.search(r"->(?:" + "|".join(methods) + r")\s*\(", source), path.name
+                    )
+                self.assertIn('"phase=before", S_OK, before', lifetime)
+                dred = (driver / "nxbox_dred.h").read_text().split("void\nnxbox_dred_capture", 1)[1]
+                self.assertLess(
+                    dred.index("nxbox_api_capture"), dred.index('"NXBOX_D3D12_DEVICE_LOST"')
                 )
                 outputs.append(
                     {path.name: path.read_text() for path in driver.iterdir() if path.is_file()}

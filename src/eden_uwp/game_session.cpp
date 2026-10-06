@@ -69,6 +69,18 @@
 
 namespace EdenXbox {
 namespace {
+void FlushDeviceApiRing() {
+    CollectDeviceApiRing(
+        [](const char* name) {
+            char value[8192]{};
+            const auto size = GetEnvironmentVariableA(name, value, sizeof(value));
+            return size && size < sizeof(value) ? std::string(value, size) : std::string{};
+        },
+        [](const char* name, const std::string& value) {
+            DiagnosticReportLines(name, value, Diagnostic);
+        });
+}
+
 // The system suspends the app when another app takes the foreground; pause emulation before the
 // process is frozen and resume it afterwards.
 struct Lifecycle {
@@ -489,6 +501,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         return;
     }
     SCOPE_EXIT {
+        FlushDeviceApiRing();
         void(system.Pause());
         system.ShutdownMainProcess();
         Diagnostic("GAME_STOPPED");
@@ -638,6 +651,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             }
             CollectPsoDxil(read_report, log_report);
             CollectBatchJournals(read_report, log_report);
+            CollectDeviceApiRing(read_report, log_report);
             throw std::runtime_error("D3D12 device removed; stopping the game");
         }
         const int request = lifecycle.request.exchange(Lifecycle::None, std::memory_order_acq_rel);
@@ -716,6 +730,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 static std::array<std::string, std::size(extended_names)> extended_last;
                 for (std::size_t i = 0; i < std::size(extended_names); ++i) {
                     collect(extended_names[i], extended_last[i]);
+                }
+                static std::string last_api_ring;
+                const auto api_manifest = read_report("NXBOX_D3D12_API_RING");
+                if (api_manifest != last_api_ring) {
+                    CollectDeviceApiRing(read_report, log_report);
+                    last_api_ring = api_manifest;
                 }
                 static std::map<std::string, std::string> last_journal;
                 CollectBatchJournals(read_report, [&](const char* name, const std::string& value) {
@@ -1129,7 +1149,9 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         winrt::init_apartment(winrt::apartment_type::multi_threaded);
         SCOPE_EXIT {
             // Keep the UI dispatcher alive while the graphics driver releases its resources.
+            FlushDeviceApiRing();
             graphics.reset();
+            FlushDeviceApiRing();
             lifecycle.CompleteDeferral();
             winrt::uninit_apartment();
             done.store(true, std::memory_order_release);

@@ -198,6 +198,10 @@ public:
         if (surfaceless) {
             Diagnostic(made ? "CTX make_current surfaceless ok" : "CTX make_current surfaceless FAILED");
         }
+        Diagnostic("D3D12_CONTEXT tid=" + std::to_string(GetCurrentThreadId()) +
+                   " context=" + std::to_string(reinterpret_cast<uintptr_t>(context)) +
+                   " role=" + (surfaceless ? "shader-worker" : "render-worker") +
+                   " current=" + (made ? "1" : "0"));
         if (!made) {
             throw std::runtime_error("Mesa context activation failed");
         }

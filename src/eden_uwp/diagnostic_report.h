@@ -106,4 +106,29 @@ void CollectBatchJournals(Read read, Emit emit) {
         }
     }
 }
+// The manifest is written last, before the terminal device-loss notification.
+// Every entry uses the same prefix, so grep retains the complete ordered ring.
+template <typename Read, typename Emit>
+void CollectDeviceApiRing(Read read, Emit emit) {
+    const auto manifest = read("NXBOX_D3D12_API_RING");
+    if (manifest.empty()) {
+        return;
+    }
+    unsigned parts = 0;
+    if (std::sscanf(manifest.c_str(), "parts=%u", &parts) != 1 || parts > 256) {
+        emit("NXBOX_D3D12_API_RING_ERROR", "invalid manifest");
+        return;
+    }
+    emit("NXBOX_D3D12_API_RING", manifest);
+    emit("NXBOX_D3D12_API_FIRST", read("NXBOX_D3D12_API_FIRST"));
+    for (unsigned part = 0; part < parts; ++part) {
+        const auto key = "NXBOX_D3D12_API_RING_" + std::to_string(part);
+        const auto value = read(key.c_str());
+        if (value.empty()) {
+            emit("NXBOX_D3D12_API_RING_ERROR", "missing part=" + key);
+        } else {
+            emit("NXBOX_D3D12_API_RING", value);
+        }
+    }
+}
 } // namespace EdenXbox
