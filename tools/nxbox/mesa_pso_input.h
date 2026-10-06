@@ -181,16 +181,17 @@ static uint64_t nxbox_shader_hash(const D3D12_SHADER_BYTECODE &shader) {
 static bool nxbox_pso_quarantine_enabled() {
    static const bool enabled = [] {
       char value[4] = {};
-      return !(GetEnvironmentVariableA("NXBOX_PSO_QUARANTINE", value, sizeof(value)) == 1 &&
-               value[0] == '0');
+      return GetEnvironmentVariableA("NXBOX_PSO_QUARANTINE", value, sizeof(value)) == 1 &&
+             value[0] == '1';
    }();
    return enabled;
 }
 
 static bool nxbox_pso_quarantined(const D3D12_SHADER_BYTECODE &vs,
                                   const D3D12_SHADER_BYTECODE &ps) {
-   /* NXBOX_PSO_QUARANTINE=0 lets the known device-removing pairs through, to test whether the
-    * skipped draw is what leaves the picture black. */
+   /* Off by default: with the two known pairs dropped, Breath of the Wild presented only black
+    * frames, and with them allowed the intro renders while the device is lost at the same
+    * point either way. NXBOX_PSO_QUARANTINE=1 turns the drop back on. */
    if (!nxbox_pso_quarantine_enabled() || !vs.pShaderBytecode || !ps.pShaderBytecode)
       return false;
    return (vs.BytecodeLength == 2492 && ps.BytecodeLength == 2192 &&

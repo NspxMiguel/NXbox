@@ -5,14 +5,14 @@
 /* D3D12CreateDevice is a singleton per adapter, not an isolated canary.
  * Independent DeviceFactory support/fault isolation is unverified on Xbox UWP.
  * Skip suspect draws before either creation API. This intentionally conservative
- * shape rule can suppress valid draws; NXBOX_PSO_GUARD=0 disables only the rule.
+ * shape rule can suppress valid draws; The rule is off by default (it hid Breath of the Wild's picture); NXBOX_PSO_GUARD=1 enables it.
  * The two known device-removing pairs remain blocked independently.
  */
 static bool nxbox_pso_guard_enabled() {
    static const bool enabled = [] {
       char value[4] = {};
-      return !(GetEnvironmentVariableA("NXBOX_PSO_GUARD", value, sizeof(value)) == 1 &&
-               value[0] == '0');
+      return GetEnvironmentVariableA("NXBOX_PSO_GUARD", value, sizeof(value)) == 1 &&
+             value[0] == '1';
    }();
    return enabled;
 }

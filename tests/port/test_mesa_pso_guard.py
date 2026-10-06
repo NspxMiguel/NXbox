@@ -67,7 +67,8 @@ void SetEnvironmentVariableA(const char *,const char *) {}
             + arrays
             + r"""
 int main(int argc, char**) {
- if(argc>1) setenv("NXBOX_PSO_GUARD","0",1);
+ setenv("NXBOX_PSO_QUARANTINE","1",1);
+ if(argc==1) setenv("NXBOX_PSO_GUARD","1",1);
  D3D12_INPUT_ELEMENT_DESC inputs[]={{"TEXCOORD",0,2,0,0,0,0},{"TEXCOORD",1,2,0,16,0,0}};
  Desc d{}; d.VS={vs,sizeof(vs)}; d.PS={ps,sizeof(ps)}; d.InputLayout={inputs,2};
  assert(nxbox_pso_quarantined(d.VS,d.PS));
