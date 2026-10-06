@@ -109,6 +109,11 @@ struct MesaRuntime {
                 _putenv_s(key.c_str(), value.c_str());
                 Diagnostic("ENV " + key + "=" + value);
             }
+            if (const char* dump = std::getenv("NXBOX_FRAME_DUMP"); dump && *dump == '1') {
+                const std::string dump_dir = (env_file.parent_path() / "framedump").string();
+                _putenv_s("NXBOX_FRAME_DUMP_DIR", dump_dir.c_str());
+                Diagnostic("FRAME_DUMP dir=" + dump_dir);
+            }
         }
         Diagnostic("loading packaged DXIL validator");
         const auto validator = LoadPackagedLibrary(L"dxil.dll", 0);

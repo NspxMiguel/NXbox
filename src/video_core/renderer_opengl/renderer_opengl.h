@@ -58,6 +58,7 @@ private:
 
     void RenderToBuffer(std::span<const Tegra::FramebufferConfig> framebuffers,
                         const Layout::FramebufferLayout& layout, void* dst);
+    void DumpProbeFrame(std::span<const Tegra::FramebufferConfig> framebuffers);
     void RenderScreenshot(std::span<const Tegra::FramebufferConfig> framebuffers);
     void RenderAppletCaptureLayer(std::span<const Tegra::FramebufferConfig> framebuffers);
 

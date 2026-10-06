@@ -7,7 +7,11 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <vector>
 
 #include <glad/glad.h>
 
@@ -16,6 +20,7 @@
 #include "common/settings.h"
 #include "core/core_timing.h"
 #include "core/frontend/emu_window.h"
+#include "core/frontend/framebuffer_layout.h"
 #include "video_core/capture.h"
 #include "video_core/present.h"
 #include "video_core/renderer_opengl/gl_blit_screen.h"
@@ -141,6 +146,7 @@ void RendererOpenGL::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     RenderAppletCaptureLayer(framebuffers);
     RenderScreenshot(framebuffers);
+    DumpProbeFrame(framebuffers);
 
     state_tracker.BindFramebuffer(0);
     blit_screen->DrawScreen(framebuffers, emu_window.GetFramebufferLayout(), false);
@@ -152,6 +158,50 @@ void RendererOpenGL::Composite(std::span<const Tegra::FramebufferConfig> framebu
 
     context->SwapBuffers();
     render_window.OnFrameDisplayed();
+}
+
+// Diagnostic frame probe: with NXBOX_FRAME_DUMP_DIR set, every 150th composed frame is drawn
+// into a small off-screen target (the same pass the screenshot uses) and written as a PPM, with
+// its peak and mean brightness logged. The console's own screenshots of the app come out black,
+// so this is the only way to see what the game actually produced.
+void RendererOpenGL::DumpProbeFrame(std::span<const Tegra::FramebufferConfig> framebuffers) {
+    static const char* const dump_dir = std::getenv("NXBOX_FRAME_DUMP_DIR");
+    if (dump_dir == nullptr || *dump_dir == '\0' || m_current_frame % 150 != 0) {
+        return;
+    }
+    constexpr u32 width = 480;
+    constexpr u32 height = 270;
+    std::vector<u8> pixels(size_t{width} * height * 4);
+    RenderToBuffer(framebuffers, Layout::DefaultFrameLayout(width, height), pixels.data());
+
+    u32 peak = 0;
+    u64 sum = 0;
+    for (size_t i = 0; i < pixels.size(); i += 4) {
+        const u32 value = std::max({pixels[i], pixels[i + 1], pixels[i + 2]});
+        peak = std::max(peak, value);
+        sum += value;
+    }
+    const u64 mean_x100 = sum * 100 / (size_t{width} * height);
+    LOG_INFO(Render_OpenGL, "FRAME_PROBE frame={} peak={} mean_x100={} layers={}", m_current_frame,
+             peak, mean_x100, framebuffers.size());
+
+    std::error_code ec;
+    std::filesystem::create_directories(dump_dir, ec);
+    const std::filesystem::path file =
+        std::filesystem::path(dump_dir) / fmt::format("frame_{:06}.ppm", m_current_frame);
+    std::ofstream out(file, std::ios::binary);
+    out << "P6\n" << width << ' ' << height << "\n255\n";
+    std::vector<char> rgb(size_t{width} * height * 3);
+    // glReadPixels returns bottom-up BGRA.
+    for (u32 y = 0; y < height; ++y) {
+        const u8* row = pixels.data() + size_t{height - 1 - y} * width * 4;
+        for (u32 x = 0; x < width; ++x) {
+            rgb[(size_t{y} * width + x) * 3 + 0] = static_cast<char>(row[x * 4 + 2]);
+            rgb[(size_t{y} * width + x) * 3 + 1] = static_cast<char>(row[x * 4 + 1]);
+            rgb[(size_t{y} * width + x) * 3 + 2] = static_cast<char>(row[x * 4 + 0]);
+        }
+    }
+    out.write(rgb.data(), static_cast<std::streamsize>(rgb.size()));
 }
 
 void RendererOpenGL::AddTelemetryFields() {
