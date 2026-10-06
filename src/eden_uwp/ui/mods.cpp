@@ -159,6 +159,20 @@ bool HttpGetText(const std::string& url, std::string& body) {
     }
 }
 
+// True when `url` answers a HEAD request with a success status (redirects are followed). Used to
+// hide index entries whose file no longer exists.
+bool HttpUrlLive(const std::string& url) {
+    try {
+        const auto client = MakeClient();
+        winrt::Windows::Web::Http::HttpRequestMessage request{
+            winrt::Windows::Web::Http::HttpMethod::Head(), MakeUri(url)};
+        const auto response = client.SendRequestAsync(request).get();
+        return response.IsSuccessStatusCode();
+    } catch (const winrt::hresult_error&) {
+        return false;
+    }
+}
+
 bool HttpGetBytes(const std::string& url, std::vector<std::uint8_t>& bytes) {
     try {
         const auto client = MakeClient();
@@ -965,6 +979,110 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
         return entry;
     }
 
+    // ---- CNX Updater content ----
+
+    // The translations and game mods CNX Updater lists, from the public nx-links index it reads
+    // (https://github.com/gamemoddesignbr/nx-links). Each entry is a zip named after a title id, so
+    // the ones for this game are the files whose name starts with it. They get negative ids so they
+    // never collide with GameBanana's, and they install through the same unpacking and folder rules.
+    static constexpr const char* kCnxIndexUrl =
+        "https://raw.githubusercontent.com/gamemoddesignbr/nx-links/master/nx-links-v204.json";
+    std::map<std::int64_t, std::string> cnx_urls; // guarded by `mutex`
+    std::map<std::int64_t, std::uint64_t> cnx_sizes; // guarded by `mutex`
+    int cnx_count = 0;                             // guarded by `mutex`
+
+    static std::uint64_t ParseSizeText(const std::string& text) {
+        // "6.39 MB", "622 KB", "1.08 GB"
+        char* end = nullptr;
+        const double value = std::strtod(text.c_str(), &end);
+        const std::string unit = end ? Lower(std::string(end)) : std::string();
+        double scale = 1.0;
+        if (unit.find("gb") != std::string::npos) {
+            scale = 1024.0 * 1024.0 * 1024.0;
+        } else if (unit.find("mb") != std::string::npos) {
+            scale = 1024.0 * 1024.0;
+        } else if (unit.find("kb") != std::string::npos) {
+            scale = 1024.0;
+        }
+        return value > 0.0 ? static_cast<std::uint64_t>(value * scale) : 0;
+    }
+
+    void LoadCnx() {
+        std::string body;
+        JsonObject root;
+        if (!HttpGetText(kCnxIndexUrl, body) || !ParseObject(body, root)) {
+            Diagnostic("UI mods CNX index unavailable");
+            return;
+        }
+        const std::string wanted = Lower(title_id);
+        struct Found {
+            std::string name;
+            std::string link;
+            std::string size;
+            std::string category;
+            std::string author;
+        };
+        std::vector<Found> found;
+        for (const auto& [section, category] :
+             {std::pair<const wchar_t*, const char*>{L"translations", "Translation"},
+              std::pair<const wchar_t*, const char*>{L"modifications", "Mod"}}) {
+            const JsonObject group = ObjectAt(root, section);
+            for (const auto& pair : group) {
+                if (pair.Value().ValueType() != JsonValueType::Object) {
+                    continue;
+                }
+                const JsonObject item = pair.Value().GetObject();
+                if (item.HasKey(L"enabled") && item.GetNamedBoolean(L"enabled", true) == false) {
+                    continue;
+                }
+                const std::string link = StringAt(item, L"link");
+                const std::size_t slash = link.rfind('/');
+                const std::string file = Lower(slash == std::string::npos ? link : link.substr(slash + 1));
+                if (file.rfind(wanted, 0) != 0 || Extension(file) != ".zip") {
+                    continue;
+                }
+                // https://github.com/<owner>/<repo>/releases/... -> the owner is the credit.
+                std::string owner = "CNX Updater";
+                const std::string marker = "github.com/";
+                const std::size_t at = link.find(marker);
+                if (at != std::string::npos) {
+                    const std::size_t end = link.find('/', at + marker.size());
+                    if (end != std::string::npos) {
+                        owner = link.substr(at + marker.size(), end - at - marker.size());
+                    }
+                }
+                found.push_back({winrt::to_string(pair.Key()), link, StringAt(item, L"size"),
+                                 category, owner});
+            }
+        }
+        // The index is old: keep only what still downloads.
+        const std::size_t listed = found.size();
+        found.erase(std::remove_if(found.begin(), found.end(),
+                                   [](const Found& item) { return !HttpUrlLive(item.link); }),
+                    found.end());
+        if (found.empty()) {
+            Diagnostic(fmt::format("UI mods CNX has nothing live for {} ({} listed)", title_id,
+                                   listed));
+            return;
+        }
+        const std::lock_guard<std::mutex> lock(mutex);
+        std::int64_t next = -1;
+        std::vector<std::shared_ptr<ModEntry>> entries;
+        for (const Found& item : found) {
+            const std::int64_t id = next--;
+            cnx_urls[id] = item.link;
+            cnx_sizes[id] = ParseSizeText(item.size);
+            // The index title is the game's; make the row say what it is.
+            const std::string label = item.category == "Translation"
+                                          ? "Translation: " + item.name
+                                          : item.name;
+            entries.push_back(EntryLocked(id, label, item.author, item.category, std::string(), 0, -1));
+        }
+        listing.insert(listing.begin(), entries.begin(), entries.end());
+        cnx_count = static_cast<int>(entries.size());
+        Diagnostic(fmt::format("UI mods CNX {} entries for {}", cnx_count, title_id));
+    }
+
     // ---- Network ----
 
     void FindGame() {
@@ -1032,7 +1150,9 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
 
     void SetPhase(StorePhase value) {
         const std::lock_guard<std::mutex> lock(mutex);
-        phase = value;
+        phase = (value == StorePhase::NoGame || value == StorePhase::Offline) && cnx_count > 0
+                    ? StorePhase::Ready
+                    : value;
     }
 
     void LoadPage(int number) {
@@ -1157,9 +1277,19 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
         entry->percent.store(0);
         entry->state.store(static_cast<int>(ModState::Downloading));
 
-        ModDetails info = FetchDetails(entry->id);
+        ModDetails info;
         std::vector<std::string> addresses;
-        {
+        if (entry->id < 0) {
+            const std::lock_guard<std::mutex> lock(mutex);
+            const auto link = cnx_urls.find(entry->id);
+            if (link != cnx_urls.end()) {
+                info.loaded = true;
+                info.files.emplace_back("cnx.zip", cnx_sizes[entry->id]);
+                addresses.push_back(link->second);
+                details[entry->id] = info;
+            }
+        } else {
+            info = FetchDetails(entry->id);
             const std::lock_guard<std::mutex> lock(mutex);
             details[entry->id] = info;
             addresses = download_urls[entry->id];
@@ -1264,6 +1394,7 @@ ModStore::ModStore(fs::path local_state, std::string title_id, std::string game_
                                    std::move(game_name))) {
     impl_->LoadRecordFile();
     const std::shared_ptr<Impl> impl = impl_;
+    impl->Post(impl->api_queue, [impl] { impl->LoadCnx(); });
     impl->Post(impl->api_queue, [impl] { impl->FindGame(); });
 }
 
@@ -1434,6 +1565,21 @@ void ModStore::RequestDetails(const std::shared_ptr<ModEntry>& entry) {
         if (!impl_->details_requested.insert(entry->id).second) {
             return;
         }
+    }
+    if (entry->id < 0) {
+        const std::lock_guard<std::mutex> lock(impl_->mutex);
+        ModDetails result;
+        result.loaded = true;
+        result.description =
+            "From the public CNX Updater index (nx-links). " +
+            std::string(entry->category == "Translation"
+                            ? "A community translation for this game."
+                            : "A community modification for this game.") +
+            " Credit goes to its author and to CNX Updater.";
+        const auto size = impl_->cnx_sizes.find(entry->id);
+        result.files.emplace_back("cnx.zip", size != impl_->cnx_sizes.end() ? size->second : 0);
+        impl_->details[entry->id] = std::move(result);
+        return;
     }
     const std::shared_ptr<Impl> impl = impl_;
     impl->Post(impl->api_queue, [impl, entry] {
