@@ -178,9 +178,20 @@ static uint64_t nxbox_shader_hash(const D3D12_SHADER_BYTECODE &shader) {
    return hash;
 }
 
+static bool nxbox_pso_quarantine_enabled() {
+   static const bool enabled = [] {
+      char value[4] = {};
+      return !(GetEnvironmentVariableA("NXBOX_PSO_QUARANTINE", value, sizeof(value)) == 1 &&
+               value[0] == '0');
+   }();
+   return enabled;
+}
+
 static bool nxbox_pso_quarantined(const D3D12_SHADER_BYTECODE &vs,
                                   const D3D12_SHADER_BYTECODE &ps) {
-   if (!vs.pShaderBytecode || !ps.pShaderBytecode)
+   /* NXBOX_PSO_QUARANTINE=0 lets the known device-removing pairs through, to test whether the
+    * skipped draw is what leaves the picture black. */
+   if (!nxbox_pso_quarantine_enabled() || !vs.pShaderBytecode || !ps.pShaderBytecode)
       return false;
    return (vs.BytecodeLength == 2492 && ps.BytecodeLength == 2192 &&
            nxbox_shader_hash(vs) == 0xfee40f01e55da8b0ull &&
