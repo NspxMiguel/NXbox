@@ -7,8 +7,11 @@
  * A lost query is retired with a zero result by the caller, never read back.
  */
 static bool nxbox_query_ready(ID3D12Device *dev, ID3D12Fence *fence,
-                              UINT64 target, bool wait) {
+                              UINT64 target, bool wait,
+                              bool (*stopped)() = nullptr) {
   for (;;) {
+    if (stopped && stopped())
+      return true; // Caller retires the unsubmitted query without mapping it.
     const HRESULT removed = dev->GetDeviceRemovedReason();
     const UINT64 completed = fence->GetCompletedValue();
     if (FAILED(removed) || completed == UINT64_MAX) {

@@ -262,7 +262,7 @@ int main(int argc, char **argv) {
             "    while (!closed.load", 1
         )[0]
         report_helpers = "    const auto read_report =" + report_helpers
-        guard = session.split("        char device_lost[2]{};", 1)[1].split(
+        guard = session.split("        char command_failure[2]{};", 1)[1].split(
             "        const int request =", 1
         )[0]
         self.compile_run(
@@ -275,7 +275,7 @@ void Diagnostic(const std::string &line) { diagnostic_log += line + "\n"; }
             + report_header
             + "\nusing namespace EdenXbox;\nvoid check() {\n"
             + report_helpers
-            + "char device_lost[2]{};\n"
+            + "char command_failure[2]{};\n"
             + guard
             + r"""
 }

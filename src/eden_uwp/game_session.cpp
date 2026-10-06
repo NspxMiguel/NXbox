@@ -640,10 +640,15 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
            !guest_exited.load(std::memory_order_acquire)) {
         // Mesa cannot recover a removed device. Leave through the existing shutdown/error path
         // instead of keeping a live guest behind a permanently frozen presentation surface.
+        char command_failure[2]{};
+        const bool commands_stopped =
+            GetEnvironmentVariableA("NXBOX_D3D12_COMMAND_FAILURE", command_failure,
+                                    sizeof(command_failure)) == 1 &&
+            command_failure[0] == '1';
         char device_lost[2]{};
-        if (GetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", device_lost, sizeof(device_lost)) ==
-                1 &&
-            device_lost[0] == '1') {
+        if (commands_stopped || (GetEnvironmentVariableA("NXBOX_D3D12_DEVICE_LOST", device_lost,
+                                                         sizeof(device_lost)) == 1 &&
+                                 device_lost[0] == '1')) {
             for (const char* name :
                  {"NXBOX_D3D12_DRED", "NXBOX_D3D12_DRED2", "NXBOX_D3D12_PSO_FAIL_FIRST",
                   "NXBOX_D3D12_FIRST_FAILURE", "NXBOX_D3D12_BATCH", "NXBOX_D3D12_SYNC_ERROR"}) {
@@ -652,7 +657,9 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             CollectPsoDxil(read_report, log_report);
             CollectBatchJournals(read_report, log_report);
             CollectDeviceApiRing(read_report, log_report);
-            throw std::runtime_error("D3D12 device removed; stopping the game");
+            throw std::runtime_error(commands_stopped
+                                         ? "D3D12 command recording failed; stopping the game"
+                                         : "D3D12 device removed; stopping the game");
         }
         const int request = lifecycle.request.exchange(Lifecycle::None, std::memory_order_acq_rel);
         if (request == Lifecycle::Suspend) {
@@ -694,13 +701,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             const auto stats = system.GetAndResetPerfStats();
             Diagnostic(fmt::format("GAME_PRESENT frames={} seconds={:.3f} fps={:.2f} "
                                    "game_fps={:.2f} system_fps={:.2f} "
-                                   "frametime_ms={:.2f} speed={:.1f}% memory={} "
+                                   "frametime_ms={:.2f} speed={:.1f}% memory={} memory_limit={} "
                                    "worst_gap_ms={:.0f} hitches={}",
                                    frames - measured_frames, elapsed,
                                    (frames - measured_frames) / elapsed, stats.average_game_fps,
                                    stats.system_fps, stats.frametime * 1000.0,
                                    stats.emulation_speed * 100.0,
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage(),
+                                   winrt::Windows::System::MemoryManager::AppMemoryUsageLimit(),
                                    worst_gap_ms, hitches));
             // The patched Mesa publishes its reports in environment variables (pipeline states,
             // root signatures, batch failures, device removal); log each one when it changes.
@@ -726,7 +734,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 }
                 static constexpr const char* extended_names[]{
                     "NXBOX_D3D12_PSO_FAIL_FIRST", "NXBOX_D3D12_PSO_FIX", "NXBOX_D3D12_PSO_DXIL",
-                    "NXBOX_D3D12_SYNC_ERROR"};
+                    "NXBOX_D3D12_SYNC_ERROR", "NXBOX_D3D12_HEAP_POLICY"};
                 static std::array<std::string, std::size(extended_names)> extended_last;
                 for (std::size_t i = 0; i < std::size(extended_names); ++i) {
                     collect(extended_names[i], extended_last[i]);

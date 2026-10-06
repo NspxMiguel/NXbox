@@ -97,6 +97,49 @@ int main() {
 """
         )
 
+    def check_heap_feature_gate(self, driver, temporary):
+        source = (driver / "d3d12_screen.cpp").read_text()
+        gate = (
+            "   ID3D12Device8 *dev8;"
+            + source.split("   ID3D12Device8 *dev8;", 1)[1].split(
+                "   screen->dev->QueryInterface(&screen->dev10);", 1
+            )[0]
+        )
+        runner = safety.MesaRenderSafetyTests()
+        runner.root = Path(temporary)
+        runner.compile_run(
+            r"""
+#include <cassert>
+#include <initializer_list>
+#define SUCCEEDED(hr) ((hr)>=0)
+struct ID3D12Device8 { unsigned releases=0; void Release() { ++releases; } };
+struct D3D12_FEATURE_DATA_D3D12_OPTIONS7 {};
+constexpr unsigned D3D12_FEATURE_D3D12_OPTIONS7=7;
+struct Device {
+ bool has_device8, has_options7; ID3D12Device8 version; unsigned queries=0;
+ int QueryInterface(ID3D12Device8 **out) { *out=&version; return has_device8 ? 0 : -1; }
+ int CheckFeatureSupport(unsigned feature,void *,unsigned size) {
+  assert(feature==7 && size==sizeof(D3D12_FEATURE_DATA_D3D12_OPTIONS7));
+  ++queries; return has_options7 ? 0 : -1;
+ }
+};
+struct Screen { Device *dev; bool support_create_not_resident=false; };
+void check(Screen *screen) {
+"""
+            + gate
+            + r"""
+}
+int main() {
+ for(bool device8:{false,true}) for(bool options7:{false,true}) {
+  Device dev{device8,options7,{}}; Screen screen{&dev}; check(&screen);
+  assert(screen.support_create_not_resident==(device8 && options7));
+  assert(dev.queries==(device8 ? 1u : 0u));
+  assert(dev.version.releases==(device8 ? 1u : 0u));
+ }
+}
+"""
+        )
+
     @unittest.skipUnless(SOURCE.is_dir(), "Set NXBOX_MESA_SRC or provide /tmp/mesa-pin")
     def test_pristine_chain_and_repeat_rejection(self):
         environment = os.environ.copy()
@@ -127,6 +170,21 @@ int main() {
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 driver = root / "src/gallium/drivers/d3d12"
                 resource = (driver / "d3d12_resource.cpp").read_text()
+                self.assertEqual(
+                    resource.count(
+                        "nxbox_heap_properties(screen->architecture, D3D12_HEAP_TYPE_DEFAULT)"
+                    ),
+                    2,
+                )
+                self.assertNotIn("GetCustomHeapProperties", resource)
+                bufmgr = (driver / "d3d12_bufmgr.cpp").read_text()
+                self.assertIn("nxbox_heap_properties(screen->architecture, heap_type)", bufmgr)
+                screen = (driver / "d3d12_screen.cpp").read_text()
+                self.assertIn("D3D12_FEATURE_ARCHITECTURE,", screen)
+                self.assertIn("D3D12_FEATURE_D3D12_OPTIONS7, &nxbox_options7", screen)
+                self.assertIn(
+                    "return nxbox_command_stopped();", (driver / "nxbox_sync_batch.h").read_text()
+                )
                 self.assertIn("desc.Width = ALIGN(desc.Width, util_format_get_blockwidth", resource)
                 self.assertIn("nxbox_bc_copy_end", (driver / "nxbox_sync_batch.h").read_text())
                 context = (driver / "d3d12_context.cpp").read_text()
@@ -166,6 +224,7 @@ int main() {
                     lifetime.index("report(before, hr, after);"),
                     lifetime.index("nxbox_pso_sample(dev, kind, hr"),
                 )
+                self.check_heap_feature_gate(driver, temporary)
                 self.check_residency_batches(driver, temporary)
                 inventory = json.loads((driver / "nxbox_api_inventory.json").read_text())
                 self.assertEqual(sum(item["api"] == "ExecuteCommandLists" for item in inventory), 4)

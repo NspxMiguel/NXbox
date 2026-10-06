@@ -81,6 +81,7 @@ def patch(root: Path) -> None:
     patch_render_safety(root)
     patch_invalid_commands(root)
     patch_first_bad_batch(root)
+    patch_heap_policy(root)
     patch_device_api_ring(root)
 
 
@@ -1486,6 +1487,10 @@ def patch_sync_batch(root: Path) -> None:
     if target.exists():
         raise RuntimeError("Pinned Mesa sync batch helper already exists")
     helper = Path(__file__).with_name("mesa_sync_batch.h").read_text()
+    helper = helper.replace(
+        "  static std::atomic<bool> stopped{false};\n  return stopped;",
+        "  return nxbox_command_stopped();",
+    )
     for name in (*calls, "d3d12_batch.cpp"):
         anchor = '#include "d3d12_context.h"\n'
         replace(name, anchor, anchor + '#include "nxbox_sync_batch.h"\n')
@@ -1657,6 +1662,8 @@ def patch_batch_reuse(root: Path) -> None:
         batch,
         anchor,
         r"""   auto screen = d3d12_screen(ctx->base.screen);
+   if (nxbox_command_stopped().load() && SUCCEEDED(screen->dev->GetDeviceRemovedReason()))
+      return false; // Retain resources referenced by the poisoned command list.
    if (ctx->nxbox_unfenced_batches[batch - ctx->batches]) {
       const HRESULT removed = screen->dev->GetDeviceRemovedReason();
       if (SUCCEEDED(removed))
@@ -1836,12 +1843,13 @@ def patch_render_safety(root: Path) -> None:
    }
 
    return true;""",
-        """   return nxbox_query_ready(screen->dev, screen->fence, query->fence_value, wait);""",
+        """   return nxbox_query_ready(screen->dev, screen->fence, query->fence_value, wait,
+                            [] { return nxbox_command_stopped().load(); });""",
     )
     replace(
         "d3d12_query.cpp",
         "   return accumulate_result_cpu(ctx, query, result);",
-        """   if (nxbox_device_lost.load(std::memory_order_acquire)) {
+        """   if (nxbox_device_lost.load(std::memory_order_acquire) || nxbox_command_stopped().load()) {
       memset(result, 0, sizeof(*result));
       return true; // Retire the query without mapping a dead-device readback resource.
    }
@@ -2149,6 +2157,57 @@ def instrument_api_calls(source: str, methods: list[str], name: str):
         source = source[:start] + replacement + source[end:]
         boundary = start
     return source, calls
+
+
+def patch_heap_policy(root: Path) -> None:
+    """Use abstract GPU heaps and feature-gated residency on the UWP build."""
+    driver = root / "src/gallium/drivers/d3d12"
+    sources = {
+        name: (driver / name).read_text()
+        for name in ("d3d12_resource.cpp", "d3d12_bufmgr.cpp", "d3d12_screen.cpp")
+    }
+
+    def replace(name, old, new, count=1):
+        if sources[name].count(old) != count:
+            raise RuntimeError(f"Pinned Mesa heap policy anchor mismatch in {name}: {old[:80]}")
+        sources[name] = sources[name].replace(old, new)
+
+    for name in sources:
+        anchor = '#include "d3d12_screen.h"'
+        replace(name, anchor, anchor + '\n#include "nxbox_heap_policy.h"')
+    replace(
+        "d3d12_resource.cpp",
+        "GetCustomHeapProperties(screen->dev, D3D12_HEAP_TYPE_DEFAULT)",
+        "nxbox_heap_properties(screen->architecture, D3D12_HEAP_TYPE_DEFAULT)",
+        2,
+    )
+    replace(
+        "d3d12_bufmgr.cpp",
+        "GetCustomHeapProperties(dev, heap_type)",
+        "nxbox_heap_properties(screen->architecture, heap_type)",
+    )
+    replace(
+        "d3d12_screen.cpp",
+        "      screen->support_create_not_resident = true;",
+        """      // Device8 plus OPTIONS7 success is a conservative runtime capability gate.
+      D3D12_FEATURE_DATA_D3D12_OPTIONS7 nxbox_options7{};
+      screen->support_create_not_resident = SUCCEEDED(screen->dev->CheckFeatureSupport(
+         D3D12_FEATURE_D3D12_OPTIONS7, &nxbox_options7, sizeof(nxbox_options7)));""",
+    )
+    anchor = "   static constexpr uint64_t known_good_warp_version"
+    replace(
+        "d3d12_screen.cpp",
+        anchor,
+        """   nxbox_report_heap_policy(screen->architecture, screen->support_create_not_resident);
+
+"""
+        + anchor,
+    )
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+    (driver / "nxbox_heap_policy.h").write_text(
+        Path(__file__).with_name("mesa_heap_policy.h").read_text()
+    )
 
 
 def patch_device_api_ring(root: Path) -> None:

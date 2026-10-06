@@ -21,6 +21,12 @@ inline bool nxbox_api_enabled() {
   }();
   return enabled;
 }
+// Shared with the batch guards. A failed Close/Reset is terminal even when
+// synchronous diagnostics are disabled; never record into the poisoned list.
+inline std::atomic<bool> &nxbox_command_stopped() {
+  static std::atomic<bool> stopped{false};
+  return stopped;
+}
 struct NxboxApiRing {
   static constexpr unsigned capacity = 256, line_size = 1024;
   struct Slot {
@@ -28,6 +34,8 @@ struct NxboxApiRing {
     std::atomic<char> text[line_size]{};
   } slots[capacity];
   std::atomic<uint64_t> next{0};
+  // Process lifetime creation totals, NOT live bytes or residency usage.
+  std::atomic<uint64_t> custom_created{0}, custom_bytes{0}, custom_unknown{0};
   // 0 = live, 1 = publishing, 2 = immutable committed capture.
   std::atomic<unsigned> captured{0};
 };
@@ -40,7 +48,7 @@ inline NxboxApiRing &nxbox_api_ring() {
 }
 inline void nxbox_api_record(ID3D12Device *dev, const char *call,
                              const char *site, const char *args, HRESULT result,
-                             HRESULT removed) {
+                             HRESULT removed, bool command_failure = false) {
   if (!nxbox_api_enabled())
     return;
   auto &ring = nxbox_api_ring();
@@ -50,10 +58,14 @@ inline void nxbox_api_record(ID3D12Device *dev, const char *call,
   char line[NxboxApiRing::line_size];
   snprintf(line, sizeof(line),
            "seq=%llu ms=%llu tid=%lu dev=%p call=%s site=%s hr=0x%08x "
-           "removed=0x%08x %s",
+           "removed=0x%08x %s custom_created=%llu custom_bytes=%llu "
+           "custom_unknown=%llu",
            (unsigned long long)seq, (unsigned long long)GetTickCount64(),
            (unsigned long)GetCurrentThreadId(), (void *)dev, call, site,
-           (unsigned)result, (unsigned)removed, args);
+           (unsigned)result, (unsigned)removed, args,
+           (unsigned long long)ring.custom_created.load(),
+           (unsigned long long)ring.custom_bytes.load(),
+           (unsigned long long)ring.custom_unknown.load());
   auto &slot = ring.slots[seq % NxboxApiRing::capacity];
   auto stamp = slot.stamp.load();
   // One attempt, no spinlock. A busy slot becomes an explicit gap on capture.
@@ -66,7 +78,8 @@ inline void nxbox_api_record(ID3D12Device *dev, const char *call,
     slot.stamp.store((seq + 1) * 2);
   }
   unsigned live = 0;
-  if (removed == S_OK || !ring.captured.compare_exchange_strong(live, 1))
+  if ((removed == S_OK && !command_failure) ||
+      !ring.captured.compare_exchange_strong(live, 1))
     return;
   // Freeze the last 256 reserved completions. Always preserve the winner's
   // full line separately, including if its slot was busy at wraparound.
@@ -99,9 +112,11 @@ inline void nxbox_api_record(ID3D12Device *dev, const char *call,
   char manifest[256];
   snprintf(manifest, sizeof(manifest),
            "parts=%u first_seq=%llu first_call=%s removed=0x%08x gaps=%u "
-           "attribution=first-observed-after-call",
+           "attribution=%s",
            (unsigned)(end - begin), (unsigned long long)seq, call,
-           (unsigned)removed, gaps);
+           (unsigned)removed, gaps,
+           command_failure ? "command-api-failure"
+                           : "first-observed-after-call");
   SetEnvironmentVariableA("NXBOX_D3D12_API_RING", manifest);
   ring.captured.store(2, std::memory_order_release);
 }
@@ -147,6 +162,8 @@ struct NxboxApiDevice {
 struct NxboxApiArgs {
   char text[640]{};
   unsigned used = 0;
+  bool custom = false, has_resource = false;
+  D3D12_RESOURCE_DESC allocation{};
   template <typename... A> void add(const char *fmt, A... args) {
     if (used >= sizeof(text) - 1)
       return;
@@ -168,6 +185,17 @@ struct NxboxApiArgs {
       add("%s", "resource=NULL ");
       return;
     }
+    has_resource = true;
+    allocation.Dimension = d->Dimension;
+    allocation.Alignment = d->Alignment;
+    allocation.Width = d->Width;
+    allocation.Height = d->Height;
+    allocation.DepthOrArraySize = d->DepthOrArraySize;
+    allocation.MipLevels = d->MipLevels;
+    allocation.Format = d->Format;
+    allocation.SampleDesc = d->SampleDesc;
+    allocation.Layout = d->Layout;
+    allocation.Flags = d->Flags;
     add("resource={size=%llux%ux%u format=%u flags=%x dimension=%u mips=%u "
         "samples=%u} ",
         (unsigned long long)d->Width, d->Height, (unsigned)d->DepthOrArraySize,
@@ -179,9 +207,11 @@ struct NxboxApiArgs {
   void value(const D3D12_RESOURCE_DESC1 *d) { resource(d); }
   void value(D3D12_RESOURCE_DESC1 *d) { resource(d); }
   void value(const D3D12_HEAP_PROPERTIES *p) {
-    if (p)
+    if (p) {
+      custom = p->Type == D3D12_HEAP_TYPE_CUSTOM;
       add("heap_type=%u cpu_page=%u pool=%u ", (unsigned)p->Type,
           (unsigned)p->CPUPageProperty, (unsigned)p->MemoryPoolPreference);
+    }
   }
   void value(D3D12_HEAP_PROPERTIES *p) {
     value((const D3D12_HEAP_PROPERTIES *)p);
@@ -215,7 +245,24 @@ template <typename T> struct NxboxApi {
   template <typename Call, typename... A>
   auto invoke(const char *name, Call call, const A &...args) {
     using Result = decltype(call());
-    if (!nxbox_api_enabled())
+    constexpr bool command_object =
+        std::is_base_of<ID3D12GraphicsCommandList, T>::value ||
+        std::is_base_of<ID3D12CommandAllocator, T>::value ||
+        std::is_base_of<ID3D12CommandQueue, T>::value;
+    if constexpr (command_object) {
+      // Signals/waits may still be needed to drain work submitted before
+      // failure.
+      if (nxbox_command_stopped().load() && strcmp(name, "Signal") &&
+          strcmp(name, "Wait")) {
+        if constexpr (std::is_void<Result>::value)
+          return;
+        else
+          return E_INVALIDARG;
+      }
+    }
+    const bool enabled = nxbox_api_enabled();
+    // Close/Reset failure handling is safety-critical, independent of the ring.
+    if (!enabled && strcmp(name, "Close") && strcmp(name, "Reset"))
       return call();
     NxboxApiDevice device(object);
     NxboxApiArgs details;
@@ -249,14 +296,61 @@ template <typename T> struct NxboxApi {
       else
         details.add("arg%u=", index);
       details.value(arg);
+      if constexpr (std::is_integral<std::decay_t<decltype(arg)>>::value ||
+                    std::is_enum<std::decay_t<decltype(arg)>>::value) {
+        if (label && !strcmp(label, "heap_flags"))
+          details.add("heap_flags_hex=0x%x not_resident=%u not_zeroed=%u ",
+                      (unsigned)arg, ((unsigned)arg & 0x800) != 0,
+                      ((unsigned)arg & 0x1000) != 0);
+      }
       ++index;
     };
     (argument(args), ...);
+    UINT64 custom_size = UINT64_MAX;
+    const bool custom_commit = enabled && details.custom &&
+                               details.has_resource &&
+                               !strncmp(name, "CreateCommittedResource", 23);
+    if (custom_commit && device.dev) {
+#if defined(_WIN32) && !defined(_MSC_VER)
+      D3D12_RESOURCE_ALLOCATION_INFO info{};
+      device.dev->GetResourceAllocationInfo(&info, 0, 1, &details.allocation);
+#else
+      const auto info =
+          device.dev->GetResourceAllocationInfo(0, 1, &details.allocation);
+#endif
+      custom_size = info.SizeInBytes;
+      details.add("allocation_bytes=%llu ", (unsigned long long)custom_size);
+    }
     auto finish = [&](HRESULT result) {
+      const bool command_failure =
+          command_object && result < 0 &&
+          (!strcmp(name, "Close") || !strcmp(name, "Reset"));
+      const bool first_command_failure =
+          command_failure && !nxbox_command_stopped().exchange(true);
+      if (custom_commit && result == S_OK) {
+        auto &ring = nxbox_api_ring();
+        ++ring.custom_created;
+        if (custom_size == UINT64_MAX)
+          ++ring.custom_unknown;
+        else
+          ring.custom_bytes.fetch_add(custom_size);
+      }
       if (!device.dev)
         return;
       const HRESULT removed = device.dev->GetDeviceRemovedReason();
-      nxbox_api_record(device.dev, name, site, details.text, result, removed);
+      nxbox_api_record(device.dev, name, site, details.text, result, removed,
+                       command_failure);
+      if (first_command_failure) {
+        while (nxbox_api_ring().captured.load(std::memory_order_acquire) == 1)
+          Sleep(0);
+        char failure[192];
+        snprintf(failure, sizeof(failure),
+                 "call=%s site=%s hr=0x%08x removed=0x%08x; recording stopped",
+                 name, site, (unsigned)result, (unsigned)removed);
+        SetEnvironmentVariableA("NXBOX_D3D12_SYNC_ERROR", failure);
+        // Publish only after the ring manifest, so the frontend can drain it.
+        SetEnvironmentVariableA("NXBOX_D3D12_COMMAND_FAILURE", "1");
+      }
       nxbox_dred_capture(device.dev, removed, name, nullptr);
     };
     if constexpr (std::is_void<Result>::value) {

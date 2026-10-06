@@ -34,7 +34,9 @@ void SetEnvironmentVariableA(const char *name,const char *value) {
 uint64_t GetTickCount64() { static std::atomic<uint64_t> tick{0}; return ++tick; }
 unsigned long GetCurrentThreadId() { return std::hash<std::thread::id>{}(std::this_thread::get_id()); }
 void Sleep(unsigned) { std::this_thread::yield(); }
+constexpr unsigned D3D12_HEAP_TYPE_CUSTOM=4;
 struct D3D12_RESOURCE_DESC {
+ unsigned Alignment=0, Layout=0;
  uint64_t Width=4096; unsigned Height=1, DepthOrArraySize=1, Format=28, Flags=4, Dimension=2, MipLevels=1;
  struct { unsigned Count=1; } SampleDesc;
 };
@@ -45,6 +47,8 @@ struct D3D12_DESCRIPTOR_HEAP_DESC { unsigned NumDescriptors=512, Type=1, Flags=1
 struct D3D12_GPU_DESCRIPTOR_HANDLE { uint64_t ptr; };
 struct D3D12_CPU_DESCRIPTOR_HANDLE { uint64_t ptr; };
 struct ID3D12Device {
+ struct AllocationInfo { uint64_t SizeInBytes; };
+ AllocationInfo GetResourceAllocationInfo(unsigned,unsigned,const D3D12_RESOURCE_DESC *) { return {65536}; }
  HRESULT removed=0; unsigned checks=0, calls=0, refs=1;
  HRESULT GetDeviceRemovedReason() { ++checks; return removed; }
  void Release() { --refs; }
@@ -53,6 +57,9 @@ struct ID3D12Device {
 };
 struct ID3D12Resource { D3D12_RESOURCE_DESC desc; auto GetDesc() { return desc; } };
 struct ID3D12DeviceChild {};
+struct ID3D12GraphicsCommandList : ID3D12DeviceChild {};
+struct ID3D12CommandAllocator : ID3D12DeviceChild {};
+struct ID3D12CommandQueue : ID3D12DeviceChild {};
 struct Queue : ID3D12DeviceChild {
  explicit Queue(ID3D12Device *d) : dev(d) {}
  ID3D12Device *dev; unsigned calls=0;
@@ -176,6 +183,65 @@ int main() {
 """
         )
 
+    def test_failed_close_is_terminal_even_without_diagnostics(self):
+        self.compile_run(
+            self.code()
+            + r"""
+struct List : ID3D12GraphicsCommandList {
+ ID3D12Device *dev; unsigned calls=0;
+ HRESULT GetDevice(int,void **out) { *out=dev; ++dev->refs; return 0; }
+ HRESULT Close() { ++calls; return E_INVALIDARG; }
+ HRESULT Reset() { ++calls; return E_INVALIDARG; }
+ void DrawInstanced(unsigned,unsigned,unsigned,unsigned) { ++calls; }
+};
+int main(int argc,char **argv) {
+ assert(argc>=2); bool enabled=argv[1][0]=='1';
+ if(!enabled) env["NXBOX_SYNC_BATCH"]="0";
+ ID3D12Device dev; List list; list.dev=&dev;
+ const bool reset=argc>2;
+ auto api=nxbox_api(&list,"command:1");
+ assert((reset ? api.Reset() : api.Close())==E_INVALIDARG);
+ assert(nxbox_command_stopped());
+ assert(env["NXBOX_D3D12_COMMAND_FAILURE"]=="1");
+ nxbox_api(&list,"draw:2").DrawInstanced(3,1,0,0);
+ assert(nxbox_api(&list,"reset:3").Reset()==E_INVALIDARG);
+ assert(list.calls==1 && dev.refs==1);
+ if(enabled) {
+  assert(env["NXBOX_D3D12_API_FIRST"].find(reset ? "call=Reset" : "call=Close")!=std::string::npos);
+  assert(env["NXBOX_D3D12_API_FIRST"].find("removed=0x00000000")!=std::string::npos);
+  assert(env["NXBOX_D3D12_API_RING"].find("attribution=command-api-failure")!=std::string::npos);
+ } else assert(!env.count("NXBOX_D3D12_API_RING"));
+}
+""",
+            args=("1",),
+        )
+        subprocess.run([str(self.root / "test"), "0"], check=True, timeout=10)
+        subprocess.run([str(self.root / "test"), "1", "reset"], check=True, timeout=10)
+        subprocess.run([str(self.root / "test"), "0", "reset"], check=True, timeout=10)
+
+    def test_custom_creation_totals_ignore_failed_and_default_allocations(self):
+        mock = self.code().replace("return -9;", "return removed;")
+        self.compile_run(
+            mock
+            + r"""
+int main() {
+ ID3D12Device dev; D3D12_HEAP_PROPERTIES heap; D3D12_RESOURCE_DESC desc; void *out=nullptr;
+ auto create=[&] { return nxbox_api(&dev,"alloc:1").CreateCommittedResource(&heap,2048,&desc,0,nullptr,IID_PPV_ARGS(&out)); };
+ create(); assert(nxbox_api_ring().custom_created==0);
+ heap.Type=D3D12_HEAP_TYPE_CUSTOM; heap.CPUPageProperty=2; heap.MemoryPoolPreference=1;
+ for(unsigned i=0;i<300;++i) assert(create()==0);
+ assert(nxbox_api_ring().custom_created==300 && nxbox_api_ring().custom_bytes==300*65536);
+ dev.removed=-9; assert(create()==-9);
+ assert(nxbox_api_ring().custom_created==300);
+ const auto &line=env["NXBOX_D3D12_API_FIRST"];
+ assert(line.find("custom_created=300 custom_bytes=19660800 custom_unknown=0")!=std::string::npos);
+ assert(line.find("heap_type=4 cpu_page=2 pool=1")!=std::string::npos);
+ assert(line.find("heap_flags_hex=0x800 not_resident=1 not_zeroed=0")!=std::string::npos);
+ assert(env["NXBOX_D3D12_API_RING"].find("parts=256")!=std::string::npos);
+}
+"""
+        )
+
     def test_terminal_loss_drains_all_entries_before_throw(self):
         session = (ROOT / "src/eden_uwp/game_session.cpp").read_text()
         helpers = (
@@ -184,9 +250,12 @@ int main() {
                 "    while (!closed.load", 1
             )[0]
         )
-        guard = session.split("        char device_lost[2]{};", 1)[1].split(
-            "        const int request =", 1
-        )[0]
+        guard = (
+            "        char command_failure[2]{};"
+            + session.split("        char command_failure[2]{};", 1)[1].split(
+                "        const int request =", 1
+            )[0]
+        )
         report = (ROOT / "src/eden_uwp/diagnostic_report.h").read_text().replace("#pragma once", "")
         self.compile_run(
             self.code()
@@ -199,7 +268,6 @@ using namespace EdenXbox;
 void poll() {
 """
             + helpers
-            + "char device_lost[2]{};\n"
             + guard
             + r"""
 }
@@ -210,6 +278,10 @@ int main() {
  try { poll(); assert(false); } catch(const std::runtime_error &) {}
  for(unsigned i=0;i<256;++i) assert(log_text.find("D3D12_API_RING seq="+std::to_string(i)+" ")!=std::string::npos);
  assert(log_text.find("D3D12_API_FIRST seq=255 ")!=std::string::npos);
+ env.erase("NXBOX_D3D12_DEVICE_LOST"); env["NXBOX_D3D12_COMMAND_FAILURE"]="1";
+ try { poll(); assert(false); } catch(const std::runtime_error &e) {
+  assert(std::string(e.what()).find("command recording failed")!=std::string::npos);
+ }
 }
 """
         )

@@ -60,7 +60,7 @@ class MesaRenderSafetyTests(unittest.TestCase):
             "    while (!closed.load", 1
         )[0]
         report_helpers = "    const auto read_report =" + report_helpers
-        guard = session.split("        char device_lost[2]{};", 1)[1].split(
+        guard = session.split("        char command_failure[2]{};", 1)[1].split(
             "        const int request =", 1
         )[0]
         self.compile_run(
@@ -80,7 +80,7 @@ void Diagnostic(const std::string &) {}
             + report_header
             + "\nusing namespace EdenXbox;\nvoid check() {\n"
             + report_helpers
-            + "char device_lost[2]{};\n"
+            + "char command_failure[2]{};\n"
             + guard
             + r"""
 }
@@ -231,6 +231,7 @@ void nxbox_dred_capture(ID3D12Device *, HRESULT hr, const char *) {assert(hr<0);
             + r"""
 int main() {
  ID3D12Device dev; ID3D12Fence fence;
+ assert(nxbox_query_ready(&dev,&fence,5,true,[] { return true; }) && ticks==0 && !lost);
  assert(!nxbox_query_ready(&dev,&fence,5,false) && ticks==0 && !lost);
  assert(!nxbox_query_ready(&dev,&fence,UINT64_MAX,true) && ticks==0);
  assert(nxbox_query_ready(&dev,&fence,5,true) && ticks==3 && lost);
