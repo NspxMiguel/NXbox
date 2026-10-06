@@ -34,7 +34,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
   <a href="docs/nxbox-port.md">Port notes</a>
 </p>
 
-<!-- Donation address: change it here and in "Support the project" only. Owner still has to confirm it. -->
+<!-- Donation address: change it here and in "Support the project" only. -->
 <p align="center">
   <a href="#support-the-project"><img alt="Support with Bitcoin" src="https://img.shields.io/badge/Bitcoin-support%20the%20project-F7931A?logo=bitcoin&logoColor=white"></a><br>
   <sub><code>bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg</code></sub>
@@ -168,11 +168,18 @@ ctest --test-dir build-port-tests -C Release --output-on-failure
 
 ## Support the project
 
-<img src="https://img.shields.io/badge/-%E2%82%BF-F7931A?logo=bitcoin&logoColor=white" alt="Bitcoin" height="20" align="top">
-Bitcoin: `bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg`
-
-Optional. It does not buy a release date or a specific game; it only helps pay for the tools that
-do the work.
+<table>
+  <tr>
+    <td><img src="docs/assets/bitcoin-qr.svg" alt="QR code for the NXbox Bitcoin address" width="132"></td>
+    <td>
+      <img src="https://img.shields.io/badge/-%E2%82%BF-F7931A?logo=bitcoin&logoColor=white" alt="Bitcoin" height="20" align="top">
+      <b>Bitcoin</b><br>
+      <code>bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg</code><br><br>
+      Optional. It does not buy a release date or a specific game; it only helps pay for the tools
+      that do the work.
+    </td>
+  </tr>
+</table>
 
 ## Credits and lineage
 
