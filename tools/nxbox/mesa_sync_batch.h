@@ -66,8 +66,47 @@ inline void nxbox_journal_add(NxboxBatchJournal *journal, const char *list,
   (fixup ? journal->fixup_entries : journal->entries).emplace_back(text);
 }
 
+/* DXGI BC1..BC5 and BC6H..BC7 (including typeless/sRGB variants) all use
+ * 4x4 blocks. Keep this independent of Gallium's logical texture dimensions.
+ */
+inline bool nxbox_is_bc(DXGI_FORMAT format) {
+  const unsigned f = (unsigned)format;
+  return (f >= 70 && f <= 84) || (f >= 94 && f <= 99);
+}
+
+struct NxboxCopyExtent {
+  DXGI_FORMAT format;
+  UINT width, height, depth;
+};
+
+inline NxboxCopyExtent
+nxbox_copy_extent(const D3D12_TEXTURE_COPY_LOCATION *loc) {
+  if (loc->Type != D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX) {
+    const auto &f = loc->PlacedFootprint.Footprint;
+    return {f.Format, f.Width, f.Height, f.Depth};
+  }
+  const auto d = loc->pResource->GetDesc();
+  const UINT mip = loc->SubresourceIndex % d.MipLevels;
+  auto minify = [mip](UINT n) { return n >> mip ? n >> mip : 1u; };
+  return {d.Format, minify((UINT)d.Width), minify(d.Height),
+          d.Dimension == 4 ? minify(d.DepthOrArraySize) : 1u};
+}
+
+/* Round a logical BC edge to its last block, then clip at physical mip edges.
+ * Smaller mips need not be multiples of four. Never round a mip's origin.
+ */
+inline UINT nxbox_bc_copy_end(UINT begin, UINT end, UINT source_size,
+                              UINT dest_begin, UINT dest_size) {
+  const UINT rounded = (end + 3u) & ~3u;
+  const UINT source_end = rounded < source_size ? rounded : source_size;
+  if (begin >= source_end || dest_begin >= dest_size)
+    return begin;
+  const UINT available = dest_size - dest_begin;
+  return source_end - begin < available ? source_end : begin + available;
+}
+
 /* A temporary wrapper preserves argument evaluation and unbraced if/else
- * semantics. The null-journal path only forwards the original call.
+ * semantics. Copy safety remains active with synchronous diagnostics disabled.
  */
 struct NxboxJournalCommands {
   NxboxBatchJournal *journal;
@@ -150,6 +189,27 @@ struct NxboxJournalCommands {
   void CopyTextureRegion(const D3D12_TEXTURE_COPY_LOCATION *dst, UINT x, UINT y,
                          UINT z, const D3D12_TEXTURE_COPY_LOCATION *src,
                          const D3D12_BOX *box) {
+    D3D12_BOX aligned_box;
+    const auto source = nxbox_copy_extent(src);
+    const auto destination = nxbox_copy_extent(dst);
+    // Mixed compressed/uncompressed reinterpret copies use different units.
+    if (nxbox_is_bc(source.format) && nxbox_is_bc(destination.format)) {
+      aligned_box =
+          box ? *box
+              : D3D12_BOX{0, 0, 0, source.width, source.height, source.depth};
+      aligned_box.right = nxbox_bc_copy_end(aligned_box.left, aligned_box.right,
+                                            source.width, x, destination.width);
+      aligned_box.bottom =
+          nxbox_bc_copy_end(aligned_box.top, aligned_box.bottom, source.height,
+                            y, destination.height);
+      if (aligned_box.right <= aligned_box.left ||
+          aligned_box.bottom <= aligned_box.top ||
+          (aligned_box.left | aligned_box.top | x | y) % 4 != 0) {
+        nxbox_journal_add(journal, list, "BC_COPY_REJECTED unaligned-or-empty");
+        return;
+      }
+      box = &aligned_box;
+    }
     if (journal) {
       char d[144], s[144], b[96];
       location(d, sizeof(d), dst);

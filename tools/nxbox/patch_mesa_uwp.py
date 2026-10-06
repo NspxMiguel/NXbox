@@ -80,6 +80,7 @@ def patch(root: Path) -> None:
     patch_batch_reuse(root)
     patch_render_safety(root)
     patch_invalid_commands(root)
+    patch_first_bad_batch(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -1495,7 +1496,7 @@ def patch_sync_batch(root: Path) -> None:
     replace(
         file,
         "fence_target=%llu fence_ok=%u",
-        "fence_target=%llu fence_present=%u sync=%u journal=3",
+        "fence_target=%llu fence_present=%u sync=%u journal=4",
     )
     replace(
         file,
@@ -1916,6 +1917,124 @@ def patch_invalid_commands(root: Path) -> None:
         "d3d12_blit.cpp",
         "psrc_box->x == 0 && psrc_box->y == 0 && psrc_box->z == 0",
         "psrc_box->x == 0 && psrc_box->y == 0 && src_z == 0",
+    )
+    for name, source in sources.items():
+        (driver / name).write_text(source)
+
+
+def patch_first_bad_batch(root: Path) -> None:
+    """Align BC allocations, serialize texture feedback, and validate RTV views."""
+    driver = root / "src/gallium/drivers/d3d12"
+    names = (
+        "d3d12_resource.cpp",
+        "d3d12_context.cpp",
+        "d3d12_surface.cpp",
+        "d3d12_surface.h",
+        "d3d12_draw.cpp",
+    )
+    sources = {name: (driver / name).read_text() for name in names}
+
+    def replace(name: str, old: str, new: str) -> None:
+        if sources[name].count(old) != 1:
+            raise RuntimeError(
+                f"Pinned Mesa first bad batch anchor mismatch in {name}: {old[:100]}"
+            )
+        sources[name] = sources[name].replace(old, new)
+
+    # Keep pipe_resource/GL dimensions unchanged. Only the physical allocation
+    # is padded; the common CopyTextureRegion wrapper handles uploads, readbacks
+    # and blits using the actual subresource dimensions (including small mips).
+    replace(
+        "d3d12_resource.cpp",
+        "   desc.Height = templ->height0;",
+        """   desc.Height = templ->height0;
+   if (util_format_is_compressed(templ->format)) {
+      desc.Width = ALIGN(desc.Width, util_format_get_blockwidth(templ->format));
+      desc.Height = ALIGN(desc.Height, util_format_get_blockheight(templ->format));
+   }""",
+    )
+    # A null/null aliasing barrier was being used as a global texture feedback
+    # flush, not to activate an aliased allocation. Preserve ordering with an
+    # explicit submission/completion boundary, even when NXBOX_SYNC_BATCH=0.
+    replace(
+        "d3d12_context.cpp",
+        """   /* D3D doesn't really have an equivalent in the legacy barrier model. When using enhanced barriers,
+    * this could be a more specific global barrier. But for now, just flush the world with an aliasing barrier. */
+   D3D12_RESOURCE_BARRIER aliasingBarrier;
+   aliasingBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+   aliasingBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+   aliasingBarrier.Aliasing.pResourceBefore = nullptr;
+   aliasingBarrier.Aliasing.pResourceAfter = nullptr;
+   nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).ResourceBarrier(1, &aliasingBarrier);""",
+        """   nxbox_journal_add(ctx->nxbox_journal, "main", "TEXTURE_BARRIER submit-and-wait");
+   d3d12_flush_cmdlist_and_wait(ctx);""",
+    )
+    # NULL is explicitly legal for a global UAV barrier. Keep the image/SSBO
+    # dependency; removing it based on current bindings misses earlier writes.
+    replace(
+        "d3d12_context.cpp",
+        "      D3D12_RESOURCE_BARRIER uavBarrier;",
+        "      D3D12_RESOURCE_BARRIER uavBarrier = {};",
+    )
+    replace(
+        "d3d12_surface.h",
+        "   struct pipe_resource *rgba_texture;",
+        """   struct pipe_resource *rgba_texture;
+   unsigned nxbox_rtv_format;
+   unsigned nxbox_uint_rtv_format;""",
+    )
+    replace(
+        "d3d12_surface.cpp",
+        "   DXGI_FORMAT dxgi_format = d3d12_get_resource_rt_format(tpl->format);",
+        """   DXGI_FORMAT dxgi_format = d3d12_get_resource_rt_format(tpl->format);
+   surface->nxbox_rtv_format = (unsigned)dxgi_format;""",
+    )
+    replace(
+        "d3d12_surface.cpp",
+        "                     &surface->uint_rtv_handle, DXGI_FORMAT_R8G8B8A8_UINT);",
+        """                     &surface->uint_rtv_handle, DXGI_FORMAT_R8G8B8A8_UINT);
+      surface->nxbox_uint_rtv_format = (unsigned)DXGI_FORMAT_R8G8B8A8_UINT;""",
+    )
+    anchor = "   struct d3d12_rasterizer_state *rast = ctx->gfx_pipeline_state.rast;\n   if (rast->twoface_back) {"
+    replace(
+        "d3d12_draw.cpp",
+        anchor,
+        """   // Compare the PSO format with the format actually used to create the RTV.
+   // A nearby resource transition may refer to an SRV, not this attachment.
+   for (unsigned i = 0; i < ctx->fb.nr_cbufs; ++i) {
+      if (!ctx->fb.cbufs[i]) continue;
+      struct d3d12_surface *surface = d3d12_surface(ctx->fb.cbufs[i]);
+      const unsigned view = conversion_modes[i] == D3D12_SURFACE_CONVERSION_NONE ?
+         surface->nxbox_rtv_format : surface->nxbox_uint_rtv_format;
+      const unsigned expected = (unsigned)d3d12_rtv_format(ctx, i);
+      if (view != expected) {
+         nxbox_journal_add(ctx->nxbox_journal, "main",
+                           "RTV_FORMAT_MISMATCH slot=%u pso=%u view=%u draw-skipped", i, expected, view);
+         debug_printf("NXBOX RTV_FORMAT_MISMATCH slot=%u pso=%u view=%u draw-skipped\\n", i, expected, view);
+         return;
+      }
+   }
+
+"""
+        + anchor,
+    )
+    replace(
+        "d3d12_draw.cpp",
+        """            (unsigned)(conversion_modes[i] == D3D12_SURFACE_CONVERSION_NONE ?
+               d3d12_get_resource_rt_format(ctx->fb.cbufs[i]->format) : DXGI_FORMAT_R8G8B8A8_UINT) : 0;""",
+        """            (conversion_modes[i] == D3D12_SURFACE_CONVERSION_NONE ?
+               d3d12_surface(ctx->fb.cbufs[i])->nxbox_rtv_format :
+               d3d12_surface(ctx->fb.cbufs[i])->nxbox_uint_rtv_format) : 0;
+         if (i < ctx->fb.nr_cbufs && ctx->fb.cbufs[i]) {
+            struct d3d12_surface *surface = d3d12_surface(ctx->fb.cbufs[i]);
+            struct pipe_resource *texture = conversion_modes[i] == D3D12_SURFACE_CONVERSION_BGRA_UINT ?
+               surface->rgba_texture : surface->base.texture;
+            char resource[192];
+            NxboxJournalCommands::resource(resource, sizeof(resource),
+               d3d12_resource_resource(d3d12_resource(texture)));
+            nxbox_journal_add(ctx->nxbox_journal, "main",
+                              "RTV_BIND slot=%u view=%u res=%s", i, rtv[i], resource);
+         }""",
     )
     for name, source in sources.items():
         (driver / name).write_text(source)
