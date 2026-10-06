@@ -97,6 +97,74 @@ int main() {
 """
         )
 
+    def check_resolve_layers(self, driver, temporary):
+        source = (driver / "d3d12_blit.cpp").read_text()
+        resolve = (
+            "static bool\nresolve_supported"
+            + source.split("static bool\nresolve_supported", 1)[1].split(
+                "static bool\nformats_are_copy_compatible", 1
+            )[0]
+        )
+        runner = safety.MesaRenderSafetyTests()
+        runner.root = Path(temporary)
+        runner.compile_run(
+            r"""
+#include <cassert>
+#include <vector>
+#include <algorithm>
+using DXGI_FORMAT=unsigned;
+constexpr int PIPE_TEXTURE_3D=3, PIPE_MASK_Z=1, PIPE_TEX_FILTER_NEAREST=0;
+constexpr int D3D12_RESOURCE_STATE_RESOLVE_SOURCE=0, D3D12_RESOURCE_STATE_RESOLVE_DEST=1;
+constexpr int D3D12_TRANSITION_FLAG_INVALIDATE_BINDINGS=0;
+struct pipe_resource { unsigned nr_samples=1,last_level=0,array_size=8,width0=64,height0=64; int format=0,target=2; };
+struct d3d12_resource { struct { pipe_resource b; } base; unsigned dxgi_format=28; };
+struct d3d12_resource *d3d12_resource(pipe_resource *r) { return reinterpret_cast<struct d3d12_resource *>(r); }
+struct Box { int x=0,y=0,z=0,width=64,height=64,depth=1; };
+struct pipe_blit_info {
+ struct { pipe_resource *resource=nullptr; int format=0; unsigned level=0; Box box; } src,dst;
+ unsigned mask=15,filter=0,num_window_rectangles=0; bool scissor_enable=false,alpha_blend=false;
+};
+bool is_resolve(const pipe_blit_info *i) { return i->src.resource->nr_samples>1 && i->dst.resource->nr_samples<=1; }
+bool util_format_is_depth_or_stencil(int) { return false; }
+unsigned util_format_get_mask(int) { return 15; }
+bool util_format_has_alpha1(int) { return false; }
+bool util_format_is_pure_integer(int) { return false; }
+unsigned u_minify(unsigned x,unsigned l) { return std::max(x>>l,1u); }
+struct Commands {
+ std::vector<unsigned> src,dst;
+ void ResolveSubresource(void *,unsigned d,void *,unsigned s,unsigned) { dst.push_back(d);src.push_back(s); }
+};
+struct d3d12_batch {};
+struct d3d12_context { int nxbox_journal=0; Commands *cmdlist; };
+d3d12_batch *d3d12_current_batch(d3d12_context *) { return nullptr; }
+Commands &nxbox_journal_commands(int,Commands *c) { return *c; }
+void d3d12_transition_resource_state(d3d12_context *,struct d3d12_resource *,int,int) {}
+void d3d12_apply_resource_states(d3d12_context *,bool) {}
+void d3d12_batch_reference_resource(d3d12_batch *,struct d3d12_resource *,bool) {}
+unsigned d3d12_get_resource_srv_format(int,int) { return 28; }
+void *d3d12_resource_resource(struct d3d12_resource *r) { return r; }
+"""
+            + resolve
+            + r"""
+int main() {
+ struct d3d12_resource src,dst;
+ src.base.b.nr_samples=4;
+ dst.base.b.last_level=3; dst.base.b.width0=dst.base.b.height0=128;
+ pipe_blit_info info; info.src.resource=&src.base.b;info.dst.resource=&dst.base.b;
+ info.src.box.z=2; info.dst.box.z=4; info.src.box.depth=info.dst.box.depth=2; info.dst.level=1;
+ assert(resolve_supported(&info));
+ Commands commands;d3d12_context ctx{0,&commands};blit_resolve(&ctx,&info);
+ assert((commands.src==std::vector<unsigned>{2,3}));
+ assert((commands.dst==std::vector<unsigned>{17,21}));
+ info.src.box.x=1;assert(!resolve_supported(&info));info.src.box.x=0;
+ info.dst.box.z=7;assert(!resolve_supported(&info));info.dst.box.z=4;
+ info.src.box.depth=0;assert(!resolve_supported(&info));info.src.box.depth=2;
+ info.dst.box.depth=1;assert(!resolve_supported(&info));info.dst.box.depth=2;
+ info.src.box.z=-1;assert(!resolve_supported(&info));
+}
+"""
+        )
+
     def check_heap_feature_gate(self, driver, temporary):
         source = (driver / "d3d12_screen.cpp").read_text()
         gate = (
@@ -224,6 +292,7 @@ int main() {
                     lifetime.index("report(before, hr, after);"),
                     lifetime.index("nxbox_pso_sample(dev, kind, hr"),
                 )
+                self.check_resolve_layers(driver, temporary)
                 self.check_heap_feature_gate(driver, temporary)
                 self.check_residency_batches(driver, temporary)
                 inventory = json.loads((driver / "nxbox_api_inventory.json").read_text())
@@ -254,7 +323,10 @@ int main() {
                     "CopyDescriptors",
                 ]
                 for path in driver.iterdir():
-                    if path.suffix not in (".cpp", ".h") or path.name == "nxbox_api_ring.h":
+                    if path.suffix not in (".cpp", ".h") or path.name in (
+                        "nxbox_api_ring.h",
+                        "nxbox_list_ring.h",
+                    ):
                         continue
                     source = path.read_text()
                     if path.suffix == ".cpp" and '#include "nxbox_api_ring.h"' in source:

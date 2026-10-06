@@ -243,9 +243,10 @@ struct NxboxJournalCommands {
           "ClearRenderTargetView view=%llu rgba=%g,%g,%g,%g rects=%u "
           "first=%ld,%ld,%ld,%ld",
           (unsigned long long)view.ptr, color[0], color[1], color[2], color[3],
-          count, count ? (long)rects[0].left : 0L,
-          count ? (long)rects[0].top : 0L, count ? (long)rects[0].right : 0L,
-          count ? (long)rects[0].bottom : 0L);
+          count, count && rects ? (long)rects[0].left : 0L,
+          count && rects ? (long)rects[0].top : 0L,
+          count && rects ? (long)rects[0].right : 0L,
+          count && rects ? (long)rects[0].bottom : 0L);
     commands->ClearRenderTargetView(view, color, count, rects);
   }
   void ClearDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE view,
@@ -258,9 +259,10 @@ struct NxboxJournalCommands {
           "ClearDepthStencilView view=%llu flags=%x depth=%g stencil=%u "
           "rects=%u first=%ld,%ld,%ld,%ld",
           (unsigned long long)view.ptr, (unsigned)flags, depth,
-          (unsigned)stencil, count, count ? (long)rects[0].left : 0L,
-          count ? (long)rects[0].top : 0L, count ? (long)rects[0].right : 0L,
-          count ? (long)rects[0].bottom : 0L);
+          (unsigned)stencil, count, count && rects ? (long)rects[0].left : 0L,
+          count && rects ? (long)rects[0].top : 0L,
+          count && rects ? (long)rects[0].right : 0L,
+          count && rects ? (long)rects[0].bottom : 0L);
     commands->ClearDepthStencilView(view, flags, depth, stencil, count, rects);
   }
   void ResolveSubresource(ID3D12Resource *dst, UINT dst_sub,

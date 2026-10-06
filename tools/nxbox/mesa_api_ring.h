@@ -239,30 +239,58 @@ struct NxboxApiArgs {
     add("cpu=%llu ", (unsigned long long)v.ptr);
   }
 };
+#ifndef NXBOX_API_RING_NO_LIST
+#include "nxbox_list_ring.h"
+#endif
 template <typename T> struct NxboxApi {
   T *object;
   const char *site;
   template <typename Call, typename... A>
   auto invoke(const char *name, Call call, const A &...args) {
     using Result = decltype(call());
+#ifndef NXBOX_API_RING_NO_LIST
+    constexpr bool list_object = std::is_base_of<ID3D12CommandList, T>::value;
+#else
+    constexpr bool list_object = false;
+#endif
     constexpr bool command_object =
-        std::is_base_of<ID3D12GraphicsCommandList, T>::value ||
+        list_object || std::is_base_of<ID3D12GraphicsCommandList, T>::value ||
         std::is_base_of<ID3D12CommandAllocator, T>::value ||
         std::is_base_of<ID3D12CommandQueue, T>::value;
     if constexpr (command_object) {
       // Signals/waits may still be needed to drain work submitted before
       // failure.
       if (nxbox_command_stopped().load() && strcmp(name, "Signal") &&
-          strcmp(name, "Wait")) {
+          strcmp(name, "Wait")
+#ifndef NXBOX_API_RING_NO_LIST
+          && !(list_object && !strcmp(name, "Close") &&
+               nxbox_env_flag("NXBOX_D3D12_DUMP_EVERY_CLOSE"))
+#endif
+      ) {
         if constexpr (std::is_void<Result>::value)
           return;
         else
           return E_INVALIDARG;
       }
     }
+#ifndef NXBOX_API_RING_NO_LIST
+    std::string list_args;
+    if constexpr (list_object) {
+      NxboxListArgs details(name);
+      details.collect(args...);
+      list_args = std::move(details.text);
+      NxboxListRef journal(object);
+      if (journal.p) {
+        std::lock_guard<std::mutex> lock(journal.p->mutex);
+        journal.p->record(site, name, list_args);
+      }
+    }
+#endif
     const bool enabled = nxbox_api_enabled();
     // Close/Reset failure handling is safety-critical, independent of the ring.
-    if (!enabled && strcmp(name, "Close") && strcmp(name, "Reset"))
+    if (!enabled && !list_object && strcmp(name, "Close") &&
+        strcmp(name, "Reset") && strncmp(name, "CreateCommandList", 17) &&
+        strcmp(name, "CreateDescriptorHeap"))
       return call();
     NxboxApiDevice device(object);
     NxboxApiArgs details;
@@ -322,11 +350,57 @@ template <typename T> struct NxboxApi {
       details.add("allocation_bytes=%llu ", (unsigned long long)custom_size);
     }
     auto finish = [&](HRESULT result) {
+#ifndef NXBOX_API_RING_NO_LIST
+      if constexpr (sizeof...(A) == 3) {
+        if (result >= 0 && !strcmp(name, "CreateDescriptorHeap")) {
+          const auto tuple = std::tie(args...);
+          const auto &output = std::get<2>(tuple);
+          if constexpr (std::is_pointer<std::decay_t<decltype(output)>>::value)
+            nxbox_heap_created(
+                device.dev,
+                output
+                    ? *reinterpret_cast<ID3D12DescriptorHeap *const *>(output)
+                    : nullptr);
+        }
+      }
+      if constexpr (sizeof...(A) == 6 || sizeof...(A) == 5) {
+        if (result >= 0 && !strncmp(name, "CreateCommandList", 17)) {
+          const auto tuple = std::tie(args...);
+          const auto &output = std::get<sizeof...(A) - 1>(tuple);
+          if constexpr (std::is_pointer<
+                            std::decay_t<decltype(output)>>::value) {
+            nxbox_list_created(
+                output ? *reinterpret_cast<IUnknown *const *>(output) : nullptr,
+                site, details.text);
+          }
+        }
+      }
+      if constexpr (list_object) {
+        if (!strcmp(name, "Reset") && result >= 0) {
+          NxboxListRef journal(object);
+          if (journal.p) {
+            std::lock_guard<std::mutex> lock(journal.p->mutex);
+            for (auto &entry : journal.p->entries)
+              entry.clear();
+            journal.p->next = 0;
+            ++journal.p->generation;
+            journal.p->record(site, name, list_args);
+          }
+        }
+      }
+#endif
       const bool command_failure =
           command_object && result < 0 &&
           (!strcmp(name, "Close") || !strcmp(name, "Reset"));
       const bool first_command_failure =
           command_failure && !nxbox_command_stopped().exchange(true);
+#ifndef NXBOX_API_RING_NO_LIST
+      if constexpr (list_object) {
+        if (command_failure && (first_command_failure ||
+                                nxbox_env_flag("NXBOX_D3D12_DUMP_EVERY_CLOSE")))
+          nxbox_list_failure(object, device.dev, name, site, result);
+      }
+#endif
       if (custom_commit && result == S_OK) {
         auto &ring = nxbox_api_ring();
         ++ring.custom_created;
@@ -335,6 +409,8 @@ template <typename T> struct NxboxApi {
         else
           ring.custom_bytes.fetch_add(custom_size);
       }
+      if (!enabled && strcmp(name, "Close") && strcmp(name, "Reset"))
+        return;
       if (!device.dev)
         return;
       const HRESULT removed = device.dev->GetDeviceRemovedReason();
@@ -368,6 +444,31 @@ template <typename T> struct NxboxApi {
         #name, [&]() { return object->name(std::forward<A>(args)...); },       \
         args...);                                                              \
   }
+  NXBOX_API_METHOD(IASetPrimitiveTopology)
+  NXBOX_API_METHOD(RSSetViewports)
+  NXBOX_API_METHOD(RSSetScissorRects)
+  NXBOX_API_METHOD(OMSetBlendFactor)
+  NXBOX_API_METHOD(OMSetStencilRef)
+  NXBOX_API_METHOD(OMSetFrontAndBackStencilRef)
+  NXBOX_API_METHOD(SetComputeRoot32BitConstant)
+  NXBOX_API_METHOD(SetGraphicsRoot32BitConstant)
+  NXBOX_API_METHOD(SetComputeRootConstantBufferView)
+  NXBOX_API_METHOD(SetGraphicsRootConstantBufferView)
+  NXBOX_API_METHOD(SetComputeRootShaderResourceView)
+  NXBOX_API_METHOD(SetGraphicsRootShaderResourceView)
+  NXBOX_API_METHOD(SetComputeRootUnorderedAccessView)
+  NXBOX_API_METHOD(SetGraphicsRootUnorderedAccessView)
+  NXBOX_API_METHOD(ClearUnorderedAccessViewUint)
+  NXBOX_API_METHOD(ClearUnorderedAccessViewFloat)
+  NXBOX_API_METHOD(DiscardResource)
+  NXBOX_API_METHOD(SetMarker)
+  NXBOX_API_METHOD(BeginEvent)
+  NXBOX_API_METHOD(EndEvent)
+  NXBOX_API_METHOD(CopyTiles)
+  NXBOX_API_METHOD(ResolveSubresourceRegion)
+  NXBOX_API_METHOD(SetSamplePositions)
+  NXBOX_API_METHOD(SetViewInstanceMask)
+  NXBOX_API_METHOD(SetProtectedResourceSession)
   NXBOX_API_METHOD(ExecuteCommandLists)
   NXBOX_API_METHOD(CreateCommittedResource)
   NXBOX_API_METHOD(CreateCommittedResource1)

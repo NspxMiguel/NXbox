@@ -106,10 +106,48 @@ void CollectBatchJournals(Read read, Emit emit) {
         }
     }
 }
+// Captures use disjoint immutable keys, so even five failures between polls
+// cannot overwrite an earlier list or a long InfoQueue description.
+template <typename Read, typename Emit> void CollectCommandListReports(Read read, Emit emit) {
+    for (const auto* key :
+         {"NXBOX_D3D12_DEBUG_STATUS", "NXBOX_D3D12_DEBUG_UNAVAILABLE", "NXBOX_D3D12_LIST_ERROR"}) {
+        const auto value = read(key);
+        if (!value.empty())
+            emit(key, value);
+    }
+    for (unsigned capture = 0; capture < 5; ++capture) {
+        const auto key = "NXBOX_D3D12_LIST_CAPTURE_" + std::to_string(capture);
+        const auto manifest = read(key.c_str());
+        if (manifest.empty())
+            continue;
+        unsigned id = 0, ring = 0, info = 0;
+        if (std::sscanf(manifest.c_str(), "capture=%u ring_parts=%u info_parts=%u", &id, &ring,
+                        &info) != 3 ||
+            id != capture) {
+            emit("NXBOX_D3D12_LIST_ERROR", "invalid manifest=" + key);
+            continue;
+        }
+        emit("NXBOX_D3D12_LIST_RING", manifest);
+        for (const bool queue : {false, true}) {
+            const auto prefix =
+                "NXBOX_D3D12_LIST_" + std::to_string(capture) + (queue ? "_INFO_" : "_RING_");
+            for (unsigned part = 0; part < (queue ? info : ring); ++part) {
+                const auto name = prefix + std::to_string(part);
+                const auto value = read(name.c_str());
+                if (value.empty())
+                    emit("NXBOX_D3D12_LIST_ERROR", "missing part=" + name);
+                else
+                    emit(queue ? "NXBOX_D3D12_INFOQUEUE" : "NXBOX_D3D12_LIST_RING", value);
+            }
+        }
+    }
+}
+
 // The manifest is written last, before the terminal device-loss notification.
 // Every entry uses the same prefix, so grep retains the complete ordered ring.
 template <typename Read, typename Emit>
 void CollectDeviceApiRing(Read read, Emit emit) {
+    CollectCommandListReports(read, emit);
     const auto manifest = read("NXBOX_D3D12_API_RING");
     if (manifest.empty()) {
         return;

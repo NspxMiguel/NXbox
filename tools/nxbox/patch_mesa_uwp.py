@@ -2376,6 +2376,85 @@ def patch_device_api_ring(root: Path) -> None:
    nxbox_api_capture(dev, removed, where);
    std::lock_guard<std::mutex> lock(nxbox_dred_mutex);""",
     )
+    replace(
+        "d3d12_screen.cpp",
+        "#ifndef DEBUG\n      if (d3d12_debug & D3D12_DEBUG_DEBUG_LAYER)\n#endif",
+        "      if (!nxbox_debug_enabled() && (d3d12_debug & D3D12_DEBUG_DEBUG_LAYER))",
+    )
+    # ResolveSubresource addresses a single array layer. Mesa's old fast path
+    # passed only the mip and resolved layer zero even for array-layer blits.
+    replace(
+        "d3d12_blit.cpp",
+        "   // can only resolve full subresource\n",
+        """   // ResolveSubresource cannot address an offset rectangle or a 3D slice.
+   if (info->src.box.x || info->src.box.y || info->dst.box.x || info->dst.box.y ||
+       info->src.box.z < 0 || info->dst.box.z < 0 ||
+       info->src.box.depth <= 0 || info->src.box.depth != info->dst.box.depth ||
+       info->src.resource->target == PIPE_TEXTURE_3D ||
+       info->dst.resource->target == PIPE_TEXTURE_3D ||
+       (unsigned)info->src.box.z > info->src.resource->array_size ||
+       (unsigned)info->dst.box.z > info->dst.resource->array_size ||
+       (unsigned)info->src.box.depth > info->src.resource->array_size - (unsigned)info->src.box.z ||
+       (unsigned)info->dst.box.depth > info->dst.resource->array_size - (unsigned)info->dst.box.z)
+      return false;
+
+   // can only resolve full subresource
+""",
+    )
+    # The prior journal pass has replaced the receiver, not these arguments.
+    replace(
+        "d3d12_blit.cpp",
+        """   nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).ResolveSubresource(
+      d3d12_resource_resource(dst), info->dst.level,
+      d3d12_resource_resource(src), info->src.level,
+      dxgi_format);""",
+        """   for (int layer = 0; layer < info->src.box.depth; ++layer) {
+      const unsigned dst_sub = info->dst.level +
+         (info->dst.box.z + layer) * (dst->base.b.last_level + 1);
+      const unsigned src_sub = info->src.level +
+         (info->src.box.z + layer) * (src->base.b.last_level + 1);
+      nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).ResolveSubresource(
+         d3d12_resource_resource(dst), dst_sub,
+         d3d12_resource_resource(src), src_sub, dxgi_format);
+   }""",
+    )
+    # Debug-layer activation must precede device creation. It is never enabled
+    # reactively after a Close failure (doing so removes an existing device).
+    replace(
+        "d3d12_screen.cpp",
+        "ID3D12DeviceFactory *factory = try_create_device_factory(screen->d3d12_mod);",
+        "ID3D12DeviceFactory *factory = nxbox_debug_enabled() ? nullptr : try_create_device_factory(screen->d3d12_mod);",
+    )
+    replace(
+        "d3d12_screen.cpp",
+        "      nxbox_dred_enable(screen->d3d12_mod, factory);",
+        """      if (nxbox_debug_enabled()) {
+         typedef HRESULT(WINAPI *NxboxGetDebug)(REFIID, void **);
+         auto get_debug = (NxboxGetDebug)util_dl_get_proc_address(screen->d3d12_mod, "D3D12GetDebugInterface");
+         ID3D12Debug *debug = nullptr;
+         const HRESULT hr = get_debug ? get_debug(IID_PPV_ARGS(&debug)) : E_NOINTERFACE;
+         if (SUCCEEDED(hr) && debug) {
+            debug->EnableDebugLayer();
+            debug->Release();
+            SetEnvironmentVariableA("NXBOX_D3D12_DEBUG_STATUS", "enabled=1");
+         } else {
+            char text[96];
+            snprintf(text, sizeof(text), "hr=0x%08x stage=D3D12GetDebugInterface", (unsigned)hr);
+            SetEnvironmentVariableA("NXBOX_D3D12_DEBUG_UNAVAILABLE", text);
+         }
+      }
+      nxbox_dred_enable(screen->d3d12_mod, factory);""",
+    )
+    replace(
+        "d3d12_screen.cpp",
+        "      info_queue->PushStorageFilter(&NewFilter);",
+        "      if (!nxbox_debug_enabled())\n         info_queue->PushStorageFilter(&NewFilter);",
+    )
+    replace(
+        "d3d12_screen.cpp",
+        "   screen->adapter_luid = GetAdapterLuid(screen->dev);",
+        "   nxbox_infoqueue_setup(screen->dev);\n   screen->adapter_luid = GetAdapterLuid(screen->dev);",
+    )
     inventory = []
     for name, source in sources.items():
         if name == "nxbox_api_ring.h":
@@ -2402,6 +2481,9 @@ def patch_device_api_ring(root: Path) -> None:
     for name, source in sources.items():
         (driver / name).write_text(source)
     (driver / "nxbox_api_ring.h").write_text(helper)
+    (driver / "nxbox_list_ring.h").write_text(
+        Path(__file__).with_name("mesa_list_ring.h").read_text()
+    )
     (driver / "nxbox_api_inventory.json").write_text(
         json.dumps(sorted(inventory, key=lambda x: (x["file"], x["line"])), indent=2) + "\n"
     )

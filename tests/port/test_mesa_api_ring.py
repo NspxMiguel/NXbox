@@ -9,6 +9,7 @@ import test_mesa_render_safety as safety
 
 ROOT = Path(__file__).resolve().parents[2]
 MOCK = r"""
+#define NXBOX_API_RING_NO_LIST
 #include <cassert>
 #include <cstdint>
 #include <cstring>
