@@ -1522,10 +1522,17 @@ def patch_sync_batch(root: Path) -> None:
         {method for entries in calls.values() for method in entries} | {"CopyResource", "ExecuteBundle"}
     )
     pattern = re.compile(r"->\s*(?:" + "|".join(methods) + r")\s*\(")
-    for path in driver.glob("d3d12_*.cpp"):
+    copy_pattern = re.compile(r"->\s*(?:CopyTextureRegion|CopyBufferRegion|CopyResource)\s*\(")
+    for path in driver.iterdir():
+        if path.suffix not in (".cpp", ".c", ".h"):
+            continue
+        source = sources.get(path.name, path.read_text())
+        if copy_pattern.search(source):
+            raise RuntimeError(f"Pinned Mesa unnormalized copy in {path.name}")
+        if not path.name.startswith("d3d12_") or path.suffix != ".cpp":
+            continue
         if path.name.startswith("d3d12_video"):
             continue  # Separate video queues are not Gallium graphics batches.
-        source = sources.get(path.name, path.read_text())
         if pattern.search(source):
             raise RuntimeError(f"Pinned Mesa sync batch unjournaled command in {path.name}")
 
@@ -1969,6 +1976,7 @@ def patch_first_bad_batch(root: Path) -> None:
     driver = root / "src/gallium/drivers/d3d12"
     names = (
         "d3d12_resource.cpp",
+        "d3d12_blit.cpp",
         "d3d12_context.cpp",
         "d3d12_surface.cpp",
         "d3d12_surface.h",
@@ -1995,6 +2003,24 @@ def patch_first_bad_batch(root: Path) -> None:
       desc.Height = ALIGN(desc.Height, util_format_get_blockheight(templ->format));
    }""",
     )
+    # Uploads already use a NULL box and fill_buffer_location's block-aligned
+    # footprint. Readbacks and partial direct copies construct logical boxes;
+    # expand those edges here as well as in the final command wrapper.
+    for name, anchor, indent in (
+        ("d3d12_resource.cpp", "      src_box.back = start_box_z + depth;", "      "),
+        ("d3d12_blit.cpp", "         src_box.back = src_z + psrc_box->depth;", "         "),
+    ):
+        resource = "res" if name == "d3d12_resource.cpp" else "src"
+        replace(
+            name,
+            anchor,
+            anchor
+            + "\n"
+            + indent
+            + f"src_box.right = ALIGN(src_box.right, util_format_get_blockwidth({resource}->base.b.format));\n"
+            + indent
+            + f"src_box.bottom = ALIGN(src_box.bottom, util_format_get_blockheight({resource}->base.b.format));",
+        )
     # A null/null aliasing barrier was being used as a global texture feedback
     # flush, not to activate an aliased allocation. Preserve ordering with an
     # explicit submission/completion boundary, even when NXBOX_SYNC_BATCH=0.

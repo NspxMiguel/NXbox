@@ -9,6 +9,14 @@ unsigned long long GetTickCount64();
 unsigned long GetCurrentThreadId();
 void Sleep(unsigned);
 #include "nxbox_api_ring.h"
+#include "nxbox_sync_batch.h"
+void check_bc_copy(ID3D12GraphicsCommandList *list,
+                   D3D12_TEXTURE_COPY_LOCATION *locations) {
+  D3D12_BOX tail{0, 0, 0, 2, 2, 1};
+  nxbox_journal_commands(nullptr, list)
+      .CopyTextureRegion(locations, 0, 0, 0, locations + 1, &tail);
+}
+
 void check(ID3D12GraphicsCommandList *list, ID3D12Device *dev,
            ID3D12Resource *res, ID3D12DescriptorHeap **heaps,
            D3D12_RESOURCE_BARRIER *barriers, D3D12_VIEWPORT *views,

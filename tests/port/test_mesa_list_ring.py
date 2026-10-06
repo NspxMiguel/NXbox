@@ -42,7 +42,7 @@ class MesaListRingTests(unittest.TestCase):
         )
         if not headers or not (headers / "directx/d3d12.h").is_file():
             self.skipTest("Set NXBOX_DIRECTX_HEADERS to DirectX-Headers include directory")
-        for name in ("api_ring", "list_ring"):
+        for name in ("api_ring", "list_ring", "sync_batch"):
             (self.root / f"nxbox_{name}.h").write_text(
                 (ROOT / f"tools/nxbox/mesa_{name}.h").read_text()
             )
@@ -179,6 +179,37 @@ int main() {
  assert(log.find("last-byte")!=std::string::npos);
  assert(log.find("capture=4")!=std::string::npos);
  delete a;
+}
+"""
+        )
+
+    def test_first_failed_close_keeps_error_and_corruption_with_list_ring(self):
+        self.compile_run(
+            self.code().replace(
+                "unsigned(index), 2, 3,", "873 + unsigned(index), unsigned(index), 3,"
+            )
+            + r"""
+int main() {
+ env["NXBOX_D3D12_DEBUG"]="1";
+ ID3D12Device dev; ID3D12InfoQueue queue; dev.queue=&queue;
+ queue.messages={"corruption", "unaligned BC source box", "warning retained"};
+ ID3D12GraphicsCommandList *list=nullptr;
+ nxbox_api(&dev,"create").CreateCommandList(0,0,nullptr,nullptr,IID_PPV_ARGS(&list));
+ nxbox_api(list,"before-error").DrawInstanced(3,1,0,0);
+ list->close_hr=E_INVALIDARG;
+ nxbox_api(list,"first-failure").Close();
+ nxbox_api(list,"later-failure").Close();
+ assert(env["NXBOX_D3D12_LIST_CAPTURES"]=="1");
+ std::string log;
+ EdenXbox::CollectCommandListReports(
+   [](const char *key){return env[key];},
+   [&](const char *,const std::string &value){log+=value;});
+ assert(log.find("site=before-error")!=std::string::npos);
+ assert(log.find("site=first-failure")!=std::string::npos);
+ assert(log.find("severity=0 category=3 description=corruption")!=std::string::npos);
+ assert(log.find("severity=1 category=3 description=unaligned BC source box")!=std::string::npos);
+ assert(log.find("severity=2 category=3 description=warning retained")!=std::string::npos);
+ delete list;
 }
 """
         )

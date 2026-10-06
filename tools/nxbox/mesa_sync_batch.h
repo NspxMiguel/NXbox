@@ -88,20 +88,29 @@ nxbox_copy_extent(const D3D12_TEXTURE_COPY_LOCATION *loc) {
   const auto d = loc->pResource->GetDesc();
   const UINT mip = loc->SubresourceIndex % d.MipLevels;
   auto minify = [mip](UINT n) { return n >> mip ? n >> mip : 1u; };
-  return {d.Format, minify((UINT)d.Width), minify(d.Height),
+  const UINT block = nxbox_is_bc(d.Format) ? 4u : 1u;
+  return {d.Format, (minify((UINT)d.Width) + block - 1) / block * block,
+          (minify(d.Height) + block - 1) / block * block,
           d.Dimension == 4 ? minify(d.DepthOrArraySize) : 1u};
 }
 
-/* Round a logical BC edge to its last block, then clip at physical mip edges.
- * Smaller mips need not be multiples of four. Never round a mip's origin.
+/* Round a logical edge to its last block, then clip in block units. Texture
+ * extents include the complete tail block; placed footprints remain bounds.
+ * Never round an origin: that would silently move the requested data.
  */
 inline UINT nxbox_bc_copy_end(UINT begin, UINT end, UINT source_size,
-                              UINT dest_begin, UINT dest_size) {
-  const UINT rounded = (end + 3u) & ~3u;
+                              UINT dest_begin, UINT dest_size,
+                              UINT source_block, UINT dest_block) {
+  if (end <= begin)
+    return begin;
+  const UINT64 rounded =
+      (UINT64(end) + source_block - 1) / source_block * source_block;
+  source_size = source_size / source_block * source_block;
   const UINT source_end = rounded < source_size ? rounded : source_size;
   if (begin >= source_end || dest_begin >= dest_size)
     return begin;
-  const UINT available = dest_size - dest_begin;
+  const UINT64 available =
+      UINT64((dest_size - dest_begin) / dest_block) * source_block;
   return source_end - begin < available ? source_end : begin + available;
 }
 
@@ -192,23 +201,36 @@ struct NxboxJournalCommands {
     D3D12_BOX aligned_box;
     const auto source = nxbox_copy_extent(src);
     const auto destination = nxbox_copy_extent(dst);
-    // Mixed compressed/uncompressed reinterpret copies use different units.
-    if (nxbox_is_bc(source.format) && nxbox_is_bc(destination.format)) {
+    if (nxbox_is_bc(source.format) || nxbox_is_bc(destination.format)) {
+      const UINT source_block = nxbox_is_bc(source.format) ? 4u : 1u;
+      const UINT dest_block = nxbox_is_bc(destination.format) ? 4u : 1u;
       aligned_box =
           box ? *box
               : D3D12_BOX{0, 0, 0, source.width, source.height, source.depth};
-      aligned_box.right = nxbox_bc_copy_end(aligned_box.left, aligned_box.right,
-                                            source.width, x, destination.width);
+      aligned_box.right =
+          nxbox_bc_copy_end(aligned_box.left, aligned_box.right, source.width,
+                            x, destination.width, source_block, dest_block);
       aligned_box.bottom =
           nxbox_bc_copy_end(aligned_box.top, aligned_box.bottom, source.height,
-                            y, destination.height);
+                            y, destination.height, source_block, dest_block);
+      aligned_box.back =
+          nxbox_bc_copy_end(aligned_box.front, aligned_box.back, source.depth,
+                            z, destination.depth, 1, 1);
       if (aligned_box.right <= aligned_box.left ||
           aligned_box.bottom <= aligned_box.top ||
-          (aligned_box.left | aligned_box.top | x | y) % 4 != 0) {
+          aligned_box.back <= aligned_box.front ||
+          (aligned_box.left | aligned_box.top) % source_block != 0 ||
+          (x | y) % dest_block != 0) {
         nxbox_journal_add(journal, list, "BC_COPY_REJECTED unaligned-or-empty");
         return;
       }
-      box = &aligned_box;
+      box = aligned_box.left == 0 && aligned_box.top == 0 &&
+                    aligned_box.front == 0 &&
+                    aligned_box.right == source.width &&
+                    aligned_box.bottom == source.height &&
+                    aligned_box.back == source.depth
+                ? nullptr
+                : &aligned_box;
     }
     if (journal) {
       char d[144], s[144], b[96];
