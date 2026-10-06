@@ -4,20 +4,41 @@ SPDX-FileCopyrightText: 2018 yuzu Emulator Project
 SPDX-License-Identifier: GPL-3.0-or-later
 -->
 
-![NXbox — Nintendo Switch to Xbox Series X](docs/assets/nxbox-banner.png)
+<p align="center">
+  <img src="docs/assets/nxbox-banner.png" alt="NXbox: Nintendo Switch to Xbox Series X" width="100%">
+</p>
 
-# NXbox
+<h1 align="center">NXbox</h1>
 
-**A Nintendo Switch emulator that runs natively on an Xbox Series X.** NXbox is a port of the
-[Eden](https://git.eden-emu.dev/eden-emu/eden) emulator to the Xbox's UWP sandbox: the Switch's
-ARM64 code runs through a JIT, and its graphics go through OpenGL on Direct3D 12.
+<p align="center">
+  <b>A Nintendo Switch emulator that runs natively on an Xbox Series X.</b><br>
+  A port of <a href="https://git.eden-emu.dev/eden-emu/eden">Eden</a> to the Xbox UWP sandbox: the Switch's ARM64 code runs
+  through a JIT, and its graphics go through OpenGL on Direct3D 12.
+</p>
 
-[Status](#where-it-stands) · [How it works](#how-it-works) · [Port notes](docs/nxbox-port.md) ·
-[Builds](https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml) ·
-[Credits](#credits-and-lineage) · [License](LICENSE.txt)
+<p align="center">
+  <a href="LICENSE.txt"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+  <img alt="Platform: Xbox Series X|S (Developer Mode)" src="https://img.shields.io/badge/platform-Xbox%20Series%20X%7CS-107C10?logo=xbox&logoColor=white">
+  <img alt="Status: experimental, no game playable yet" src="https://img.shields.io/badge/status-experimental%20%E2%80%94%20no%20game%20playable-orange">
+  <a href="https://github.com/NspxMiguel/NXbox/actions/workflows/build-nxbox.yml"><img alt="Build" src="https://img.shields.io/github/actions/workflow/status/NspxMiguel/NXbox/build-nxbox.yml?branch=main&label=build"></a>
+  <a href="https://github.com/NspxMiguel/NXbox/actions/workflows/port-tests.yml"><img alt="Port tests" src="https://img.shields.io/github/actions/workflow/status/NspxMiguel/NXbox/port-tests.yml?branch=main&label=port%20tests"></a>
+</p>
 
-**Support the project (Bitcoin):** `bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg`. Optional, and it
-does not buy a release date or a specific game; it only helps pay for the tools that do the work.
+<p align="center">
+  <a href="#where-it-stands">Status</a> ·
+  <a href="#what-to-expect">What to expect</a> ·
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#trying-it">Trying it</a> ·
+  <a href="#development">Development</a> ·
+  <a href="#credits-and-lineage">Credits</a> ·
+  <a href="docs/nxbox-port.md">Port notes</a>
+</p>
+
+<!-- Donation address: change it here and in "Support the project" only. Owner still has to confirm it. -->
+<p align="center">
+  <a href="#support-the-project"><img alt="Support with Bitcoin" src="https://img.shields.io/badge/Bitcoin-support%20the%20project-F7931A?logo=bitcoin&logoColor=white"></a><br>
+  <sub><code>bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg</code></sub>
+</p>
 
 <table>
   <tr>
@@ -58,7 +79,8 @@ Everything below was measured on a retail Xbox Series X in Developer Mode.
 | Input | Xbox controller, mapped to a Pro Controller |
 | Compatibility | No game is playable. Persona 5 Royal is the closest: it boots and reaches gameplay, with serious bugs. Breath of the Wild and Mario Kart 8 Deluxe boot and submit frames, but I have not confirmed that the picture is correct, and both lose the GPU after a few minutes. Super Mario 3D World boots, with menus and gameplay that do not render correctly |
 
-The hard parts so far, each found on the console and written up in the [port notes](docs/nxbox-port.md):
+<details>
+<summary><b>The hard parts so far</b>, each found on the console</summary>
 
 - **Black screen for weeks**: Mesa's D3D12 driver began a pipeline-statistics query twice, so every
   command list failed to close and no GPU work ever ran. A known-color readback self-test exposed it.
@@ -69,6 +91,10 @@ The hard parts so far, each found on the console and written up in the [port not
   under UWP.
 - **System starvation**: FFmpeg's default thread count starved the console's own services until the
   Device Portal stopped answering. It is now capped.
+
+Written up in the [port notes](docs/nxbox-port.md).
+
+</details>
 
 ## What to expect
 
@@ -139,6 +165,14 @@ cmake -S tests/port -B build-port-tests
 cmake --build build-port-tests --config Release --parallel 2
 ctest --test-dir build-port-tests -C Release --output-on-failure
 ```
+
+## Support the project
+
+<img src="https://img.shields.io/badge/-%E2%82%BF-F7931A?logo=bitcoin&logoColor=white" alt="Bitcoin" height="20" align="top">
+Bitcoin: `bc1qm64el0gp0kvk7zqhl89x0vkngu2skqxd26vpjg`
+
+Optional. It does not buy a release date or a specific game; it only helps pay for the tools that
+do the work.
 
 ## Credits and lineage
 
