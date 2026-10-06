@@ -2074,6 +2074,83 @@ def patch_first_bad_batch(root: Path) -> None:
         (driver / name).write_text(source)
 
 
+def instrument_api_calls(source: str, methods: list[str], name: str):
+    """Wrap complete postfix receivers without adding local identifiers.
+
+    Walk backwards across balanced calls/indexes and member access. Matching
+    only a receiver suffix silently turns a free wrapper into a member call.
+    Reject unsupported prefixes rather than publishing a partial receiver.
+    """
+    import re
+
+    token = re.compile(r"//[^\n]*|/\*[\s\S]*?\*/|\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'")
+    mask = token.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m[0]), source)
+    identifier = re.compile(r"[A-Za-z_]\w*$")
+
+    def receiver_start(end):
+        end = len(mask[:end].rstrip())
+        if not end:
+            raise RuntimeError(f"Missing D3D12 receiver in {name}")
+        if mask[end - 1] in ")]":
+            closing = mask[end - 1]
+            opening = "(" if closing == ")" else "["
+            depth, start = 1, end - 1
+            while depth and start:
+                start -= 1
+                if mask[start] == closing:
+                    depth += 1
+                elif mask[start] == opening:
+                    depth -= 1
+            if depth:
+                raise RuntimeError(f"Unbalanced D3D12 receiver in {name}")
+            # Calls/indexes extend a preceding postfix expression; grouping
+            # parentheses are already a complete primary expression.
+            prefix = mask[:start].rstrip()
+            if prefix and (prefix[-1].isalnum() or prefix[-1] in "_)]"):
+                return receiver_start(len(prefix))
+        else:
+            match = identifier.search(mask[:end])
+            if not match:
+                raise RuntimeError(f"Unrecognized D3D12 receiver in {name}")
+            start = match.start()
+        prefix = mask[:start].rstrip()
+        if prefix.endswith("->"):
+            return receiver_start(len(prefix) - 2)
+        if prefix.endswith("."):
+            return receiver_start(len(prefix) - 1)
+        if prefix.endswith(("::", ">", "*", "&")):
+            raise RuntimeError(f"Unsupported D3D12 receiver prefix in {name}: {prefix[-40:]}")
+        return start
+
+    pattern = re.compile(r"->(?P<api>" + "|".join(methods) + r")\s*\(")
+    calls = []
+    edits = []
+    for match in pattern.finditer(mask):
+        start = receiver_start(match.start())
+        obj = source[start : match.start()].rstrip()
+        line = source.count("\n", 0, start) + 1
+        method = match["api"]
+        calls.append({"file": name, "line": line, "api": method, "receiver": obj})
+        edits.append((start, match.end(), f'nxbox_api({obj}, "{name}:{line}").{method}('))
+        # NULL loses its null-pointer-constant semantics when forwarded.
+        end, depth = match.end(), 1
+        while depth:
+            if mask[end] == "(":
+                depth += 1
+            elif mask[end] == ")":
+                depth -= 1
+            end += 1
+        for null in re.finditer(r"\bNULL\b", mask[match.end() : end]):
+            edits.append((match.end() + null.start(), match.end() + null.end(), "nullptr"))
+    boundary = len(source)
+    for start, end, replacement in sorted(set(edits), reverse=True):
+        if end > boundary:
+            raise RuntimeError(f"Overlapping D3D12 instrumentation in {name}")
+        source = source[:start] + replacement + source[end:]
+        boundary = start
+    return source, calls
+
+
 def patch_device_api_ring(root: Path) -> None:
     """Instrument all matching calls, including video and generated helper headers.
 
@@ -2089,12 +2166,6 @@ def patch_device_api_ring(root: Path) -> None:
     methods = re.findall(r"NXBOX_API_METHOD\((\w+)\)", helper)
     methods.remove("name")
     methods.extend(("CopyBufferRegion", "CopyDescriptors"))
-    api = "|".join(methods)
-    token = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'')
-
-    def masked(source):
-        return token.sub(lambda m: "".join("\n" if c == "\n" else " " for c in m[0]), source)
-
     sources = {p.name: p.read_text() for p in driver.iterdir() if p.suffix in (".cpp", ".h")}
 
     def replace(name, old, new, count=1):
@@ -2246,41 +2317,13 @@ def patch_device_api_ring(root: Path) -> None:
    nxbox_api_capture(dev, removed, where);
    std::lock_guard<std::mutex> lock(nxbox_dred_mutex);""",
     )
-    # Member receivers in this pin include ComPtr and indexed video allocators.
-    receiver = r"[A-Za-z_]\w*(?:(?:->|\.)[A-Za-z_]\w*|\[[^]\n]+\]|\(\))*"
-    pattern = re.compile(rf"(?P<object>{receiver})->(?P<api>{api})\s*\(")
     inventory = []
     for name, source in sources.items():
         if name == "nxbox_api_ring.h":
             continue
-        mask = masked(source)
-        matches = list(pattern.finditer(mask))
-        expected = len(re.findall(rf"->(?:{api})\s*\(", mask))
-        if len(matches) != expected:
-            raise RuntimeError(f"Unrecognized D3D12 receiver in {name}")
-        for m in reversed(matches):
-            line = source.count("\n", 0, m.start()) + 1
-            obj, method = source[m.start("object") : m.end("object")], m["api"]
-            site = f"{name}:{line}"
-            inventory.append({"file": name, "line": line, "api": method, "receiver": obj})
-            # NULL loses its null-pointer-constant semantics in forwarding
-            # templates. In these APIs all NULL arguments are pointer values.
-            end, depth = m.end(), 1
-            while depth:
-                if mask[end] == "(":
-                    depth += 1
-                if mask[end] == ")":
-                    depth -= 1
-                end += 1
-            arguments = source[m.end() : end]
-            arguments = re.sub(r"\bNULL\b", "nullptr", arguments)
-            source = (
-                source[: m.start()]
-                + f'nxbox_api({obj}, "{site}").{method}('
-                + arguments
-                + source[end:]
-            )
-        if matches:
+        source, calls = instrument_api_calls(source, methods, name)
+        inventory.extend(calls)
+        if calls:
             if name.endswith(".cpp"):
                 # Some first headers (notably blit.h) contain only forward
                 # declarations. Import the COM types explicitly before the ring.
