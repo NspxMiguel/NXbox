@@ -67,6 +67,7 @@ def patch(root: Path) -> None:
     patch_format_cast_report(root)
     patch_draw(root)
     patch_null_pso(root)
+    patch_bisect_switches(root)
     patch_image_slot(root)
     patch_root_signature_report(root)
     patch_batch(root)
@@ -2554,14 +2555,16 @@ def patch_query_policy(root: Path) -> None:
         "static bool\n"
         "nxbox_soft_subquery(const struct d3d12_query *q, unsigned sub_query)\n"
         "{\n"
-        "   static int full = -1;\n"
-        "   if (full < 0) {\n"
-        "      const char *mode = getenv(\"NXBOX_D3D12_QUERIES\");\n"
-        "      full = mode && !strcmp(mode, \"full\");\n"
+        "   static int mode = -1; /* 0 safe, 1 full, 2 none */\n"
+        "   if (mode < 0) {\n"
+        "      const char *text = getenv(\"NXBOX_D3D12_QUERIES\");\n"
+        "      mode = text && !strcmp(text, \"full\") ? 1 : (text && !strcmp(text, \"none\") ? 2 : 0);\n"
         "   }\n"
-        "   if (full)\n"
+        "   if (mode == 1)\n"
         "      return false;\n"
         "   D3D12_QUERY_TYPE type = q->subqueries[sub_query].d3d12qtype;\n"
+        "   if (mode == 2)\n"
+        "      return type != D3D12_QUERY_TYPE_TIMESTAMP;\n"
         "   return type == D3D12_QUERY_TYPE_PIPELINE_STATISTICS ||\n"
         "          (type >= D3D12_QUERY_TYPE_SO_STATISTICS_STREAM0 &&\n"
         "           type <= D3D12_QUERY_TYPE_SO_STATISTICS_STREAM3);\n"
@@ -2572,6 +2575,10 @@ def patch_query_policy(root: Path) -> None:
         "   struct pipe_transfer *transfer = NULL;\n"
         "   if (nxbox_soft_subquery(q_parent, sub_query)) {\n"
         "      memset(result, 0, sizeof(*result));\n"
+        "      /* A software occlusion query reports one visible sample, so nothing is culled. */\n"
+        "      if (q_parent->subqueries[sub_query].d3d12qtype == D3D12_QUERY_TYPE_OCCLUSION ||\n"
+        "          q_parent->subqueries[sub_query].d3d12qtype == D3D12_QUERY_TYPE_BINARY_OCCLUSION)\n"
+        "         result->u64 = 1;\n"
         "      return true;\n"
         "   }\n",
     )
@@ -2582,6 +2589,51 @@ def patch_query_policy(root: Path) -> None:
         "      return false;\n",
     )
     path.write_text(source)
+
+
+def patch_bisect_switches(root: Path) -> None:
+    """Runtime switches that drop whole classes of GPU work, to bisect a device removal on the
+    console without rebuilding: NXBOX_SKIP_COMPUTE=1 drops dispatches and NXBOX_SKIP_SO=1 drops
+    draws that have stream-output targets bound. Both are off by default."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_draw.cpp"
+    source = path.read_text()
+    gfx_old = (
+        "   if (!ctx->current_gfx_pso) {\n"
+        "      if (index_buffer && dinfo->has_user_indices)\n"
+        "         pipe_resource_reference(&index_buffer, NULL);\n"
+        "      return;\n"
+        "   }\n"
+    )
+    gfx_new = gfx_old + (
+        "   if (ctx->gfx_pipeline_state.num_so_targets && nxbox_switch_on(\"NXBOX_SKIP_SO\")) {\n"
+        "      if (index_buffer && dinfo->has_user_indices)\n"
+        "         pipe_resource_reference(&index_buffer, NULL);\n"
+        "      return;\n"
+        "   }\n"
+    )
+    compute_old = (
+        "   if (!ctx->current_compute_pso)\n      return;\n"
+    )
+    compute_new = compute_old + (
+        "   if (nxbox_switch_on(\"NXBOX_SKIP_COMPUTE\"))\n      return;\n"
+    )
+    for old in (gfx_old, compute_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the bisect switch patch")
+    helper = (
+        "#include <stdlib.h>\n\n"
+        "static bool\n"
+        "nxbox_switch_on(const char *name)\n"
+        "{\n"
+        "   const char *value = getenv(name);\n"
+        "   return value && value[0] == '1';\n"
+        "}\n\n"
+    )
+    source = source.replace(gfx_old, gfx_new).replace(compute_old, compute_new)
+    anchor = '#include "util/u_math.h"\n'
+    if source.count(anchor) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the bisect helper anchor")
+    path.write_text(source.replace(anchor, anchor + "\n" + helper.rstrip("\n") + "\n"))
 
 
 if __name__ == "__main__":
