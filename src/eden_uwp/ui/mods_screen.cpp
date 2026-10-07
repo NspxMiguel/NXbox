@@ -80,7 +80,8 @@ constexpr float kSheetLabelWidth = 240.0f;
 
 constexpr auto kToastDuration = std::chrono::milliseconds(2600);
 
-constexpr int kChipCount = 5;
+constexpr int kChipCount = 6;
+constexpr int kTranslationsChip = 4;
 
 const wchar_t* ChipLabel(int chip) {
     switch (chip) {
@@ -92,6 +93,8 @@ const wchar_t* ChipLabel(int chip) {
         return Tr(Text::ChipInterface);
     case 3:
         return Tr(Text::ChipGameplay);
+    case 4:
+        return Tr(Text::ChipTranslations);
     default:
         return Tr(Text::ChipInstalled);
     }
@@ -107,6 +110,8 @@ ModFilter FilterOf(int chip) {
         return ModFilter::Interface;
     case 3:
         return ModFilter::Gameplay;
+    case 4:
+        return ModFilter::Translations;
     default:
         return ModFilter::Installed;
     }
@@ -200,6 +205,11 @@ private:
         if (input_.Pressed(Button::Y) && RowCount() > 0) {
             details_open_ = true;
             store_->RequestDetails(rows_[static_cast<std::size_t>(selected_)]);
+        }
+        if (input_.Pressed(Button::View) && chip_ == kTranslationsChip) {
+            store_->SetLanguage((store_->Language() + 1) % ModStore::LanguageCount());
+            selected_ = 0;
+            top_ = 0;
         }
         if (input_.Pressed(Button::Menu)) {
             OpenCheats();
@@ -396,7 +406,11 @@ private:
         DrawBumper(kMargin, L"LB");
         float x = kMargin + kBumperWidth + 14.0f;
         for (int i = 0; i < kChipCount; ++i) {
-            const std::wstring label = ChipLabel(i);
+            std::wstring label = ChipLabel(i);
+            if (i == kTranslationsChip && store_->Language() > 0) {
+                const std::string name = ModStore::LanguageName(store_->Language());
+                label += L" (" + std::wstring(name.begin(), name.end()) + L")";
+            }
             const bool selected = i == chip_;
             const bool counted = i == kChipCount - 1;
             const std::wstring count =
@@ -638,8 +652,19 @@ private:
                 hints.push_back({Theme::kButtonA, L"A", Tr(Text::HintSelect)});
             }
             hints.push_back({Theme::kTextSecondary, L"\u2261", Tr(Text::HintCheats)});
+            if (chip_ == kTranslationsChip) {
+                hints.push_back({Theme::kTextSecondary, L"\u29C9", Tr(Text::HintLanguage)});
+            }
             hints.push_back({Theme::kButtonB, L"B", Tr(Text::HintBack)});
             return hints;
+        }
+        if (chip_ == kTranslationsChip) {
+            return {{Theme::kButtonA, L"A", Tr(Text::HintInstall)},
+                    {Theme::kButtonY, L"Y", Tr(Text::HintViewMod)},
+                    {Theme::kButtonX, L"X", Tr(Text::HintToggle)},
+                    {Theme::kTextSecondary, L"\u29C9", Tr(Text::HintLanguage)},
+                    {Theme::kTextSecondary, L"\u2261", Tr(Text::HintCheats)},
+                    {Theme::kButtonB, L"B", Tr(Text::HintBack)}};
         }
         return {{Theme::kButtonA, L"A", Tr(Text::HintInstall)},
                 {Theme::kButtonY, L"Y", Tr(Text::HintViewMod)},

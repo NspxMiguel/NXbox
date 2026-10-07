@@ -38,6 +38,8 @@ enum class Text {
     ChipGraphics,
     ChipInterface,
     ChipGameplay,
+    ChipTranslations,
+    HintLanguage,
     ChipInstalled,
     ModInstall,
     ModInstalled,

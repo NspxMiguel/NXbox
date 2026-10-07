@@ -61,7 +61,7 @@ enum class StorePhase {
     Offline, // the network failed before there was anything to show
 };
 
-enum class ModFilter { Top, Graphics, Interface, Gameplay, Installed };
+enum class ModFilter { Top, Graphics, Interface, Gameplay, Translations, Installed };
 
 class ModStore {
 public:
@@ -84,6 +84,13 @@ public:
     void LoadMore();
     // After Offline: starts over.
     void Retry();
+
+    // The language the Translations filter shows: 0 is every language, then Portuguese, English,
+    // Spanish, French, German, Italian, Japanese, Korean and Chinese. The choice is kept per game.
+    static int LanguageCount();
+    static const char* LanguageName(int index); // English name, for the chip
+    int Language() const;
+    void SetLanguage(int index);
 
     // Thumbnails: ask once per entry, then take the bytes when they arrive (false until then).
     void RequestThumb(const std::shared_ptr<ModEntry>& entry);

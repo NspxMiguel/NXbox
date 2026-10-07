@@ -69,6 +69,8 @@ constexpr Entry kTable[] = {
     {L"Gráficos", L"Graphics"}, // ChipGraphics
     {L"Interface", L"Interface"}, // ChipInterface
     {L"Jogabilidade", L"Gameplay"}, // ChipGameplay
+    {L"Traduções e dublagens", L"Translations and dubs"}, // ChipTranslations
+    {L"Idioma", L"Language"}, // HintLanguage
     {L"Instalados", L"Installed"}, // ChipInstalled
     {L"Instalar", L"Install"}, // ModInstall
     {L"Instalado", L"Installed"}, // ModInstalled

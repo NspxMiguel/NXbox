@@ -749,6 +749,64 @@ bool EndsWithSwitch(const std::string& name) {
            lower.compare(lower.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
+// Unofficial translations, subtitles and dubs. GameBanana files them as ordinary mods, so they are
+// recognised by words in the name or the category.
+bool ContainsAny(const std::string& lower, const std::vector<const char*>& words) {
+    for (const char* word : words) {
+        if (lower.find(word) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool IsTranslationEntry(const ModEntry& entry) {
+    static const std::vector<const char*> words = {
+        "translat", "tradu", "dub", "dublag", "subtitl", "legenda", "localiz", "locali",
+        "language", "idioma", "lingua", "traduc", "voice", "voz", "audio pt", "ptbr", "pt-br"};
+    return entry.category == "Translation" ||
+           ContainsAny(Lower(entry.name), words) || ContainsAny(Lower(entry.category), words);
+}
+
+struct LanguageInfo {
+    const char* name;
+    std::vector<const char*> words;
+};
+
+const std::vector<LanguageInfo>& Languages() {
+    static const std::vector<LanguageInfo> languages = {
+        {"All languages", {}},
+        {"Portuguese", {"portugu", "pt-br", "ptbr", "pt br", "brazil", "brasil", "[pt]", "(pt)"}},
+        {"English", {"english", "[en]", "(en)", " eng "}},
+        {"Spanish", {"spanish", "espa", "castellano", "[es]", "(es)"}},
+        {"French", {"french", "fran", "[fr]", "(fr)"}},
+        {"German", {"german", "deutsch", "[de]", "(de)"}},
+        {"Italian", {"italian", "italiano", "[it]", "(it)"}},
+        {"Japanese", {"japanese", "nihongo", "[jp]", "(jp)", "\xE6\x97\xA5\xE6\x9C\xAC"}},
+        {"Korean", {"korean", "[ko]", "(ko)", "\xED\x95\x9C\xEA\xB5\xAD"}},
+        {"Chinese", {"chinese", "mandarin", "[zh]", "(zh)", "\xE4\xB8\xAD\xE6\x96\x87"}},
+    };
+    return languages;
+}
+
+bool MatchesLanguage(const ModEntry& entry, int language) {
+    const auto& languages = Languages();
+    if (language <= 0 || language >= static_cast<int>(languages.size())) {
+        return true;
+    }
+    // Entries that name no language at all stay in, so nothing useful disappears.
+    const std::string text = " " + Lower(entry.name) + " " + Lower(entry.category) + " ";
+    if (ContainsAny(text, languages[static_cast<std::size_t>(language)].words)) {
+        return true;
+    }
+    for (std::size_t i = 1; i < languages.size(); ++i) {
+        if (ContainsAny(text, languages[i].words)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct InstalledRecord {
     std::int64_t id = 0;
     std::string name;
@@ -778,6 +836,7 @@ struct ModStore::Impl : std::enable_shared_from_this<ModStore::Impl> {
     std::string title_id;
     std::string game_name;
     std::atomic<bool> cancel{false};
+    std::atomic<int> language{0};
 
     Queue api_queue;
     Queue thumb_queue;
@@ -1447,6 +1506,10 @@ std::vector<std::shared_ptr<ModEntry>> ModStore::List(ModFilter filter) const {
         case ModFilter::Gameplay:
             keep = CategoryMatches(entry->category, gameplay);
             break;
+        case ModFilter::Translations:
+            keep = IsTranslationEntry(*entry) &&
+                   MatchesLanguage(*entry, impl_->language.load());
+            break;
         default:
             break;
         }
@@ -1455,6 +1518,25 @@ std::vector<std::shared_ptr<ModEntry>> ModStore::List(ModFilter filter) const {
         }
     }
     return result;
+}
+
+int ModStore::LanguageCount() {
+    return static_cast<int>(Languages().size());
+}
+
+const char* ModStore::LanguageName(int index) {
+    const auto& languages = Languages();
+    return index >= 0 && index < static_cast<int>(languages.size())
+               ? languages[static_cast<std::size_t>(index)].name
+               : "";
+}
+
+int ModStore::Language() const {
+    return impl_->language.load();
+}
+
+void ModStore::SetLanguage(int index) {
+    impl_->language.store(std::clamp(index, 0, LanguageCount() - 1));
 }
 
 bool ModStore::MoreAvailable() const {
