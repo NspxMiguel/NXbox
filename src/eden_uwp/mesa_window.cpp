@@ -109,6 +109,12 @@ struct MesaRuntime {
                 _putenv_s(key.c_str(), value.c_str());
                 Diagnostic("ENV " + key + "=" + value);
             }
+            if (std::getenv("NXBOX_DRAW_BUCKETS") != nullptr) {
+                const std::string log_path = (env_file.parent_path() / "bucket.txt").string();
+                std::error_code remove_error;
+                std::filesystem::remove(log_path, remove_error);
+                _putenv_s("NXBOX_DRAW_BUCKET_LOG", log_path.c_str());
+            }
             if (const char* dump = std::getenv("NXBOX_FRAME_DUMP"); dump && *dump == '1') {
                 const std::string dump_dir = (env_file.parent_path() / "framedump").string();
                 _putenv_s("NXBOX_FRAME_DUMP_DIR", dump_dir.c_str());
