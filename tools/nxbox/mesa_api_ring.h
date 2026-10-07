@@ -36,6 +36,9 @@ struct NxboxApiRing {
   std::atomic<uint64_t> next{0};
   // Process lifetime creation totals, NOT live bytes or residency usage.
   std::atomic<uint64_t> custom_created{0}, custom_bytes{0}, custom_unknown{0};
+  // Live resource objects: wrapped by d3d12_bo_wrap_res, dropped when the bo is destroyed.
+  std::atomic<int64_t> bo_live{0}, bo_live_bytes{0};
+  std::atomic<uint64_t> bo_total{0};
   // 0 = live, 1 = publishing, 2 = immutable committed capture.
   std::atomic<unsigned> captured{0};
 };
@@ -59,13 +62,15 @@ inline void nxbox_api_record(ID3D12Device *dev, const char *call,
   snprintf(line, sizeof(line),
            "seq=%llu ms=%llu tid=%lu dev=%p call=%s site=%s hr=0x%08x "
            "removed=0x%08x %s custom_created=%llu custom_bytes=%llu "
-           "custom_unknown=%llu",
+           "custom_unknown=%llu bo_live=%lld bo_live_bytes=%lld bo_total=%llu",
            (unsigned long long)seq, (unsigned long long)GetTickCount64(),
            (unsigned long)GetCurrentThreadId(), (void *)dev, call, site,
            (unsigned)result, (unsigned)removed, args,
            (unsigned long long)ring.custom_created.load(),
            (unsigned long long)ring.custom_bytes.load(),
-           (unsigned long long)ring.custom_unknown.load());
+           (unsigned long long)ring.custom_unknown.load(),
+           (long long)ring.bo_live.load(), (long long)ring.bo_live_bytes.load(),
+           (unsigned long long)ring.bo_total.load());
   auto &slot = ring.slots[seq % NxboxApiRing::capacity];
   auto stamp = slot.stamp.load();
   // One attempt, no spinlock. A busy slot becomes an explicit gap on capture.

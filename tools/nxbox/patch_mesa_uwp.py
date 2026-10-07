@@ -85,6 +85,7 @@ def patch(root: Path) -> None:
     patch_heap_policy(root)
     patch_query_policy(root)
     patch_device_api_ring(root)
+    patch_bo_counters(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2634,6 +2635,35 @@ def patch_bisect_switches(root: Path) -> None:
     if source.count(anchor) != 1:
         raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the bisect helper anchor")
     path.write_text(source.replace(anchor, anchor + "\n" + helper.rstrip("\n") + "\n"))
+
+
+def patch_bo_counters(root: Path) -> None:
+    """Count the live resource objects and their footprint bytes, printed with every API ring line,
+    to see whether the device is lost when the number of resources or their total size peaks."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_bufmgr.cpp"
+    source = path.read_text()
+    wrap_old = (
+        "   if (residency == d3d12_resident) {\n"
+        "      mtx_lock(&screen->submit_mutex);\n"
+        "      list_add(&bo->residency_list_entry, &screen->residency_list);\n"
+    )
+    wrap_new = (
+        "   nxbox_api_ring().bo_live.fetch_add(1);\n"
+        "   nxbox_api_ring().bo_total.fetch_add(1);\n"
+        "   nxbox_api_ring().bo_live_bytes.fetch_add((int64_t)bo->estimated_size);\n"
+    ) + wrap_old
+    free_old = "      if (bo->res)\n         bo->res->Release();\n"
+    free_new = (
+        "      if (bo->res) {\n"
+        "         nxbox_api_ring().bo_live.fetch_sub(1);\n"
+        "         nxbox_api_ring().bo_live_bytes.fetch_sub((int64_t)bo->estimated_size);\n"
+        "         bo->res->Release();\n"
+        "      }\n"
+    )
+    for old in (wrap_old, free_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_bufmgr.cpp does not match the bo counter patch")
+    path.write_text(source.replace(wrap_old, wrap_new).replace(free_old, free_new))
 
 
 if __name__ == "__main__":
