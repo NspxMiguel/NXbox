@@ -524,15 +524,38 @@ inline void nxbox_sync_forget(ID3D12Device *dev) {
  */
 inline HRESULT nxbox_sync_wait(ID3D12Device *dev, ID3D12Fence *fence,
                                UINT64 target) {
+  const unsigned long long started = GetTickCount64();
+  // Diagnostic only: a lost update between threads is harmless.
+  static unsigned long long slowest = 0;
+  static unsigned slow_count = 0;
+  auto publish = [&](const char *how, HRESULT result) {
+    const unsigned long long elapsed = GetTickCount64() - started;
+    if (elapsed > slowest)
+      slowest = elapsed;
+    // A batch that keeps the GPU busy for seconds would trip the system's hang detection.
+    if (elapsed >= 500 || result != S_OK) {
+      char text[200];
+      snprintf(text, sizeof(text), "%s ms=%llu slowest=%llu slow=%u hr=0x%08x target=%llu", how,
+               (unsigned long long)elapsed, slowest,
+               elapsed >= 500 ? ++slow_count : slow_count,
+               (unsigned)result, (unsigned long long)target);
+      SetEnvironmentVariableA("NXBOX_D3D12_BATCH_TIME", text);
+    }
+  };
   for (;;) {
     const UINT64 completed = fence->GetCompletedValue();
     const HRESULT removed = dev->GetDeviceRemovedReason();
-    if (removed != S_OK)
+    if (removed != S_OK) {
+      publish("removed-while-waiting", removed);
       return removed;
+    }
     if (completed == UINT64_MAX)
       return DXGI_ERROR_DEVICE_REMOVED;
-    if (completed >= target)
-      return dev->GetDeviceRemovedReason();
+    if (completed >= target) {
+      const HRESULT after = dev->GetDeviceRemovedReason();
+      publish(after == S_OK ? "done" : "removed-at-completion", after);
+      return after;
+    }
     Sleep(1);
   }
 }

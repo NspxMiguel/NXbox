@@ -33,6 +33,7 @@ void SetEnvironmentVariableA(const char *name, const char *value) {
  env[name]=value; published.emplace_back(name);
 }
 void Sleep(unsigned) {}
+unsigned long long GetTickCount64() { static unsigned long long now = 0; return now += 7; }
 struct ID3D12Device {
  unsigned checks=0, fail_at=0;
  HRESULT GetDeviceRemovedReason() { return ++checks >= fail_at && fail_at ? -2 : S_OK; }

@@ -117,13 +117,17 @@ constexpr int D3D12_BLEND_ONE=2, D3D12_BLEND_ZERO=1, D3D12_BLEND_OP_ADD=1, D3D12
 struct Target { bool BlendEnable, LogicOpEnable; int SrcBlend, SrcBlendAlpha, DestBlend,
  DestBlendAlpha, BlendOp, BlendOpAlpha, LogicOp; };
 struct D3D12_BLEND_DESC { Target RenderTarget[8]; };
-unsigned GetEnvironmentVariableA(const char *, char *, unsigned) { return 0; }
+unsigned GetEnvironmentVariableA(const char *name, char *out, unsigned size) {
+ const char *value=getenv(name); if (!value) return 0;
+ const unsigned n=strlen(value); if(n<size) memcpy(out,value,n+1); return n;
+}
 void SetEnvironmentVariableA(const char *, const char *) {}
 """
             + header
             + arrays
             + r"""
 int main() {
+ setenv("NXBOX_PSO_QUARANTINE","1",1);
  D3D12_SHADER_BYTECODE v{vs,sizeof(vs)}, p{ps,sizeof(ps)};
  assert(nxbox_pso_quarantined(v,p));
  NxboxInputSignature sig;
@@ -171,11 +175,14 @@ int main() {
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
 using UINT64=uint64_t; using HRESULT=int32_t;
 constexpr HRESULT S_OK = 0, DXGI_ERROR_DEVICE_REMOVED = -1;
 #define FAILED(hr) ((hr)<0)
 unsigned ticks=0;
+void SetEnvironmentVariableA(const char *, const char *) {}
 void Sleep(unsigned) { ++ticks; }
+unsigned long long GetTickCount64() { static unsigned long long now = 0; return now += 7; }
 unsigned GetEnvironmentVariableA(const char *name, char *out, unsigned size) {
  const char *v=getenv(name); if(!v) return 0;
  unsigned n=strlen(v); if(n<size) memcpy(out,v,n+1); return n;
@@ -225,6 +232,7 @@ unsigned ticks=0; bool lost=false;
 struct ID3D12Device { unsigned fail_at=3; HRESULT GetDeviceRemovedReason() {return ticks>=fail_at ? -1 : 0;} };
 struct ID3D12Fence { UINT64 value=0; UINT64 GetCompletedValue() {return value;} };
 void Sleep(unsigned) { ++ticks; }
+unsigned long long GetTickCount64() { static unsigned long long now = 0; return now += 7; }
 void nxbox_dred_capture(ID3D12Device *, HRESULT hr, const char *) {assert(hr<0); lost=true;}
 """
             + header
