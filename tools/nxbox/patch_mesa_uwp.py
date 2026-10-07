@@ -2462,6 +2462,18 @@ def patch_device_api_ring(root: Path) -> None:
          const HRESULT hr = get_debug ? get_debug(IID_PPV_ARGS(&debug)) : E_NOINTERFACE;
          if (SUCCEEDED(hr) && debug) {
             debug->EnableDebugLayer();
+            char gbv[4] = {};
+            if (GetEnvironmentVariableA("NXBOX_D3D12_GBV", gbv, sizeof(gbv)) == 1 && gbv[0] == '1') {
+               ID3D12Debug1 *debug1 = nullptr;
+               if (SUCCEEDED(debug->QueryInterface(IID_PPV_ARGS(&debug1))) && debug1) {
+                  debug1->SetEnableGPUBasedValidation(TRUE);
+                  debug1->SetEnableSynchronizedCommandQueueValidation(TRUE);
+                  debug1->Release();
+                  SetEnvironmentVariableA("NXBOX_D3D12_GBV_STATUS", "enabled=1");
+               } else {
+                  SetEnvironmentVariableA("NXBOX_D3D12_GBV_STATUS", "unavailable");
+               }
+            }
             debug->Release();
             SetEnvironmentVariableA("NXBOX_D3D12_DEBUG_STATUS", "enabled=1");
          } else {
