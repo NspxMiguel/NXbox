@@ -2720,7 +2720,12 @@ def patch_bo_counters(root: Path) -> None:
         "      if (bo->res) {\n"
         "         nxbox_api_ring().bo_live.fetch_sub(1);\n"
         "         nxbox_api_ring().bo_live_bytes.fetch_sub((int64_t)bo->estimated_size);\n"
-        "         bo->res->Release();\n"
+        "         static const bool leak = [] {\n"
+        "            const char *value = getenv(\"NXBOX_LEAK_RESOURCES\");\n"
+        "            return value && value[0] == '1';\n"
+        "         }();\n"
+        "         if (!leak) /* NXBOX_LEAK_RESOURCES=1 never frees: a premature release would then vanish */\n"
+        "            bo->res->Release();\n"
         "      }\n"
     )
     for old in (wrap_old, free_old):
