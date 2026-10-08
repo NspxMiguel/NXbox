@@ -702,14 +702,15 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             Diagnostic(fmt::format("GAME_PRESENT frames={} seconds={:.3f} fps={:.2f} "
                                    "game_fps={:.2f} system_fps={:.2f} "
                                    "frametime_ms={:.2f} speed={:.1f}% memory={} memory_limit={} "
-                                   "worst_gap_ms={:.0f} hitches={}",
+                                   "worst_gap_ms={:.0f} hitches={} tick_ms={}",
                                    frames - measured_frames, elapsed,
                                    (frames - measured_frames) / elapsed, stats.average_game_fps,
                                    stats.system_fps, stats.frametime * 1000.0,
                                    stats.emulation_speed * 100.0,
                                    winrt::Windows::System::MemoryManager::AppMemoryUsage(),
                                    winrt::Windows::System::MemoryManager::AppMemoryUsageLimit(),
-                                   worst_gap_ms, hitches));
+                                   worst_gap_ms, hitches,
+                                   GetTickCount64()));
             // The patched Mesa publishes its reports in environment variables (pipeline states,
             // root signatures, batch failures, device removal); log each one when it changes.
             {

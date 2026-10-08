@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdlib>
+#include <chrono>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -182,8 +183,11 @@ void RendererOpenGL::DumpProbeFrame(std::span<const Tegra::FramebufferConfig> fr
         sum += value;
     }
     const u64 mean_x100 = sum * 100 / (size_t{width} * height);
-    LOG_INFO(Render_OpenGL, "FRAME_PROBE frame={} peak={} mean_x100={} layers={}", m_current_frame,
-             peak, mean_x100, framebuffers.size());
+    LOG_INFO(Render_OpenGL, "FRAME_PROBE frame={} peak={} mean_x100={} layers={} tick_ms={}",
+             m_current_frame, peak, mean_x100, framebuffers.size(),
+             std::chrono::duration_cast<std::chrono::milliseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+                 .count());
 
     std::error_code ec;
     std::filesystem::create_directories(dump_dir, ec);
