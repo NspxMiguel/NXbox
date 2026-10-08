@@ -2872,11 +2872,11 @@ def patch_view_cast(root: Path) -> None:
         "static inline void\n"
         "nxbox_count_view_cast(const char *kind, unsigned view_format, unsigned resource_format)\n"
         "{\n"
-        "   static unsigned srv = 0, rtv = 0, dsv = 0;\n"
-        "   if (kind[0] == 's') ++srv; else if (kind[0] == 'r') ++rtv; else ++dsv;\n"
+        "   static unsigned srv = 0, rtv = 0, dsv = 0, uav = 0;\n"
+        "   if (kind[0] == 's') ++srv; else if (kind[0] == 'r') ++rtv; else if (kind[0] == 'u') ++uav; else ++dsv;\n"
         "   char text[128];\n"
-        "   snprintf(text, sizeof(text), \"srv=%u rtv=%u dsv=%u last=%s:%u->%u\", srv, rtv, dsv, kind,\n"
-        "            view_format, resource_format);\n"
+        "   snprintf(text, sizeof(text), \"srv=%u rtv=%u dsv=%u uav=%u last=%s:%u->%u\", srv, rtv, dsv, uav,\n"
+        "            kind, view_format, resource_format);\n"
         "   SetEnvironmentVariableA(\"NXBOX_D3D12_VIEW_CAST\", text);\n"
         "}\n"
     )
@@ -2914,6 +2914,30 @@ def patch_view_cast(root: Path) -> None:
         raise RuntimeError("Pinned Mesa d3d12_surface.cpp has no surface include for the view cast patch")
     source = source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1)
     surface.write_text(source.replace(rt_old, rt_new, 1))
+    # Image views: a UAV on a resource created without ALLOW_UNORDERED_ACCESS, or in a format outside
+    # the resource's family, is invalid too; bind a null UAV in its place (writes are dropped).
+    draw = driver / "d3d12_draw.cpp"
+    source = draw.read_text()
+    call = "CreateUnorderedAccessView(d3d12_res, nullptr, &uav_desc, handle.cpu_handle);"
+    lines = source.split("\n")
+    hits = [i for i, line in enumerate(lines) if call in line]
+    if len(hits) != 2:
+        raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the UAV view cast patch")
+    for i in reversed(hits):
+        indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
+        guard = (
+            indent + "if (!(d3d12_res->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) ||\n"
+            + indent + "    d3d12_get_typeless_format(view->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+            + indent + "   nxbox_count_view_cast(\"uav\", (unsigned)view->format, (unsigned)res->overall_format);\n"
+            + indent + "   d3d12_res = nullptr;\n"
+            + indent + "}"
+        )
+        lines.insert(i, guard)
+    source = "\n".join(lines)
+    include = '#include "d3d12_context.h"\n'
+    if source.count(include) < 1:
+        raise RuntimeError("Pinned Mesa d3d12_draw.cpp has no context include for the view cast patch")
+    draw.write_text(source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1))
 
 
 if __name__ == "__main__":
