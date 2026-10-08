@@ -2923,7 +2923,8 @@ def patch_view_cast(root: Path) -> None:
     hits = [i for i, line in enumerate(lines) if call in line]
     if len(hits) != 2:
         raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the UAV view cast patch")
-    for i in reversed(hits):
+    # Only the image site (the second) has a view format and a resource; the first binds buffers.
+    for i in [hits[1]]:
         indent = lines[i][: len(lines[i]) - len(lines[i].lstrip())]
         guard = (
             indent + "if (!(d3d12_res->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) ||\n"
