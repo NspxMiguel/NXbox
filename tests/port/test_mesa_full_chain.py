@@ -40,6 +40,8 @@ class MesaFullChainTests(unittest.TestCase):
 #include <cstdio>
 #include <vector>
 void SetEnvironmentVariableA(const char *, const char *) {}
+bool nxbox_no_evict() { return false; }
+void nxbox_count_eviction(const char *, unsigned) {}
 #define SUCCEEDED(hr) ((hr)>=0)
 #define FAILED(hr) ((hr)<0)
 using HRESULT=int;

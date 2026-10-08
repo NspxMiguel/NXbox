@@ -2810,6 +2810,15 @@ def patch_no_evict(root: Path) -> None:
         if source.count(old) != 1:
             raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the no-evict patch")
     source = source.replace(aged_old, aged_new).replace(budget_old, budget_new)
+    # Without eviction the residency loop must never spin waiting for room: make resident anyway.
+    gate_old = "if (available_memory > 0 || !anything_to_wait_for || batch_count)"
+    gate_new = "if (available_memory > 0 || !anything_to_wait_for || batch_count || nxbox_no_evict())"
+    room_old = "            if (anything_to_wait_for &&\n"
+    room_new = "            if (anything_to_wait_for && !nxbox_no_evict() &&\n"
+    for old in (gate_old, room_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the no-evict loop patch")
+    source = source.replace(gate_old, gate_new).replace(room_old, room_new)
     # Count what each path evicts. The API ring already wrapped the calls as
     # nxbox_api(...).Evict(num_pending_evictions, to_evict); count them by function.
     call = ".Evict(num_pending_evictions, to_evict);"
