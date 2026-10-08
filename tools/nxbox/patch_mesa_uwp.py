@@ -88,6 +88,7 @@ def patch(root: Path) -> None:
     patch_bo_counters(root)
     patch_vidmem_report(root)
     patch_no_evict(root)
+    patch_resident_create(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2833,6 +2834,26 @@ def patch_no_evict(root: Path) -> None:
     if source.count(anchor) != 1:
         raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the no-evict helper anchor")
     path.write_text(source.replace(anchor, helper + anchor, 1))
+
+
+def patch_resident_create(root: Path) -> None:
+    """NXBOX_RESIDENT_CREATE=1 creates every resource resident (no CREATE_NOT_RESIDENT heap flag):
+    on both games the device is lost right after a view is created on a resource that was just
+    created non-resident, so this tells whether that sequence is what the Xbox rejects."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_screen.cpp"
+    source = path.read_text()
+    anchor = "   nxbox_report_heap_policy(screen->architecture, screen->support_create_not_resident);"
+    if source.count(anchor) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_screen.cpp does not match the resident-create anchor")
+    new = (
+        "   {\n"
+        "      char resident[4] = {};\n"
+        "      if (GetEnvironmentVariableA(\"NXBOX_RESIDENT_CREATE\", resident, sizeof(resident)) == 1 &&\n"
+        "          resident[0] == '1')\n"
+        "         screen->support_create_not_resident = false;\n"
+        "   }\n"
+    ) + anchor
+    path.write_text(source.replace(anchor, new, 1))
 
 
 if __name__ == "__main__":
