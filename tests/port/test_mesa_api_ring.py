@@ -57,6 +57,10 @@ struct ID3D12Device {
  HRESULT CreateDescriptorHeap(const D3D12_DESCRIPTOR_HEAP_DESC *,int,void **) { ++calls; return 0; }
 };
 struct ID3D12Resource { D3D12_RESOURCE_DESC desc; auto GetDesc() { return desc; } };
+struct D3D12_SHADER_RESOURCE_VIEW_DESC { unsigned Format=0, ViewDimension=0, Shader4ComponentMapping=0; struct { unsigned MostDetailedMip=0, MipLevels=0, FirstArraySlice=0, ArraySize=0; } Texture2DArray; };
+struct D3D12_RENDER_TARGET_VIEW_DESC { unsigned Format=0, ViewDimension=0; struct { unsigned MipSlice=0, FirstArraySlice=0, ArraySize=0; } Texture2DArray; };
+struct D3D12_DEPTH_STENCIL_VIEW_DESC { unsigned Format=0, ViewDimension=0, Flags=0; struct { unsigned MipSlice=0, FirstArraySlice=0, ArraySize=0; } Texture2DArray; };
+struct D3D12_UNORDERED_ACCESS_VIEW_DESC { unsigned Format=0, ViewDimension=0; struct { unsigned MipSlice=0, FirstArraySlice=0, ArraySize=0; } Texture2DArray; };
 struct ID3D12DeviceChild {};
 struct ID3D12GraphicsCommandList : ID3D12DeviceChild {};
 struct ID3D12CommandAllocator : ID3D12DeviceChild {};

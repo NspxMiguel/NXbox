@@ -211,6 +211,57 @@ struct NxboxApiArgs {
   void value(D3D12_RESOURCE_DESC *d) { resource(d); }
   void value(const D3D12_RESOURCE_DESC1 *d) { resource(d); }
   void value(D3D12_RESOURCE_DESC1 *d) { resource(d); }
+  // Views: the resource's own description next to the view's, so a mismatch is visible.
+  void value(ID3D12Resource *r) {
+    add("%p ", (const void *)r);
+    if (r) {
+      const D3D12_RESOURCE_DESC d = r->GetDesc();
+      add("res={fmt=%u dim=%u %llux%ux%u mips=%u flags=%x} ", (unsigned)d.Format,
+          (unsigned)d.Dimension, (unsigned long long)d.Width, d.Height,
+          (unsigned)d.DepthOrArraySize, (unsigned)d.MipLevels, (unsigned)d.Flags);
+    }
+  }
+  void value(const D3D12_SHADER_RESOURCE_VIEW_DESC *d) {
+    if (!d) {
+      add("%s", "srv=NULL ");
+      return;
+    }
+    add("srv={fmt=%u dim=%u map=%x mip=%u levels=%u slice=%u count=%u} ", (unsigned)d->Format,
+        (unsigned)d->ViewDimension, (unsigned)d->Shader4ComponentMapping,
+        d->Texture2DArray.MostDetailedMip, d->Texture2DArray.MipLevels,
+        d->Texture2DArray.FirstArraySlice, d->Texture2DArray.ArraySize);
+  }
+  void value(D3D12_SHADER_RESOURCE_VIEW_DESC *d) { value((const D3D12_SHADER_RESOURCE_VIEW_DESC *)d); }
+  void value(const D3D12_RENDER_TARGET_VIEW_DESC *d) {
+    if (!d) {
+      add("%s", "rtv=NULL ");
+      return;
+    }
+    add("rtv={fmt=%u dim=%u mip=%u slice=%u count=%u} ", (unsigned)d->Format,
+        (unsigned)d->ViewDimension, d->Texture2DArray.MipSlice, d->Texture2DArray.FirstArraySlice,
+        d->Texture2DArray.ArraySize);
+  }
+  void value(D3D12_RENDER_TARGET_VIEW_DESC *d) { value((const D3D12_RENDER_TARGET_VIEW_DESC *)d); }
+  void value(const D3D12_DEPTH_STENCIL_VIEW_DESC *d) {
+    if (!d) {
+      add("%s", "dsv=NULL ");
+      return;
+    }
+    add("dsv={fmt=%u dim=%u flags=%u mip=%u slice=%u count=%u} ", (unsigned)d->Format,
+        (unsigned)d->ViewDimension, (unsigned)d->Flags, d->Texture2DArray.MipSlice,
+        d->Texture2DArray.FirstArraySlice, d->Texture2DArray.ArraySize);
+  }
+  void value(D3D12_DEPTH_STENCIL_VIEW_DESC *d) { value((const D3D12_DEPTH_STENCIL_VIEW_DESC *)d); }
+  void value(const D3D12_UNORDERED_ACCESS_VIEW_DESC *d) {
+    if (!d) {
+      add("%s", "uav=NULL ");
+      return;
+    }
+    add("uav={fmt=%u dim=%u mip=%u slice=%u count=%u} ", (unsigned)d->Format,
+        (unsigned)d->ViewDimension, d->Texture2DArray.MipSlice, d->Texture2DArray.FirstArraySlice,
+        d->Texture2DArray.ArraySize);
+  }
+  void value(D3D12_UNORDERED_ACCESS_VIEW_DESC *d) { value((const D3D12_UNORDERED_ACCESS_VIEW_DESC *)d); }
   void value(const D3D12_HEAP_PROPERTIES *p) {
     if (p) {
       custom = p->Type == D3D12_HEAP_TYPE_CUSTOM;
