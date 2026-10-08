@@ -89,6 +89,7 @@ def patch(root: Path) -> None:
     patch_vidmem_report(root)
     patch_no_evict(root)
     patch_resident_create(root)
+    patch_view_cast(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2854,6 +2855,65 @@ def patch_resident_create(root: Path) -> None:
         "   }\n"
     ) + anchor
     path.write_text(source.replace(anchor, new, 1))
+
+
+def patch_view_cast(root: Path) -> None:
+    """Never create a view whose format is not castable from the resource's format.
+
+    Breath of the Wild's title screen samples an R11G11B10_FLOAT cube map (32x32x6 render target)
+    through an R8G8B8A8_UNORM shader resource view; the two formats share no typeless family, so
+    the view is invalid and the Xbox removes the device (DXGI_ERROR_INVALID_CALL) the moment it is
+    created. Fall back to a view in the resource's own format and count it."""
+    driver = root / "src/gallium/drivers/d3d12"
+    helper = driver / "nxbox_view_cast.h"
+    helper.write_text(
+        "#pragma once\n"
+        "#include <stdio.h>\n"
+        "static inline void\n"
+        "nxbox_count_view_cast(const char *kind, unsigned view_format, unsigned resource_format)\n"
+        "{\n"
+        "   static unsigned srv = 0, rtv = 0, dsv = 0;\n"
+        "   if (kind[0] == 's') ++srv; else if (kind[0] == 'r') ++rtv; else ++dsv;\n"
+        "   char text[128];\n"
+        "   snprintf(text, sizeof(text), \"srv=%u rtv=%u dsv=%u last=%s:%u->%u\", srv, rtv, dsv, kind,\n"
+        "            view_format, resource_format);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_VIEW_CAST\", text);\n"
+        "}\n"
+    )
+    context = driver / "d3d12_context.cpp"
+    source = context.read_text()
+    srv_old = "   desc.Format = d3d12_get_resource_srv_format(state->format, state->target);\n"
+    srv_new = srv_old + (
+        "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+        "      nxbox_count_view_cast(\"srv\", (unsigned)state->format, (unsigned)res->overall_format);\n"
+        "      desc.Format = d3d12_get_resource_srv_format(res->overall_format, state->target);\n"
+        "   }\n"
+    )
+    if source.count(srv_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_context.cpp does not match the view cast patch")
+    include = '#include "d3d12_context.h"\n'
+    if source.count(include) < 1:
+        raise RuntimeError("Pinned Mesa d3d12_context.cpp has no context include for the view cast patch")
+    source = source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1)
+    context.write_text(source.replace(srv_old, srv_new, 1))
+    surface = driver / "d3d12_surface.cpp"
+    source = surface.read_text()
+    rt_old = "   DXGI_FORMAT dxgi_format = d3d12_get_resource_rt_format(tpl->format);\n"
+    rt_new = rt_old + (
+        "   if (d3d12_get_typeless_format(tpl->format) !=\n"
+        "       d3d12_get_typeless_format(d3d12_resource(pres)->overall_format)) {\n"
+        "      nxbox_count_view_cast(is_depth_or_stencil ? \"dsv\" : \"rtv\", (unsigned)tpl->format,\n"
+        "                            (unsigned)d3d12_resource(pres)->overall_format);\n"
+        "      dxgi_format = d3d12_get_resource_rt_format(d3d12_resource(pres)->overall_format);\n"
+        "   }\n"
+    )
+    if source.count(rt_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_surface.cpp does not match the view cast patch")
+    include = '#include "d3d12_surface.h"\n'
+    if source.count(include) < 1:
+        raise RuntimeError("Pinned Mesa d3d12_surface.cpp has no surface include for the view cast patch")
+    source = source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1)
+    surface.write_text(source.replace(rt_old, rt_new, 1))
 
 
 if __name__ == "__main__":
