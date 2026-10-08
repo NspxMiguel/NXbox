@@ -87,6 +87,7 @@ def patch(root: Path) -> None:
     patch_device_api_ring(root)
     patch_bo_counters(root)
     patch_vidmem_report(root)
+    patch_no_evict(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2765,6 +2766,64 @@ def patch_vidmem_report(root: Path) -> None:
     if "#include <stdio.h>" not in source:
         source = source.replace('#include "d3d12_residency.h"', '#include "d3d12_residency.h"\n#include <stdio.h>', 1)
     path.write_text(source.replace(old, new))
+
+
+def patch_no_evict(root: Path) -> None:
+    """NXBOX_NO_EVICT=1 keeps every resource resident: a GPU read of an evicted resource that the
+    batch did not track would remove the device asynchronously, which is what Breath of the Wild
+    shows. Counters of evictions are published either way."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_residency.cpp"
+    source = path.read_text()
+    helper = (
+        "#include <stdlib.h>\n"
+        "static bool\n"
+        "nxbox_no_evict(void)\n"
+        "{\n"
+        "   static int value = -1;\n"
+        "   if (value < 0) {\n"
+        "      const char *text = getenv(\"NXBOX_NO_EVICT\");\n"
+        "      value = text && text[0] == '1';\n"
+        "   }\n"
+        "   return value == 1;\n"
+        "}\n"
+        "static void\n"
+        "nxbox_count_eviction(const char *how, unsigned count)\n"
+        "{\n"
+        "   static unsigned aged = 0, budget = 0;\n"
+        "   if (how[0] == 'a') aged += count; else budget += count;\n"
+        "   char text[96];\n"
+        "   snprintf(text, sizeof(text), \"aged=%u budget=%u no_evict=%d\", aged, budget, nxbox_no_evict() ? 1 : 0);\n"
+        "   SetEnvironmentVariableA(\"NXBOX_D3D12_EVICT\", text);\n"
+        "}\n\n"
+    )
+    aged_old = (
+        "evict_aged_allocations(struct d3d12_screen *screen, uint64_t completed_fence, int64_t time, int64_t grace_period)\n"
+        "{\n"
+    )
+    aged_new = aged_old + "   if (nxbox_no_evict())\n      return;\n"
+    budget_old = (
+        "evict_to_fence_or_budget(struct d3d12_screen *screen, uint64_t target_fence, uint64_t current_usage, uint64_t target_budget)\n"
+        "{\n"
+    )
+    budget_new = budget_old + "   if (nxbox_no_evict())\n      return;\n"
+    for old in (aged_old, budget_old):
+        if source.count(old) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the no-evict patch")
+    source = source.replace(aged_old, aged_new).replace(budget_old, budget_new)
+    # Count what each path evicts. The API ring already wrapped the calls as
+    # nxbox_api(...).Evict(num_pending_evictions, to_evict); count them by function.
+    call = ".Evict(num_pending_evictions, to_evict);"
+    split = source.index("static void\nevict_to_fence_or_budget")
+    head, tail = source[:split], source[split:]
+    if head.count(call) < 1 or tail.count(call) < 1:
+        raise RuntimeError("Pinned Mesa d3d12_residency.cpp has no Evict calls to count")
+    head = head.replace(call, call + " nxbox_count_eviction(\"aged\", num_pending_evictions);")
+    tail = tail.replace(call, call + " nxbox_count_eviction(\"budget\", num_pending_evictions);")
+    source = head + tail
+    anchor = "static void\nevict_aged_allocations"
+    if source.count(anchor) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the no-evict helper anchor")
+    path.write_text(source.replace(anchor, helper + anchor, 1))
 
 
 if __name__ == "__main__":
