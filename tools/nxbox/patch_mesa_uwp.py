@@ -86,6 +86,7 @@ def patch(root: Path) -> None:
     patch_query_policy(root)
     patch_device_api_ring(root)
     patch_bo_counters(root)
+    patch_vidmem_report(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2732,6 +2733,38 @@ def patch_bo_counters(root: Path) -> None:
         if source.count(old) != 1:
             raise RuntimeError("Pinned Mesa d3d12_bufmgr.cpp does not match the bo counter patch")
     path.write_text(source.replace(wrap_old, wrap_new).replace(free_old, free_new))
+
+
+def patch_vidmem_report(root: Path) -> None:
+    """Publish the video memory budget and usage the residency manager sees, every time it
+    refreshes them, so a device loss near the budget shows up in the diag."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_residency.cpp"
+    source = path.read_text()
+    old = (
+        "      screen->get_memory_info(screen, &mem_info);\n"
+        "\n"
+        "      int64_t available_memory = (int64_t)mem_info.budget - (int64_t)mem_info.usage;\n"
+    )
+    new = (
+        "      screen->get_memory_info(screen, &mem_info);\n"
+        "      {\n"
+        "         static uint64_t peak_usage = 0;\n"
+        "         if (mem_info.usage > peak_usage)\n"
+        "            peak_usage = mem_info.usage;\n"
+        "         char text[160];\n"
+        "         snprintf(text, sizeof(text), \"budget=%llu usage=%llu peak=%llu to_make_resident=%llu\",\n"
+        "                  (unsigned long long)mem_info.budget, (unsigned long long)mem_info.usage,\n"
+        "                  (unsigned long long)peak_usage, (unsigned long long)size_to_make_resident);\n"
+        "         SetEnvironmentVariableA(\"NXBOX_D3D12_VIDMEM\", text);\n"
+        "      }\n"
+        "\n"
+        "      int64_t available_memory = (int64_t)mem_info.budget - (int64_t)mem_info.usage;\n"
+    )
+    if source.count(old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_residency.cpp does not match the vidmem report patch")
+    if "#include <stdio.h>" not in source:
+        source = source.replace('#include "d3d12_residency.h"', '#include "d3d12_residency.h"\n#include <stdio.h>', 1)
+    path.write_text(source.replace(old, new))
 
 
 if __name__ == "__main__":

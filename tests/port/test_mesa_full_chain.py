@@ -37,7 +37,9 @@ class MesaFullChainTests(unittest.TestCase):
             r"""
 #include <cassert>
 #include <cstdint>
+#include <cstdio>
 #include <vector>
+void SetEnvironmentVariableA(const char *, const char *) {}
 #define SUCCEEDED(hr) ((hr)>=0)
 #define FAILED(hr) ((hr)<0)
 using HRESULT=int;

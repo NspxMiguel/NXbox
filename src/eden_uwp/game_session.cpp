@@ -737,7 +737,8 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     "NXBOX_D3D12_PSO_DXIL",          "NXBOX_D3D12_SYNC_ERROR",
                     "NXBOX_D3D12_HEAP_POLICY",       "NXBOX_D3D12_DEBUG_STATUS",
                     "NXBOX_D3D12_DEBUG_UNAVAILABLE", "NXBOX_D3D12_LIST_ERROR",
-                    "NXBOX_D3D12_GBV_STATUS", "NXBOX_D3D12_BATCH_TIME"};
+                    "NXBOX_D3D12_GBV_STATUS", "NXBOX_D3D12_BATCH_TIME",
+                    "NXBOX_D3D12_VIDMEM"};
                 static std::array<std::string, std::size(extended_names)> extended_last;
                 for (std::size_t i = 0; i < std::size(extended_names); ++i) {
                     collect(extended_names[i], extended_last[i]);
