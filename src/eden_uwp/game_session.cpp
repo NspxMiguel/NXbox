@@ -395,7 +395,7 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                                       range_of(L"libgallium_wgl.dll", "gallium")};
     HANDLE threads[2]{nullptr, nullptr};
     std::uint32_t thread_ids[2]{0, 0};
-    std::map<std::string, unsigned> leaf, frames, inner;
+    std::map<std::string, unsigned> leaf, frames, inner, paths;
     unsigned samples = 0;
     auto window_start = std::chrono::steady_clock::now();
     while (!closed.load(std::memory_order_acquire)) {
@@ -429,7 +429,7 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                     continue;
                 }
             }
-            std::array<std::uintptr_t, 512> stack{};
+            std::array<std::uintptr_t, 2048> stack{};
             std::uintptr_t rip = 0;
             bool have = false;
             if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
@@ -480,14 +480,24 @@ void RunStackSampler(const std::atomic<bool>& closed) {
             }
             std::set<std::string> seen;
             bool innermost = true;
+            std::string path;
+            unsigned depth = 0;
             for (const auto word : stack) {
                 if (auto text = describe(word); !text.empty()) {
                     if (innermost) {
                         ++inner[text];
                         innermost = false;
                     }
+                    // The call path: the first ten app/Mesa return addresses above the leaf.
+                    if (depth < 10 && seen.find(text) == seen.end()) {
+                        path += text.substr(text.find(':') + 1) + "<";
+                        ++depth;
+                    }
                     seen.insert(std::move(text));
                 }
+            }
+            if (!path.empty()) {
+                ++paths[std::string(label) + path];
             }
             for (const auto& text : seen) {
                 ++frames[text];
@@ -509,10 +519,12 @@ void RunStackSampler(const std::atomic<bool>& closed) {
             };
             Diagnostic(fmt::format("SAMPLER samples={} leaf:{}", samples, top(leaf, 15)));
             Diagnostic(fmt::format("SAMPLER samples={} inner:{}", samples, top(inner, 20)));
+            Diagnostic(fmt::format("SAMPLER samples={} paths:{}", samples, top(paths, 8)));
             Diagnostic(fmt::format("SAMPLER samples={} frames:{}", samples, top(frames, 40)));
             leaf.clear();
             frames.clear();
             inner.clear();
+            paths.clear();
             samples = 0;
             window_start = now;
         }
