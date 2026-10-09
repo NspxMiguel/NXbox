@@ -2050,8 +2050,26 @@ def patch_first_bad_batch(root: Path) -> None:
    aliasingBarrier.Aliasing.pResourceBefore = nullptr;
    aliasingBarrier.Aliasing.pResourceAfter = nullptr;
    nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).ResourceBarrier(1, &aliasingBarrier);""",
-        """   nxbox_journal_add(ctx->nxbox_journal, "main", "TEXTURE_BARRIER submit-and-wait");
-   d3d12_flush_cmdlist_and_wait(ctx);""",
+        """   /* glTextureBarrier used to submit and wait for the GPU here. Breath of the Wild issues it
+    * hundreds of times per frame, which held it at two frames per second with the GPU idle.
+    * NXBOX_TEXTURE_BARRIER=wait brings the old behaviour back. */
+   static int nxbox_barrier_wait = -1;
+   if (nxbox_barrier_wait < 0) {
+      char value[8] = {};
+      nxbox_barrier_wait = GetEnvironmentVariableA("NXBOX_TEXTURE_BARRIER", value, sizeof(value)) &&
+                           value[0] == 'w';
+   }
+   if (nxbox_barrier_wait) {
+      nxbox_journal_add(ctx->nxbox_journal, "main", "TEXTURE_BARRIER submit-and-wait");
+      d3d12_flush_cmdlist_and_wait(ctx);
+      return;
+   }
+   D3D12_RESOURCE_BARRIER aliasingBarrier;
+   aliasingBarrier.Type = D3D12_RESOURCE_BARRIER_TYPE_ALIASING;
+   aliasingBarrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+   aliasingBarrier.Aliasing.pResourceBefore = nullptr;
+   aliasingBarrier.Aliasing.pResourceAfter = nullptr;
+   nxbox_journal_commands(ctx->nxbox_journal, ctx->cmdlist).ResourceBarrier(1, &aliasingBarrier);""",
     )
     # NULL is explicitly legal for a global UAV barrier. Keep the image/SSBO
     # dependency; removing it based on current bindings misses earlier writes.

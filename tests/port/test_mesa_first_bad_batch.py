@@ -283,30 +283,42 @@ int main() {
 """
             )
 
-    def test_texture_barrier_waits_and_global_uav_is_retained(self):
+    def test_texture_barrier_waits_only_on_request_and_global_uav_is_retained(self):
         source = (self.driver / "d3d12_context.cpp").read_text()
         body = source.split(
             "d3d12_texture_barrier(struct pipe_context *pctx, unsigned flags)\n{", 1
         )[1].split("\n}\n", 1)[0]
-        self.compile_run(
-            r"""
+
+        def run(mode, expect_waits, expect_barriers):
+            self.compile_run(
+                r"""
 #include <cassert>
 #include <cstring>
 struct pipe_context {};
 struct Context {void *nxbox_journal=nullptr;} context;
-unsigned waits=0, records=0;
+unsigned waits=0, records=0, barriers=0;
 #define d3d12_context Context
 Context *Context(pipe_context *) {return &context;}
+unsigned GetEnvironmentVariableA(const char *, char *out, unsigned) {
+ const char *mode = "%s"; if (!*mode) return 0; strcpy(out, mode); return strlen(mode);
+}
+constexpr int D3D12_RESOURCE_BARRIER_TYPE_ALIASING=4, D3D12_RESOURCE_BARRIER_FLAG_NONE=0;
+struct D3D12_RESOURCE_BARRIER {int Type, Flags; struct {void *pResourceBefore,*pResourceAfter;} Aliasing;};
+struct Commands {void ResourceBarrier(unsigned, const D3D12_RESOURCE_BARRIER *b) {assert(!b->Aliasing.pResourceBefore); ++barriers;}};
+Commands nxbox_journal_commands(void *, void *) {return {};}
 void nxbox_journal_add(void *, const char *, const char *text) {
  assert(strcmp(text,"TEXTURE_BARRIER submit-and-wait")==0); ++records;
 }
 void d3d12_flush_cmdlist_and_wait(struct Context *) {assert(records==1); ++waits;}
 void texture_barrier(pipe_context *pctx) {
-"""
-            + body
-            + "\n}\nint main() {pipe_context ctx; texture_barrier(&ctx); assert(waits==1);}\n"
-        )
-        self.assertNotIn("D3D12_RESOURCE_BARRIER_TYPE_ALIASING", source)
+""" % mode
+                + body.replace("ctx->cmdlist", "nullptr")
+                + "\n}\nint main() {pipe_context ctx; texture_barrier(&ctx); assert(waits==%d && barriers==%d);}\n"
+                % (expect_waits, expect_barriers)
+            )
+
+        run("wait", 1, 0)
+        run("", 0, 1)
         self.assertIn("if (flags & (PIPE_BARRIER_IMAGE | PIPE_BARRIER_SHADER_BUFFER))", source)
         self.assertIn("D3D12_RESOURCE_BARRIER uavBarrier = {};", source)
         self.assertIn("uavBarrier.UAV.pResource = nullptr;", source)
