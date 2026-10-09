@@ -394,6 +394,7 @@ void RunStackSampler(const std::atomic<bool>& closed) {
     const std::array<Range, 2> ranges{range_of(nullptr, "exe"),
                                       range_of(L"libgallium_wgl.dll", "gallium")};
     HANDLE threads[2]{nullptr, nullptr};
+    std::uint32_t thread_ids[2]{0, 0};
     std::map<std::string, unsigned> leaf, frames, inner;
     unsigned samples = 0;
     auto window_start = std::chrono::steady_clock::now();
@@ -414,7 +415,12 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                 continue;
             }
             HANDLE& thread = threads[which];
+            if (thread != nullptr && thread_ids[which] != id) {
+                CloseHandle(thread);
+                thread = nullptr;
+            }
             if (thread == nullptr) {
+                thread_ids[which] = id;
                 thread = OpenThread(
                     THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
                     id);
