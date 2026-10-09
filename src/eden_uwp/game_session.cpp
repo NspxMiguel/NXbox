@@ -394,7 +394,7 @@ void RunStackSampler(const std::atomic<bool>& closed) {
     const std::array<Range, 2> ranges{range_of(nullptr, "exe"),
                                       range_of(L"libgallium_wgl.dll", "gallium")};
     HANDLE thread = nullptr;
-    std::map<std::string, unsigned> leaf, frames;
+    std::map<std::string, unsigned> leaf, frames, inner;
     unsigned samples = 0;
     auto window_start = std::chrono::steady_clock::now();
     while (!closed.load(std::memory_order_acquire)) {
@@ -445,8 +445,14 @@ void RunStackSampler(const std::atomic<bool>& closed) {
             ++leaf["other"];
         }
         std::set<std::string> seen;
+        bool innermost = true;
         for (const auto word : stack) {
             if (auto text = describe(word); !text.empty()) {
+                if (innermost) {
+                    // The first return address above the leaf: the app code that made the wait.
+                    ++inner[text];
+                    innermost = false;
+                }
                 seen.insert(std::move(text));
             }
         }
@@ -468,9 +474,11 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                 return out;
             };
             Diagnostic(fmt::format("SAMPLER samples={} leaf:{}", samples, top(leaf, 15)));
+            Diagnostic(fmt::format("SAMPLER samples={} inner:{}", samples, top(inner, 20)));
             Diagnostic(fmt::format("SAMPLER samples={} frames:{}", samples, top(frames, 40)));
             leaf.clear();
             frames.clear();
+            inner.clear();
             samples = 0;
             window_start = now;
         }
