@@ -1621,6 +1621,7 @@ def patch_sync_batch(root: Path) -> None:
     replace(
         file,
         anchor,
+        "   NXBOX_PROFILE_SUBMIT(ctx->nxbox_journal);\n"
         "   nxbox_sync_submit(screen->dev, ctx->nxbox_journal, ctx, (unsigned)(batch - ctx->batches),\n"
         "                     batch->submit_id, nxbox_fence_target, has_state_fixup);\n" + anchor,
     )

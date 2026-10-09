@@ -33,6 +33,7 @@ struct NxboxBatchJournal {
   std::vector<std::string> entries, fixup_entries;
   // GPU profile (NXBOX_GPU_PROFILE=1): timestamp slots stamped before each command.
   unsigned prof_base, prof_count;
+  int64_t prof_submit_qpc;
   std::vector<size_t> stamp_entry;
 };
 
@@ -131,6 +132,7 @@ inline bool nxbox_skip_class(const char *name) {
 #ifndef NXBOX_PROFILE_STAMP
 #define NXBOX_PROFILE_STAMP(journal, commands) ((void)0)
 #define NXBOX_PROFILE_CLOSE(commands, journal) ((void)0)
+#define NXBOX_PROFILE_SUBMIT(journal) ((void)0)
 #define NXBOX_PROFILE_COLLECT(queue, journal) ((void)0)
 #endif
 struct NxboxJournalCommands {
