@@ -77,6 +77,9 @@ TextureCache<P>::TextureCache(Runtime& runtime_, Tegra::MaxwellDeviceMemoryManag
         critical_memory = DEFAULT_CRITICAL_MEMORY + 1_GiB;
         minimum_memory = 0;
     }
+#ifdef NXBOX_UWP
+    runtime.ApplyMemoryBudgetOverride(expected_memory, critical_memory);
+#endif
 
     const bool gpu_unswizzle_enabled = Settings::values.gpu_unswizzle_enabled.GetValue();
 

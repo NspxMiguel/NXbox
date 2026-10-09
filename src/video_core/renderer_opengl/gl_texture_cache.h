@@ -89,6 +89,10 @@ public:
 
     u64 GetDeviceMemoryUsage() const;
 
+#ifdef NXBOX_UWP
+    void ApplyMemoryBudgetOverride(u64& expected, u64& critical) const;
+#endif
+
     bool CanReportMemoryUsage() const {
         return device.CanReportMemoryUsage();
     }

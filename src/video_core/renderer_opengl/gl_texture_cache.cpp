@@ -585,6 +585,21 @@ void TextureCacheRuntime::FreeDeferredStagingBuffer(StagingBufferMap& buffer) {
     staging_buffer_pool.FreeDeferredStagingBuffer(buffer);
 }
 
+#ifdef NXBOX_UWP
+// NXBOX_TEXCACHE_MB=<n> caps the texture cache at n MiB (critical at 1.25 n): the Xbox GPU's
+// dedicated segment is only 512 MiB and anything beyond it is paged in and out.
+void TextureCacheRuntime::ApplyMemoryBudgetOverride(u64& expected, u64& critical) const {
+    char value[16]{};
+    if (GetEnvironmentVariableA("NXBOX_TEXCACHE_MB", value, sizeof(value)) != 0) {
+        const u64 megabytes = std::strtoull(value, nullptr, 10);
+        if (megabytes != 0) {
+            expected = megabytes * 1_MiB;
+            critical = expected + expected / 4;
+        }
+    }
+}
+#endif
+
 u64 TextureCacheRuntime::GetDeviceMemoryUsage() const {
     if (device.CanReportMemoryUsage()) {
         return device_access_memory - device.GetCurrentDedicatedVideoMemory();
