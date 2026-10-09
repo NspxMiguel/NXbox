@@ -58,6 +58,32 @@ inline void nxbox_api_record(ID3D12Device *dev, const char *call,
   if (ring.captured.load(std::memory_order_acquire))
     return;
   const auto seq = ring.next.fetch_add(1);
+  {
+    // Call-type histogram per 25000 recorded calls, to see what a slow phase is made of.
+    // Diagnostic only: racy increments may lose a count.
+    struct Count { const char *name; unsigned long long n; };
+    static Count counts[64];
+    static unsigned used = 0;
+    unsigned i = 0;
+    while (i < used && counts[i].name != call)
+      ++i;
+    if (i == used && used < 64) {
+      counts[used].name = call;
+      i = used++;
+    }
+    if (i < 64)
+      ++counts[i].n;
+    if (seq % 25000 == 24999) {
+      char text[1024];
+      int length = 0;
+      for (unsigned j = 0; j < used && length < (int)sizeof(text) - 48; ++j) {
+        length += snprintf(text + length, sizeof(text) - length, "%s=%llu ", counts[j].name,
+                           counts[j].n);
+        counts[j].n = 0;
+      }
+      SetEnvironmentVariableA("NXBOX_D3D12_CALLS", text);
+    }
+  }
   char line[NxboxApiRing::line_size];
   snprintf(line, sizeof(line),
            "seq=%llu ms=%llu tid=%lu dev=%p call=%s site=%s hr=0x%08x "
