@@ -17,7 +17,7 @@ struct NxboxProfile {
     std::string text;
   } top[6];
   unsigned batches = 0;
-  unsigned long long latency_us = 0, run_us = 0, max_latency_us = 0;
+  unsigned long long latency_us = 0, run_us = 0, max_latency_us = 0, seen_us = 0, wall_us = 0;
   unsigned long long total = 0;
 };
 inline NxboxProfile &nxbox_profile() {
@@ -154,6 +154,10 @@ inline void nxbox_profile_collect(ID3D12CommandQueue *queue, const NxboxBatchJou
         if (us > p.max_latency_us)
           p.max_latency_us = us;
         p.run_us += (unsigned long long)(double(t[journal->prof_count] - t[0]) * 1e6 / double(freq));
+        // From the list's last GPU timestamp to now (the CPU has just seen the fence complete),
+        // and the whole Execute-to-now wall time.
+        p.seen_us += (unsigned long long)(double(gpu_now - t[journal->prof_count]) * 1e6 / double(freq));
+        p.wall_us += (unsigned long long)((double(cpu_now) / double(qpc_freq.QuadPart) - submit) * 1e6);
       }
     }
   }
@@ -170,7 +174,8 @@ inline void nxbox_profile_collect(ID3D12CommandQueue *queue, const NxboxBatchJou
   std::sort(sorted.begin(), sorted.end(), [](auto &x, auto &y) { return x.first > y.first; });
   std::string out = "freq=" + std::to_string(freq) + " batches=40 total=" + std::to_string(p.total) +
                     " start_latency_us=" + std::to_string(p.latency_us) + " max_latency_us=" +
-                    std::to_string(p.max_latency_us) + " run_us=" + std::to_string(p.run_us);
+                    std::to_string(p.max_latency_us) + " run_us=" + std::to_string(p.run_us) +
+                    " end_to_seen_us=" + std::to_string(p.seen_us) + " wall_us=" + std::to_string(p.wall_us);
   for (size_t i = 0; i < sorted.size() && i < 10; ++i)
     out += " " + sorted[i].second;
   for (auto &top : p.top)
@@ -181,7 +186,7 @@ inline void nxbox_profile_collect(ID3D12CommandQueue *queue, const NxboxBatchJou
   SetEnvironmentVariableA("NXBOX_D3D12_GPUPROF", out.c_str());
   p.kinds.clear();
   p.total = 0;
-  p.latency_us = p.run_us = p.max_latency_us = 0;
+  p.latency_us = p.run_us = p.max_latency_us = p.seen_us = p.wall_us = 0;
   for (auto &top : p.top)
     top = {};
 }
