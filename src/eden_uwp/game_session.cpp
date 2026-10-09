@@ -918,11 +918,24 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 for (std::size_t i = 0; i < names.size(); ++i) {
                     collect(names[i], last[i]);
                 }
+                // The journal of a list whose Close failed: one variable per 4 KB part.
+                for (int part = 0; part < 64; ++part) {
+                    char value[8192]{};
+                    const auto name = fmt::format("NXBOX_D3D12_BATCH_JOURNAL_{}", part);
+                    const auto length = GetEnvironmentVariableA(name.c_str(), value, sizeof(value));
+                    if (length == 0 || length >= sizeof(value)) {
+                        break;
+                    }
+                    static std::set<std::string> journal_logged;
+                    if (journal_logged.insert(name + value).second) {
+                        log_report(name.c_str(), value);
+                    }
+                }
                 static constexpr const char* extended_names[]{
                     "NXBOX_D3D12_PSO_FAIL_FIRST",    "NXBOX_D3D12_PSO_FIX",
                     "NXBOX_D3D12_PSO_DXIL",          "NXBOX_D3D12_SYNC_ERROR",
                     "NXBOX_D3D12_HEAP_POLICY",       "NXBOX_D3D12_DEBUG_STATUS",
-                    "NXBOX_D3D12_DEBUG_UNAVAILABLE", "NXBOX_D3D12_LIST_ERROR", "NXBOX_D3D12_CALLS", "NXBOX_D3D12_GPUPROF", "NXBOX_D3D12_DRAWTIME",
+                    "NXBOX_D3D12_DEBUG_UNAVAILABLE", "NXBOX_D3D12_LIST_ERROR", "NXBOX_D3D12_CALLS", "NXBOX_D3D12_GPUPROF", "NXBOX_D3D12_FIRST_BAD_BATCH", "NXBOX_D3D12_DRAWTIME",
                     "NXBOX_D3D12_GBV_STATUS", "NXBOX_D3D12_BATCH_TIME",
                     "NXBOX_D3D12_VIDMEM", "NXBOX_D3D12_EVICT",
                     "NXBOX_D3D12_VIEW_CAST"};

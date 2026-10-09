@@ -1125,7 +1125,10 @@ def patch_dred(root: Path) -> None:
     replace(
         batch,
         "   nxbox_report_batch(screen, nxbox_close_hr);",
-        '   nxbox_report_batch(ctx, batch, nxbox_close_hr, "close", 0);',
+        '   nxbox_report_batch(ctx, batch, nxbox_close_hr, "close", 0);\n'
+        "   if (FAILED(nxbox_close_hr))\n"
+        "      nxbox_sync_publish(ctx->nxbox_journal, ctx, (unsigned)(batch - ctx->batches),\n"
+        "                         batch->submit_id, 0, nxbox_close_hr, false, false);",
     )
     anchor = "   screen->cmdqueue->ExecuteCommandLists(count_to_execute, to_execute);"
     replace(
