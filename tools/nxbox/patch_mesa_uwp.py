@@ -90,6 +90,7 @@ def patch(root: Path) -> None:
     patch_no_evict(root)
     patch_resident_create(root)
     patch_view_cast(root)
+    patch_buffer_staging(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -2987,8 +2988,59 @@ def patch_view_cast(root: Path) -> None:
     draw.write_text(source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1))
 
 
+def patch_buffer_staging(root: Path) -> None:
+    """A write-only, discarding map of a buffer the GPU still references (glNamedBufferSubData and
+    friends) made Mesa flush the command list and wait for the GPU to go idle: Breath of the Wild
+    does that many times per list and fell to 2 frames per second, with the GPU almost idle. Route
+    those maps through the staging path the driver already uses for default-usage buffers (a
+    temporary upload buffer plus a GPU-side copy), which never waits. NXBOX_BUFFER_STAGING=0
+    turns it off."""
+    path = root / "src/gallium/drivers/d3d12/d3d12_resource.cpp"
+    source = path.read_text()
+    anchor = "#define BUFFER_MAP_ALIGNMENT 64\n"
+    helper = (
+        anchor
+        + """
+static bool
+nxbox_use_staging(struct d3d12_context *ctx, struct d3d12_resource *res, unsigned usage,
+                  const struct pipe_box *box)
+{
+   static int enabled = -1;
+   if (enabled < 0) {
+      const char *value = getenv("NXBOX_BUFFER_STAGING");
+      enabled = !(value && value[0] == '0');
+   }
+   if (!enabled || res->base.b.target != PIPE_BUFFER || !(usage & PIPE_MAP_WRITE))
+      return false;
+   if (usage & (PIPE_MAP_READ | PIPE_MAP_UNSYNCHRONIZED | PIPE_MAP_PERSISTENT | PIPE_MAP_COHERENT |
+                PIPE_MAP_DONTBLOCK | PIPE_MAP_FLUSH_EXPLICIT))
+      return false;
+   if (!(usage & (PIPE_MAP_DISCARD_RANGE | PIPE_MAP_DISCARD_WHOLE_RESOURCE)))
+      return false;
+   if (!resource_is_busy(ctx, res, true))
+      return false;
+   /* The staging copy bypasses synchronize(), which is what records the written range. */
+   util_range_add(&res->base.b, &res->valid_buffer_range, box->x, box->x + box->width);
+   return true;
+}
+"""
+    )
+    old = "   if (can_map_directly(&res->base.b)) {\n      if (pres->target == PIPE_BUFFER) {\n         ptrans->stride = 0;"
+    new = (
+        "   if (can_map_directly(&res->base.b) && !nxbox_use_staging(ctx, res, usage, box)) {\n"
+        "      if (pres->target == PIPE_BUFFER) {\n         ptrans->stride = 0;"
+    )
+    for text in (anchor, old):
+        if source.count(text) != 1:
+            raise RuntimeError("Pinned Mesa d3d12_resource.cpp does not match the buffer staging patch")
+    if "#include <stdlib.h>" not in source:
+        source = source.replace('#include "d3d12_resource.h"', '#include "d3d12_resource.h"\n#include <stdlib.h>', 1)
+    path.write_text(source.replace(anchor, helper).replace(old, new))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     patch(parser.parse_args().root)
+
 
