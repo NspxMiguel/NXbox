@@ -2710,7 +2710,36 @@ def patch_bisect_switches(root: Path) -> None:
         "   }\n"
         "   return skip;\n"
         "}\n\n"
+        "/* CPU time spent inside d3d12_draw_vbo, published every 4000 draws as NXBOX_D3D12_DRAWTIME. */\n"
+        "#include <atomic>\n"
+        "struct NxboxDrawTimer {\n"
+        "   LARGE_INTEGER start;\n"
+        "   NxboxDrawTimer() { QueryPerformanceCounter(&start); }\n"
+        "   ~NxboxDrawTimer()\n"
+        "   {\n"
+        "      static std::atomic<long long> ticks{0};\n"
+        "      static std::atomic<unsigned> draws{0};\n"
+        "      LARGE_INTEGER end;\n"
+        "      QueryPerformanceCounter(&end);\n"
+        "      ticks += end.QuadPart - start.QuadPart;\n"
+        "      if (++draws % 4000 == 0) {\n"
+        "         LARGE_INTEGER freq;\n"
+        "         QueryPerformanceFrequency(&freq);\n"
+        "         char text[96];\n"
+        "         snprintf(text, sizeof(text), \"draws=4000 ms=%lld\", (ticks.exchange(0) * 1000) / freq.QuadPart);\n"
+        "         SetEnvironmentVariableA(\"NXBOX_D3D12_DRAWTIME\", text);\n"
+        "      }\n"
+        "   }\n"
+        "};\n\n"
     )
+    vbo_old = (
+        "               unsigned num_draws)\n"
+        "{\n"
+        "   if (num_draws > 1) {\n"
+    )
+    if source.count(vbo_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_draw_vbo does not match the draw timer anchor")
+    source = source.replace(vbo_old, vbo_old.replace("{\n", "{\n   NxboxDrawTimer nxbox_draw_timer;\n", 1))
     source = source.replace(gfx_old, gfx_new).replace(compute_old, compute_new)
     anchor = '#include "util/u_math.h"\n'
     if source.count(anchor) != 1:
