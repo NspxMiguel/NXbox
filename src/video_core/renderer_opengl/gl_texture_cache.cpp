@@ -18,6 +18,9 @@
 #include "common/nxbox_gl_readback.h"
 #ifdef NXBOX_UWP
 #include "common/nxbox_stall.h"
+// Declared directly: windows.h in GL code clashes with glad.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetEnvironmentVariableA(const char*, char*,
+                                                                                 unsigned long);
 #endif
 #include "common/literals.h"
 #include "common/settings.h"
@@ -586,7 +589,20 @@ u64 TextureCacheRuntime::GetDeviceMemoryUsage() const {
     if (device.CanReportMemoryUsage()) {
         return device_access_memory - device.GetCurrentDedicatedVideoMemory();
     }
+#ifdef NXBOX_UWP
+    // Mesa d3d12 cannot report memory through GL, but its residency manager publishes the video
+    // memory usage in an environment variable. A constant here keeps the cache's collector in
+    // aggressive mode forever, evicting and re-uploading textures every frame.
+    char report[200]{};
+    if (GetEnvironmentVariableA("NXBOX_D3D12_VIDMEM", report, sizeof(report)) != 0) {
+        if (const char* usage = std::strstr(report, "usage=")) {
+            return std::strtoull(usage + 6, nullptr, 10);
+        }
+    }
+    return 0;
+#else
     return 2_GiB;
+#endif
 }
 
 void TextureCacheRuntime::CopyImage(Image& dst_image, Image& src_image,
