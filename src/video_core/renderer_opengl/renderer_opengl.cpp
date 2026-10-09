@@ -167,9 +167,17 @@ void RendererOpenGL::Composite(std::span<const Tegra::FramebufferConfig> framebu
 // so this is the only way to see what the game actually produced.
 void RendererOpenGL::DumpProbeFrame(std::span<const Tegra::FramebufferConfig> framebuffers) {
     static const char* const dump_dir = std::getenv("NXBOX_FRAME_DUMP_DIR");
-    if (dump_dir == nullptr || *dump_dir == '\0' || m_current_frame % 150 != 0) {
+    if (dump_dir == nullptr || *dump_dir == '\0') {
         return;
     }
+    // A game that crawls would take minutes to reach the next 150th frame, so a dump is also
+    // taken once 20 seconds have passed since the last one.
+    static auto last_dump = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    if (m_current_frame % 150 != 0 && now - last_dump < std::chrono::seconds(20)) {
+        return;
+    }
+    last_dump = now;
     constexpr u32 width = 480;
     constexpr u32 height = 270;
     std::vector<u8> pixels(size_t{width} * height * 4);
