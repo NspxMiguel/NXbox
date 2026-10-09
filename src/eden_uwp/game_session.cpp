@@ -624,6 +624,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     int hitches = 0;
     bool paused = false;
     int stall_dumps = 0;
+    int idle_windows = 0;
     const auto started_at = std::chrono::steady_clock::now();
     SCOPE_EXIT {
         lifecycle.CompleteDeferral();
@@ -836,12 +837,16 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             worst_gap_ms = 0.0;
             hitches = 0;
             measured_at = now;
+            idle_windows = frames == measured_frames ? idle_windows + 1 : 0;
             measured_frames = frames;
             // While no frame has appeared, record what every guest thread is doing (state, wait
             // reason and last saved PC/LR) so a stalled boot can be diagnosed.
-            if (frames == 0 && stall_dumps < 3 &&
+            // A game that stops presenting after it was running gets the same dump, twice.
+            if (((frames == 0 && stall_dumps < 3) || (idle_windows >= 2 && stall_dumps < 6)) &&
                 std::chrono::duration<double>(now - started_at).count() > 20.0) {
                 ++stall_dumps;
+                Diagnostic(fmt::format("GUEST_THREADS idle_windows={} frames={}", idle_windows,
+                                       frames));
                 if (auto* process = system.ApplicationProcess()) {
                     for (auto& thread : process->GetThreadList()) {
                         const auto& ctx = thread.GetContext();
