@@ -223,7 +223,7 @@ class MesaApiRingScopeTests(unittest.TestCase):
                         self.assertIn('#pragma once\n#include "nxbox_api_ring.h"', final)
             order = lambda item: (item["file"], item["line"])
             self.assertEqual(sorted(extracted, key=order), inventory)
-            self.assertEqual(len(extracted), 177)
+            self.assertEqual(len(extracted), 184)
             self.assertEqual(len({item["file"] for item in extracted}), 28)
             # The ring never dereferences a Mesa screen; its definition requires
             # COM types, not a complete d3d12_screen. No member is added to it.

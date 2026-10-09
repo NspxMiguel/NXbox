@@ -1494,6 +1494,10 @@ def patch_sync_batch(root: Path) -> None:
     if target.exists():
         raise RuntimeError("Pinned Mesa sync batch helper already exists")
     helper = Path(__file__).with_name("mesa_sync_batch.h").read_text()
+    marker = "/* NXBOX_GPU_PROFILE_HOOK: patch_mesa_uwp.py splices tools/nxbox/mesa_gpu_profile.h here. */\n"
+    if helper.count(marker) != 1:
+        raise RuntimeError("Sync batch helper lost its GPU profile hook")
+    helper = helper.replace(marker, Path(__file__).with_name("mesa_gpu_profile.h").read_text())
     helper = helper.replace(
         "  static std::atomic<bool> stopped{false};\n  return stopped;",
         "  return nxbox_command_stopped();",
@@ -1511,6 +1515,8 @@ def patch_sync_batch(root: Path) -> None:
     replace("d3d12_context.cpp", anchor, anchor + "\n   delete ctx->nxbox_journal;")
     anchor = "   ctx->cmdlist->SetDescriptorHeaps(2, heaps);"
     replace("d3d12_batch.cpp", anchor, "   nxbox_journal_reset(ctx->nxbox_journal);\n" + anchor)
+    anchor = "   HRESULT nxbox_close_hr = ctx->cmdlist->Close();"
+    replace("d3d12_batch.cpp", anchor, "   NXBOX_PROFILE_CLOSE(ctx->cmdlist, ctx->nxbox_journal);\n" + anchor)
 
     for name, methods in calls.items():
         for method, count in methods.items():
@@ -1606,6 +1612,7 @@ def patch_sync_batch(root: Path) -> None:
          batch->has_errors = true;
       } else {
          nxbox_sync_completed(screen->dev);
+         NXBOX_PROFILE_COLLECT(screen->cmdqueue, ctx->nxbox_journal);
       }
    }
 """,

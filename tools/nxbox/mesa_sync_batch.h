@@ -31,6 +31,9 @@ struct NxboxBatchJournal {
   ID3D12RootSignature *graphics_root, *compute_root;
   char targets[256];
   std::vector<std::string> entries, fixup_entries;
+  // GPU profile (NXBOX_GPU_PROFILE=1): timestamp slots stamped before each command.
+  unsigned prof_base, prof_count;
+  std::vector<size_t> stamp_entry;
 };
 
 inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
@@ -45,6 +48,8 @@ inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
     journal->pso = nullptr; // CommandList::Reset starts with a null PSO.
     journal->graphics_root = journal->compute_root = nullptr;
     journal->targets[0] = 0;
+    journal->prof_base = journal->prof_count = 0;
+    journal->stamp_entry.clear();
   }
 }
 
@@ -117,6 +122,17 @@ inline UINT nxbox_bc_copy_end(UINT begin, UINT end, UINT source_size,
 /* A temporary wrapper preserves argument evaluation and unbraced if/else
  * semantics. Copy safety remains active with synchronous diagnostics disabled.
  */
+// Diagnostic switches (NXBOX_SKIP_COPY / NXBOX_SKIP_CLEAR = 1) that drop whole classes of commands.
+inline bool nxbox_skip_class(const char *name) {
+  char value[4]{};
+  return GetEnvironmentVariableA(name, value, sizeof(value)) == 1 && value[0] == '1';
+}
+/* NXBOX_GPU_PROFILE_HOOK: patch_mesa_uwp.py splices tools/nxbox/mesa_gpu_profile.h here. */
+#ifndef NXBOX_PROFILE_STAMP
+#define NXBOX_PROFILE_STAMP(journal, commands) ((void)0)
+#define NXBOX_PROFILE_CLOSE(commands, journal) ((void)0)
+#define NXBOX_PROFILE_COLLECT(queue, journal) ((void)0)
+#endif
 struct NxboxJournalCommands {
   NxboxBatchJournal *journal;
   ID3D12GraphicsCommandList *commands;
@@ -172,7 +188,9 @@ struct NxboxJournalCommands {
           d, (unsigned long long)dst_offset, s, (unsigned long long)src_offset,
           (unsigned long long)bytes);
     }
-    commands->CopyBufferRegion(dst, dst_offset, src, src_offset, bytes);
+    static const bool skip_CopyBufferRegion = nxbox_skip_class("NXBOX_SKIP_COPY");
+    if (!skip_CopyBufferRegion)
+      commands->CopyBufferRegion(dst, dst_offset, src, src_offset, bytes);
   }
   static void location(char *text, size_t size,
                        const D3D12_TEXTURE_COPY_LOCATION *loc) {
@@ -245,7 +263,9 @@ struct NxboxJournalCommands {
                         "CopyTextureRegion dst=%s xyz=%u,%u,%u src=%s box=%s",
                         d, x, y, z, s, b);
     }
-    commands->CopyTextureRegion(dst, x, y, z, src, box);
+    static const bool skip_CopyTextureRegion = nxbox_skip_class("NXBOX_SKIP_COPY");
+    if (!skip_CopyTextureRegion)
+      commands->CopyTextureRegion(dst, x, y, z, src, box);
   }
   void CopyResource(ID3D12Resource *dst, ID3D12Resource *src) {
     if (journal) {
@@ -269,7 +289,9 @@ struct NxboxJournalCommands {
           count && rects ? (long)rects[0].top : 0L,
           count && rects ? (long)rects[0].right : 0L,
           count && rects ? (long)rects[0].bottom : 0L);
-    commands->ClearRenderTargetView(view, color, count, rects);
+    static const bool skip_ClearRenderTargetView = nxbox_skip_class("NXBOX_SKIP_CLEAR");
+    if (!skip_ClearRenderTargetView)
+      commands->ClearRenderTargetView(view, color, count, rects);
   }
   void ClearDepthStencilView(D3D12_CPU_DESCRIPTOR_HANDLE view,
                              D3D12_CLEAR_FLAGS flags, FLOAT depth,
@@ -371,10 +393,13 @@ struct NxboxJournalCommands {
   }
 };
 
+
 inline NxboxJournalCommands
 nxbox_journal_commands(NxboxBatchJournal *journal,
                        ID3D12GraphicsCommandList *commands,
                        const char *list = "main") {
+  if (strcmp(list, "main") == 0)
+    NXBOX_PROFILE_STAMP(journal, commands);
   return {journal, commands, list};
 }
 
