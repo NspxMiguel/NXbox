@@ -437,7 +437,13 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                 context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
                 if (GetThreadContext(thread, &context)) {
                     rip = context.Rip;
-                    if (!CopyStackSlice(context.Rsp, stack.data(), sizeof(stack))) {
+                    // Near the base of the stack a long copy faults: halve it until one works.
+                    bool copied = false;
+                    for (std::size_t bytes = sizeof(stack); bytes >= 256 && !copied; bytes /= 2) {
+                        stack.fill(0);
+                        copied = CopyStackSlice(context.Rsp, stack.data(), bytes);
+                    }
+                    if (!copied) {
                         stack.fill(0);
                     }
                     have = true;
