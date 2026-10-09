@@ -460,7 +460,23 @@ void RunStackSampler(const std::atomic<bool>& closed) {
             if (auto text = describe(rip); !text.empty()) {
                 ++leaf[text];
             } else {
-                ++leaf[std::string(label) + "other"];
+                // A system library: name it, since the PDBs only cover the app and Mesa.
+                std::string module = "other";
+                HMODULE owner = nullptr;
+                if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                       reinterpret_cast<LPCWSTR>(rip), &owner) &&
+                    owner != nullptr) {
+                    wchar_t path[260]{};
+                    if (GetModuleFileNameW(owner, path, 260) != 0) {
+                        std::wstring full(path);
+                        const auto slash = full.find_last_of(L'\\');
+                        module = winrt::to_string(
+                            slash == std::wstring::npos ? full : full.substr(slash + 1));
+                    }
+                    module += fmt::format("+{:x}", rip - reinterpret_cast<std::uintptr_t>(owner));
+                }
+                ++leaf[std::string(label) + module];
             }
             std::set<std::string> seen;
             bool innermost = true;
