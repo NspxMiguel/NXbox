@@ -2598,7 +2598,7 @@ def patch_query_policy(root: Path) -> None:
 
 def patch_bisect_switches(root: Path) -> None:
     """Runtime switches that drop whole classes of GPU work, to bisect a device removal on the
-    console without rebuilding: NXBOX_SKIP_COMPUTE=1 drops dispatches and NXBOX_SKIP_SO=1 drops
+    console without rebuilding: NXBOX_SKIP_DRAW=1 drops every draw, NXBOX_SKIP_COMPUTE=1 drops dispatches and NXBOX_SKIP_SO=1 drops
     draws that have stream-output targets bound. Both are off by default."""
     path = root / "src/gallium/drivers/d3d12/d3d12_draw.cpp"
     source = path.read_text()
@@ -2611,6 +2611,12 @@ def patch_bisect_switches(root: Path) -> None:
     )
     gfx_new = gfx_old + (
         "   if (ctx->gfx_pipeline_state.num_so_targets && nxbox_switch_on(\"NXBOX_SKIP_SO\")) {\n"
+        "      if (index_buffer && dinfo->has_user_indices)\n"
+        "         pipe_resource_reference(&index_buffer, NULL);\n"
+        "      return;\n"
+        "   }\n"
+        "   static const bool skip_all_draws = nxbox_switch_on(\"NXBOX_SKIP_DRAW\");\n"
+        "   if (skip_all_draws) {\n"
         "      if (index_buffer && dinfo->has_user_indices)\n"
         "         pipe_resource_reference(&index_buffer, NULL);\n"
         "      return;\n"
