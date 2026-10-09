@@ -18,6 +18,16 @@
 #include "video_core/host1x/host1x.h"
 #include "video_core/renderer_base.h"
 
+#ifdef NXBOX_UWP
+// Declared directly: windows.h in the video core clashes with glad.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
+namespace {
+std::uint32_t NxboxCurrentThreadId() {
+    return static_cast<std::uint32_t>(GetCurrentThreadId());
+}
+} // namespace
+#endif
+
 namespace VideoCommon::GPUThread {
 
 ThreadManager::ThreadManager(Core::System& system_)
@@ -30,6 +40,9 @@ void ThreadManager::StartThread(VideoCore::RendererBase& renderer, Core::Fronten
     rasterizer = renderer.ReadRasterizer();
     thread = std::jthread([&](std::stop_token stop_token) {
         Common::SetCurrentThreadName("GPU");
+#ifdef NXBOX_UWP
+        NxboxStall::gpu_thread_id.store(NxboxCurrentThreadId());
+#endif
         Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
         Common::SetCurrentThreadToPerformanceCores();
         system.RegisterHostThread();

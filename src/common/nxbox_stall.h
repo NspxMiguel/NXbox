@@ -15,6 +15,9 @@
 // single call, and the frontend reads and resets them once per pacing window.
 namespace NxboxStall {
 
+// Thread id of the emulated GPU thread, for the optional stack sampler (NXBOX_SAMPLER=1).
+inline std::atomic<std::uint32_t> gpu_thread_id{0};
+
 enum class Kind {
     Shader,
     Upload,

@@ -3,6 +3,7 @@
 #include "eden_uwp/shader_share.h"
 
 #include <algorithm>
+#include <set>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -361,6 +362,124 @@ void CheckGameReads(const std::string& path) {
                            mismatches));
 }
 
+// Kept free of objects with destructors so MSVC accepts the structured exception handler.
+bool CopyStackSlice(std::uintptr_t from, void* to, std::size_t bytes) {
+    __try {
+        std::memcpy(to, reinterpret_cast<const void*>(from), bytes);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// NXBOX_SAMPLER=1: samples the emulated GPU thread every 8 ms (suspend, read the instruction
+// pointer and a slice of the stack, resume) and logs the most frequent return addresses as
+// module+RVA every 10 s, to be symbolized against the build's PDB. Nothing is allocated while the
+// thread is suspended, so the sampler cannot deadlock on a lock the sampled thread holds.
+void RunStackSampler(const std::atomic<bool>& closed) {
+    struct Range {
+        std::uintptr_t begin = 0, end = 0;
+        const char* name = "";
+    };
+    const auto range_of = [](const wchar_t* module, const char* name) {
+        Range range;
+        const auto base = reinterpret_cast<std::uintptr_t>(GetModuleHandleW(module));
+        if (base != 0) {
+            const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+            const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+            range = {base, base + nt->OptionalHeader.SizeOfImage, name};
+        }
+        return range;
+    };
+    const std::array<Range, 2> ranges{range_of(nullptr, "exe"),
+                                      range_of(L"libgallium_wgl.dll", "gallium")};
+    HANDLE thread = nullptr;
+    std::map<std::string, unsigned> leaf, frames;
+    unsigned samples = 0;
+    auto window_start = std::chrono::steady_clock::now();
+    while (!closed.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        const auto id = NxboxStall::gpu_thread_id.load();
+        if (id == 0) {
+            continue;
+        }
+        if (thread == nullptr) {
+            thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
+                                FALSE, id);
+            if (thread == nullptr) {
+                Diagnostic(fmt::format("SAMPLER OpenThread failed {}", GetLastError()));
+                std::this_thread::sleep_for(std::chrono::seconds(5));
+                continue;
+            }
+        }
+        std::array<std::uintptr_t, 512> stack{};
+        std::uintptr_t rip = 0;
+        bool have = false;
+        if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
+            CONTEXT context{};
+            context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+            if (GetThreadContext(thread, &context)) {
+                rip = context.Rip;
+                if (!CopyStackSlice(context.Rsp, stack.data(), sizeof(stack))) {
+                    stack.fill(0);
+                }
+                have = true;
+            }
+            ResumeThread(thread);
+        }
+        if (!have) {
+            continue;
+        }
+        ++samples;
+        const auto describe = [&](std::uintptr_t address) -> std::string {
+            for (const Range& range : ranges) {
+                if (address >= range.begin && address < range.end) {
+                    return fmt::format("{}+{:x}", range.name, address - range.begin);
+                }
+            }
+            return {};
+        };
+        if (auto text = describe(rip); !text.empty()) {
+            ++leaf[text];
+        } else {
+            ++leaf["other"];
+        }
+        std::set<std::string> seen;
+        for (const auto word : stack) {
+            if (auto text = describe(word); !text.empty()) {
+                seen.insert(std::move(text));
+            }
+        }
+        for (const auto& text : seen) {
+            ++frames[text];
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window_start >= std::chrono::seconds(10)) {
+            const auto top = [](const std::map<std::string, unsigned>& counts, std::size_t limit) {
+                std::vector<std::pair<unsigned, std::string>> sorted;
+                for (const auto& [text, count] : counts) {
+                    sorted.emplace_back(count, text);
+                }
+                std::sort(sorted.rbegin(), sorted.rend());
+                std::string out;
+                for (std::size_t i = 0; i < sorted.size() && i < limit; ++i) {
+                    out += fmt::format(" {}={}", sorted[i].second, sorted[i].first);
+                }
+                return out;
+            };
+            Diagnostic(fmt::format("SAMPLER samples={} leaf:{}", samples, top(leaf, 15)));
+            Diagnostic(fmt::format("SAMPLER samples={} frames:{}", samples, top(frames, 40)));
+            leaf.clear();
+            frames.clear();
+            samples = 0;
+            window_start = now;
+        }
+    }
+    if (thread != nullptr) {
+        CloseHandle(thread);
+    }
+}
+
 void RunGame(MesaWindow& window, const std::string& bundled_path, const std::atomic<bool>& closed,
              const std::shared_ptr<XboxGamepad>& gamepad, Lifecycle& lifecycle,
              bool chosen_in_library, const std::string& protocol_path, Ui::LaunchScreen* splash,
@@ -610,6 +729,9 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     void(system.Run());
     Diagnostic("GAME_RUNNING");
     memory_stage("loaded");
+    if (const char* sampler = std::getenv("NXBOX_SAMPLER"); sampler != nullptr && sampler[0] == '1') {
+        std::thread([&closed] { RunStackSampler(closed); }).detach();
+    }
     // The guest's own HID resource manager applies Settings::values.players lazily, on its first
     // HID service call. Poll() runs immediately on the host thread regardless of guest timing, so
     // without this the controller stays at its construction default (NpadStyleIndex::None,
