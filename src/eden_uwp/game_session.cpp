@@ -393,71 +393,83 @@ void RunStackSampler(const std::atomic<bool>& closed) {
     };
     const std::array<Range, 2> ranges{range_of(nullptr, "exe"),
                                       range_of(L"libgallium_wgl.dll", "gallium")};
-    HANDLE thread = nullptr;
+    HANDLE threads[2]{nullptr, nullptr};
     std::map<std::string, unsigned> leaf, frames, inner;
     unsigned samples = 0;
     auto window_start = std::chrono::steady_clock::now();
     while (!closed.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
-        const auto id = NxboxStall::gpu_thread_id.load();
-        if (id == 0) {
-            continue;
-        }
-        if (thread == nullptr) {
-            thread = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION,
-                                FALSE, id);
-            if (thread == nullptr) {
-                Diagnostic(fmt::format("SAMPLER OpenThread failed {}", GetLastError()));
-                std::this_thread::sleep_for(std::chrono::seconds(5));
+        for (int which = 0; which < 2; ++which) {
+            std::uint32_t id = 0;
+            if (which == 0) {
+                id = NxboxStall::gpu_thread_id.load();
+            } else {
+                // The thread running Mesa's d3d12 draws publishes its id on its first draw.
+                char value[16]{};
+                if (GetEnvironmentVariableA("NXBOX_D3D12_DRIVER_TID", value, sizeof(value)) != 0) {
+                    id = static_cast<std::uint32_t>(std::strtoul(value, nullptr, 10));
+                }
+            }
+            if (id == 0) {
                 continue;
             }
-        }
-        std::array<std::uintptr_t, 512> stack{};
-        std::uintptr_t rip = 0;
-        bool have = false;
-        if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
-            CONTEXT context{};
-            context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
-            if (GetThreadContext(thread, &context)) {
-                rip = context.Rip;
-                if (!CopyStackSlice(context.Rsp, stack.data(), sizeof(stack))) {
-                    stack.fill(0);
-                }
-                have = true;
-            }
-            ResumeThread(thread);
-        }
-        if (!have) {
-            continue;
-        }
-        ++samples;
-        const auto describe = [&](std::uintptr_t address) -> std::string {
-            for (const Range& range : ranges) {
-                if (address >= range.begin && address < range.end) {
-                    return fmt::format("{}+{:x}", range.name, address - range.begin);
+            HANDLE& thread = threads[which];
+            if (thread == nullptr) {
+                thread = OpenThread(
+                    THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE,
+                    id);
+                if (thread == nullptr) {
+                    Diagnostic(fmt::format("SAMPLER OpenThread failed {}", GetLastError()));
+                    continue;
                 }
             }
-            return {};
-        };
-        if (auto text = describe(rip); !text.empty()) {
-            ++leaf[text];
-        } else {
-            ++leaf["other"];
-        }
-        std::set<std::string> seen;
-        bool innermost = true;
-        for (const auto word : stack) {
-            if (auto text = describe(word); !text.empty()) {
-                if (innermost) {
-                    // The first return address above the leaf: the app code that made the wait.
-                    ++inner[text];
-                    innermost = false;
+            std::array<std::uintptr_t, 512> stack{};
+            std::uintptr_t rip = 0;
+            bool have = false;
+            if (SuspendThread(thread) != static_cast<DWORD>(-1)) {
+                CONTEXT context{};
+                context.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+                if (GetThreadContext(thread, &context)) {
+                    rip = context.Rip;
+                    if (!CopyStackSlice(context.Rsp, stack.data(), sizeof(stack))) {
+                        stack.fill(0);
+                    }
+                    have = true;
                 }
-                seen.insert(std::move(text));
+                ResumeThread(thread);
             }
-        }
-        for (const auto& text : seen) {
-            ++frames[text];
+            if (!have) {
+                continue;
+            }
+            ++samples;
+            const char* label = which == 0 ? "gpu:" : "drv:";
+            const auto describe = [&](std::uintptr_t address) -> std::string {
+                for (const Range& range : ranges) {
+                    if (address >= range.begin && address < range.end) {
+                        return fmt::format("{}{}+{:x}", label, range.name, address - range.begin);
+                    }
+                }
+                return {};
+            };
+            if (auto text = describe(rip); !text.empty()) {
+                ++leaf[text];
+            } else {
+                ++leaf[std::string(label) + "other"];
+            }
+            std::set<std::string> seen;
+            bool innermost = true;
+            for (const auto word : stack) {
+                if (auto text = describe(word); !text.empty()) {
+                    if (innermost) {
+                        ++inner[text];
+                        innermost = false;
+                    }
+                    seen.insert(std::move(text));
+                }
+            }
+            for (const auto& text : seen) {
+                ++frames[text];
+            }
         }
         const auto now = std::chrono::steady_clock::now();
         if (now - window_start >= std::chrono::seconds(10)) {
@@ -483,8 +495,10 @@ void RunStackSampler(const std::atomic<bool>& closed) {
             window_start = now;
         }
     }
-    if (thread != nullptr) {
-        CloseHandle(thread);
+    for (HANDLE handle : threads) {
+        if (handle != nullptr) {
+            CloseHandle(handle);
+        }
     }
 }
 
