@@ -16,15 +16,12 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <cwchar>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <memory>
-#include <optional>
-#include <set>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -36,6 +33,7 @@
 #include <winrt/Windows.Data.Json.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
+#include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Web.Http.h>
@@ -48,6 +46,7 @@
 #include "eden_uwp/ui/strings.h"
 #include "eden_uwp/ui/text_entry.h"
 #include "eden_uwp/ui/theme.h"
+#include "eden_uwp/ui/tinfoil_index.h"
 #include "eden_uwp/ui/widgets.h"
 
 namespace EdenXbox::Ui {
@@ -95,8 +94,7 @@ constexpr float kWorkHeight = 360.0f;
 constexpr auto kToastDuration = std::chrono::milliseconds(4200);
 constexpr auto kRateWindow = std::chrono::milliseconds(500);
 
-constexpr std::size_t kMaxEntries = 5000;     // per source, so a huge index cannot eat the memory
-constexpr std::size_t kMaxDirectories = 32;   // indexes followed one level down
+constexpr std::size_t kMaxEntries = Tinfoil::kMaxEntries;
 constexpr auto kRequestTimeout = std::chrono::seconds(30);
 
 struct Source {
@@ -104,7 +102,7 @@ struct Source {
     std::string url;
 };
 
-enum class Kind { Other, Game, Update, Dlc };
+using Kind = Tinfoil::Kind;
 
 struct Entry {
     std::wstring name; // what the source calls it, for display
@@ -234,52 +232,6 @@ std::string Utf8(const std::wstring& text) {
     return winrt::to_string(text);
 }
 
-// ---- Classifying a name ----
-
-// Tinfoil-style names carry "[<16 hex title id>]" and "[v<version>]". A title id ending in 000 is
-// a base game, 800 an update, anything else add-on content. Names without a title id fall back to
-// the version tag and to the word DLC.
-Kind Classify(const std::string& name) {
-    const std::string lower = Lower(name);
-    std::string title_id;
-    long long version = -1;
-    for (std::size_t i = 0; i < lower.size(); ++i) {
-        if (lower[i] != '[') {
-            continue;
-        }
-        const std::size_t close = lower.find(']', i);
-        if (close == std::string::npos) {
-            break;
-        }
-        const std::string tag = lower.substr(i + 1, close - i - 1);
-        const auto all = [&tag](std::size_t from, auto predicate) {
-            return std::all_of(tag.begin() + static_cast<std::ptrdiff_t>(from), tag.end(),
-                               [&predicate](char c) { return predicate(c); });
-        };
-        if (tag.size() == 16 && all(0, [](char c) { return HexValue(c) >= 0; })) {
-            title_id = tag;
-        } else if (tag.size() >= 2 && tag.size() <= 10 && tag[0] == 'v' &&
-                   all(1, [](char c) { return c >= '0' && c <= '9'; })) {
-            version = std::stoll(tag.substr(1));
-        }
-        i = close;
-    }
-    if (!title_id.empty()) {
-        const std::string tail = title_id.substr(13);
-        if (tail == "000") {
-            return version > 0 ? Kind::Update : Kind::Game;
-        }
-        return tail == "800" ? Kind::Update : Kind::Dlc;
-    }
-    if (lower.find("dlc") != std::string::npos) {
-        return Kind::Dlc;
-    }
-    if (version > 0) {
-        return Kind::Update;
-    }
-    return version == 0 ? Kind::Game : Kind::Other;
-}
-
 const wchar_t* KindLabel(Kind kind) {
     switch (kind) {
     case Kind::Game:
@@ -346,19 +298,6 @@ std::string StringAt(const JsonObject& object, const wchar_t* key) {
         }
     }
     return {};
-}
-
-double NumberAt(const JsonObject& object, const wchar_t* key) {
-    if (object.HasKey(key)) {
-        const IJsonValue value = object.GetNamedValue(key);
-        if (value.ValueType() == JsonValueType::Number) {
-            return value.GetNumber();
-        }
-        if (value.ValueType() == JsonValueType::String) {
-            return std::atof(winrt::to_string(value.GetString()).c_str());
-        }
-    }
-    return 0.0;
 }
 
 JsonArray ArrayAt(const JsonObject& object, const wchar_t* key) {
@@ -561,10 +500,16 @@ ImportResult ScanDrivesForSources(const std::atomic<bool>& cancel) {
 // ---- Reading a source ----
 
 // GETs a text body. False, with a log line, on a network error or an unsuccessful status.
-bool HttpGetText(const HttpClient& client, const std::string& url, std::string& body) {
+bool HttpGetText(const HttpClient& client, const Tinfoil::Request& request, std::string& body) {
+    const std::string& url = request.url;
     try {
-        const auto response =
-            AwaitBounded(client.GetAsync(Uri{winrt::to_hstring(url)}), kRequestTimeout);
+        const winrt::Windows::Web::Http::HttpRequestMessage message{
+            winrt::Windows::Web::Http::HttpMethod::Get(), Uri{winrt::to_hstring(url)}};
+        for (const auto& [name, value] : request.headers) {
+            void(message.Headers().TryAppendWithoutValidation(winrt::to_hstring(name),
+                                                              winrt::to_hstring(value)));
+        }
+        const auto response = AwaitBounded(client.SendRequestAsync(message), kRequestTimeout);
         if (!response) {
             Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " timed out");
             return false;
@@ -574,120 +519,22 @@ bool HttpGetText(const HttpClient& client, const std::string& url, std::string& 
                                    static_cast<int>(response->StatusCode())));
             return false;
         }
-        const auto text =
-            AwaitBounded(response->Content().ReadAsStringAsync(), kRequestTimeout);
-        if (!text) {
+        // Keep binary bytes intact so the parser can report unsupported encrypted indexes.
+        const auto buffer = AwaitBounded(response->Content().ReadAsBufferAsync(), kRequestTimeout);
+        if (!buffer) {
             Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " body timed out");
             return false;
         }
-        body = winrt::to_string(*text);
+        body.clear();
+        if (buffer->Length() != 0) {
+            body.assign(reinterpret_cast<const char*>(buffer->data()), buffer->Length());
+        }
         return true;
-    } catch (const winrt::hresult_error& error) {
-        Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " failed " +
-                   winrt::to_string(error.message()));
-        return false;
-    }
-}
-
-// An entry's address as the index wrote it (absolute, or relative to the index) made absolute.
-std::optional<std::string> Resolve(const std::string& base, const std::string& reference) {
-    const std::string ref = Trim(reference);
-    if (ref.empty()) {
-        return std::nullopt;
-    }
-    if (IsHttpUrl(ref)) {
-        return ref;
-    }
-    try {
-        const Uri uri{winrt::to_hstring(base), winrt::to_hstring(ref)};
-        std::string absolute = winrt::to_string(uri.AbsoluteUri());
-        if (IsHttpUrl(absolute)) {
-            return absolute;
-        }
     } catch (const winrt::hresult_error&) {
-        // Not a usable address: skipped below.
-    }
-    return std::nullopt;
-}
-
-// Splits "<url>#<name>" into the address to download and the display name (decoded).
-void SplitFragment(const std::string& url, std::string& clean, std::string& fragment) {
-    const std::size_t hash = url.find('#');
-    clean = url.substr(0, hash);
-    fragment = hash == std::string::npos ? std::string() : UrlDecode(url.substr(hash + 1));
-}
-
-std::optional<Entry> MakeEntry(const std::string& base, const std::string& reference,
-                               double size) {
-    const auto absolute = Resolve(base, reference);
-    if (!absolute) {
-        return std::nullopt;
-    }
-    Entry entry;
-    std::string name;
-    SplitFragment(*absolute, entry.url, name);
-    if (name.empty()) {
-        // The last path segment, decoded. "http://host" has none.
-        const std::string no_query = entry.url.substr(0, entry.url.find('?'));
-        const std::size_t scheme = no_query.find("://");
-        const std::size_t last = no_query.find_last_of('/');
-        if (last != std::string::npos && (scheme == std::string::npos || last > scheme + 2)) {
-            name = UrlDecode(no_query.substr(last + 1));
-        }
-    }
-    if (name.empty()) {
-        name = HostOf(entry.url);
-    }
-    entry.kind = Classify(name);
-    entry.name = Widen(name);
-    entry.file = DiskName(entry.name, entry.url);
-    entry.size = size > 0.0 ? static_cast<std::uint64_t>(size) : 0;
-    return entry;
-}
-
-struct ParsedIndex {
-    std::vector<Entry> files;
-    std::vector<std::string> directories;
-    std::wstring success;
-    std::wstring error;
-};
-
-// False when the body is not a JSON object, which is what an encrypted Tinfoil index or a web page
-// looks like.
-bool ParseIndex(const std::string& body, const std::string& base, ParsedIndex& index) {
-    JsonObject root;
-    if (!ParseObject(body, root)) {
+        // HTTP exception messages can include request header values.
+        Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " failed");
         return false;
     }
-    for (const IJsonValue& value : ArrayAt(root, L"files")) {
-        if (index.files.size() >= kMaxEntries) {
-            break;
-        }
-        std::optional<Entry> entry;
-        if (value.ValueType() == JsonValueType::String) {
-            entry = MakeEntry(base, winrt::to_string(value.GetString()), 0.0);
-        } else if (value.ValueType() == JsonValueType::Object) {
-            const JsonObject item = value.as<winrt::Windows::Data::Json::JsonObject>();
-            entry = MakeEntry(base, StringAt(item, L"url"), NumberAt(item, L"size"));
-        }
-        if (entry) {
-            index.files.push_back(std::move(*entry));
-        }
-    }
-    for (const IJsonValue& value : ArrayAt(root, L"directories")) {
-        std::string reference;
-        if (value.ValueType() == JsonValueType::String) {
-            reference = winrt::to_string(value.GetString());
-        } else if (value.ValueType() == JsonValueType::Object) {
-            reference = StringAt(value.as<winrt::Windows::Data::Json::JsonObject>(), L"url");
-        }
-        if (const auto absolute = Resolve(base, reference)) {
-            index.directories.push_back(*absolute);
-        }
-    }
-    index.success = Widen(StringAt(root, L"success"));
-    index.error = Widen(StringAt(root, L"error"));
-    return true;
 }
 
 FetchResult FetchSource(const std::string& url, const std::atomic<bool>& cancel) {
@@ -695,51 +542,57 @@ FetchResult FetchSource(const std::string& url, const std::atomic<bool>& cancel)
     HttpClient client;
     // A failure to add the header is not worth failing the request for.
     void(client.DefaultRequestHeaders().UserAgent().TryParseAdd(L"NXbox/1.0"));
-    std::string body;
-    if (!HttpGetText(client, url, body)) {
-        result.failure = Failure::Unreachable;
-        return result;
-    }
-    ParsedIndex index;
-    if (!ParseIndex(body, url, index)) {
-        Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " unsupported format");
-        result.failure = Failure::Unsupported;
-        return result;
-    }
-    result.entries = std::move(index.files);
-    result.message = !index.success.empty() ? index.success : index.error;
-    // One level down, and never the same index twice.
-    std::set<std::string> visited{url};
-    std::size_t followed = 0;
-    for (const std::string& directory : index.directories) {
-        if (cancel.load() || followed >= kMaxDirectories || result.entries.size() >= kMaxEntries) {
+    Tinfoil::Traversal traversal(url);
+    while (!cancel.load() && result.entries.size() < kMaxEntries) {
+        const auto request = traversal.Next();
+        if (!request) {
             break;
         }
-        if (!visited.insert(directory).second) {
+        std::string body;
+        if (!HttpGetText(client, *request, body)) {
+            if (request->depth == 0) {
+                result.failure = Failure::Unreachable;
+                return result;
+            }
             continue;
         }
-        ++followed;
-        std::string sub_body;
-        ParsedIndex sub;
-        if (!HttpGetText(client, directory, sub_body) || !ParseIndex(sub_body, directory, sub)) {
+        const Tinfoil::Index index = Tinfoil::ParseIndex(body, request->url);
+        if (index.status != Tinfoil::Status::Ok) {
+            if (request->depth == 0) {
+                result.failure = index.status == Tinfoil::Status::SourceError
+                                     ? Failure::SourceError
+                                     : Failure::Unsupported;
+                result.message = Widen(index.error);
+                Diagnostic("SOURCES_FETCH " + RedactedUrl(url) + " unusable index");
+                return result;
+            }
             continue;
         }
-        for (Entry& entry : sub.files) {
+        if (!index.success.empty()) {
+            if (!result.message.empty()) {
+                result.message += L"  ·  ";
+            }
+            result.message += Widen(index.success);
+        }
+        for (const Tinfoil::File& file : index.files) {
             if (result.entries.size() >= kMaxEntries) {
                 break;
             }
+            Entry entry;
+            entry.name = Widen(file.name);
+            entry.url = file.url;
+            entry.file = DiskName(entry.name, entry.url);
+            entry.size = file.size;
+            entry.kind = file.kind;
             result.entries.push_back(std::move(entry));
         }
+        traversal.Follow(*request, index);
     }
     std::stable_sort(result.entries.begin(), result.entries.end(),
                      [](const Entry& a, const Entry& b) {
                          return LowerWide(a.name) < LowerWide(b.name);
                      });
-    if (result.entries.empty() && !index.error.empty()) {
-        result.failure = Failure::SourceError;
-    }
-    Diagnostic(fmt::format("SOURCES_FETCH {} files={} dirs={}", RedactedUrl(url),
-                           result.entries.size(), index.directories.size()));
+    Diagnostic(fmt::format("SOURCES_FETCH {} files={}", RedactedUrl(url), result.entries.size()));
     return result;
 }
 
