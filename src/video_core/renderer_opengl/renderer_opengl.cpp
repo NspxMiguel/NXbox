@@ -191,6 +191,19 @@ void RendererOpenGL::DumpProbeFrame(std::span<const Tegra::FramebufferConfig> fr
         sum += value;
     }
     const u64 mean_x100 = sum * 100 / (size_t{width} * height);
+    // Also the first layer's guest pixel format and blending, and the mean of each channel, so a
+    // tinted picture (only red, say) can be traced to a format.
+    u64 channel_sum[3]{};
+    for (size_t i = 0; i < pixels.size(); i += 4) {
+        for (size_t c = 0; c < 3; ++c) {
+            channel_sum[c] += pixels[i + c];
+        }
+    }
+    const size_t count = size_t{width} * height;
+    LOG_INFO(Render_OpenGL, "FRAME_PROBE_FORMAT pixel_format={} blending={} rgb_mean={},{},{}",
+             framebuffers.empty() ? -1 : static_cast<int>(framebuffers[0].pixel_format),
+             framebuffers.empty() ? -1 : static_cast<int>(framebuffers[0].blending),
+             channel_sum[0] / count, channel_sum[1] / count, channel_sum[2] / count);
     LOG_INFO(Render_OpenGL, "FRAME_PROBE frame={} peak={} mean_x100={} layers={} tick_ms={}",
              m_current_frame, peak, mean_x100, framebuffers.size(),
              std::chrono::duration_cast<std::chrono::milliseconds>(
