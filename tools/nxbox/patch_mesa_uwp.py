@@ -3003,6 +3003,26 @@ def patch_view_cast(root: Path) -> None:
         )
         lines.insert(i, guard)
     source = "\n".join(lines)
+    # The same resource must not be transitioned to UNORDERED_ACCESS either: that state is invalid
+    # without the flag and makes ID3D12GraphicsCommandList::Close fail with E_INVALIDARG (Breath of
+    # the Wild writes 3D render-target textures from compute shaders).
+    transition_old = (
+        "         if (res->base.b.target == PIPE_BUFFER) {\n"
+        "            d3d12_transition_resource_state(ctx, res, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, transition_flags);\n"
+        "         } else {"
+    )
+    transition_new = (
+        "         const bool nxbox_uav_capable =\n"
+        "            !!(d3d12_resource_resource(res)->GetDesc().Flags & D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS);\n"
+        "         if (!nxbox_uav_capable) {\n"
+        "            /* Bound as a null UAV below; transitioning to UNORDERED_ACCESS would be invalid. */\n"
+        "         } else if (res->base.b.target == PIPE_BUFFER) {\n"
+        "            d3d12_transition_resource_state(ctx, res, D3D12_RESOURCE_STATE_UNORDERED_ACCESS, transition_flags);\n"
+        "         } else {"
+    )
+    if source.count(transition_old) != 1:
+        raise RuntimeError("Pinned Mesa d3d12_draw.cpp does not match the UAV transition patch")
+    source = source.replace(transition_old, transition_new)
     include = '#include "d3d12_context.h"\n'
     if source.count(include) < 1:
         raise RuntimeError("Pinned Mesa d3d12_draw.cpp has no context include for the view cast patch")
