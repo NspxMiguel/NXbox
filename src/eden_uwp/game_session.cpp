@@ -51,6 +51,7 @@
 #include "eden_uwp/diagnostic_report.h"
 #include "common/fs/file.h"
 #include "eden_uwp/await_bounded.h"
+#include "common/sparse_memory.h"
 #include "eden_uwp/alloc_track.h"
 #include "eden_uwp/game_download.h"
 #include "eden_uwp/http_vfs_file.h"
@@ -949,6 +950,8 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             if (const char* track = std::getenv("NXBOX_ALLOC_TRACK"); track != nullptr && track[0] == '1') {
                 Diagnostic("ALLOCS " + NxboxAllocTrackReport());
             }
+            Diagnostic(fmt::format("SPARSE committed={}MiB",
+                                   Common::SparseMemory::CommittedBytes() >> 20));
             if (auto* process = system.ApplicationProcess()) {
                 // What the guest believes it has committed, to tell it apart from host-side use.
                 Diagnostic(fmt::format(

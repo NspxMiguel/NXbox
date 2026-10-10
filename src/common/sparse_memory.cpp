@@ -11,6 +11,8 @@
 
 namespace Common::SparseMemory {
 namespace {
+std::atomic<std::uint64_t> g_committed_bytes{0};
+
 using AllocateFunction = void*(WINAPI*)(void*, SIZE_T, ULONG, ULONG);
 using QueryFunction = SIZE_T(WINAPI*)(const void*, MEMORY_BASIC_INFORMATION*, SIZE_T);
 using AddHandlerFunction = void*(WINAPI*)(ULONG, PVECTORED_EXCEPTION_HANDLER);
@@ -58,6 +60,9 @@ LONG NTAPI HandleFault(EXCEPTION_POINTERS* exception) {
                 if (info.State == MEM_RESERVE) {
                     committed = allocate_pages(static_cast<unsigned char*>(base) + chunk->offset,
                                                chunk->size, MEM_COMMIT, PAGE_READWRITE);
+                    if (committed) {
+                        g_committed_bytes.fetch_add(chunk->size, std::memory_order_relaxed);
+                    }
                 } else if (info.State == MEM_COMMIT && info.Protect == PAGE_READWRITE) {
                     // Another thread may have committed the chunk after this fault.
                     committed = base;
@@ -88,6 +93,10 @@ void Initialize() {
     // The handler and its module reference intentionally have process lifetime.
 }
 } // namespace
+
+std::uint64_t CommittedBytes() noexcept {
+    return g_committed_bytes.load(std::memory_order_relaxed);
+}
 
 void* Allocate(std::size_t size) noexcept {
     if (size == 0) {
