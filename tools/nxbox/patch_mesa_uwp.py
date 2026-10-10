@@ -3015,7 +3015,9 @@ def patch_view_cast(root: Path) -> None:
         "d3d12_context.cpp",
         srv_old,
         srv_old
-        + "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+        + "   /* Buffers have DXGI_FORMAT_UNKNOWN storage; their typed SRV defines the texel layout. */\n"
+        "   if (texture->target != PIPE_BUFFER &&\n"
+        "       d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
         '      nxbox_count_view_cast("srv", (unsigned)state->format, (unsigned)res->overall_format);\n'
         "      desc.Format = d3d12_get_resource_srv_format(res->overall_format, state->target);\n"
         "   }\n",
@@ -3024,7 +3026,8 @@ def patch_view_cast(root: Path) -> None:
         "d3d12_context.cpp",
         "   sampler_view->texture_generation_id = p_atomic_read(&res->generation_id);\n",
         "   sampler_view->texture_generation_id = p_atomic_read(&res->generation_id);\n"
-        "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+        "   if (texture->target != PIPE_BUFFER &&\n"
+        "       d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
         "      sampler_view->nxbox_srv_shadow = nxbox_get_srv_shadow(d3d12_context(pctx), res, state->format);\n"
         "      if (sampler_view->nxbox_srv_shadow) {\n"
         "         nxbox_refresh_srv_shadow(d3d12_context(pctx), res, sampler_view->nxbox_srv_shadow);\n"

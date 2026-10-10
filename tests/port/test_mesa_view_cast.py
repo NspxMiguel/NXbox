@@ -2,6 +2,7 @@
 """Validate GPU SRV reinterpretation and its composition with the pinned Mesa patches."""
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -155,6 +156,125 @@ class MesaViewCastTests(unittest.TestCase):
     setUp = safety.MesaRenderSafetyTests.setUp
     compile_run = safety.MesaRenderSafetyTests.compile_run
 
+    def check_typed_buffer_descriptors(self, context):
+        # Execute the patched descriptor function, including buffer element addressing.
+        function = context.split("void\nd3d12_init_sampler_view_descriptor", 1)[1].split(
+            "static struct pipe_sampler_view *", 1
+        )[0]
+        formats = (SOURCE / "src/util/format/u_formats.h").read_text()
+        enum = re.search(r"enum pipe_format \{.*?\};", formats, re.S).group()
+        self.compile_run(
+            MOCK.split("using UINT=", 1)[0]
+            + DIAGNOSTICS
+            + enum
+            + r"""
+static_assert(PIPE_FORMAT_R8_UNORM==49);
+static_assert(PIPE_FORMAT_R8G8B8A8_UNORM==53);
+static_assert(PIPE_FORMAT_R10G10B10A2_UNORM==112);
+using pipe_swizzle=unsigned;
+using D3D12_SRV_DIMENSION=unsigned;
+enum { PIPE_BUFFER, PIPE_TEXTURE_2D };
+enum { D3D12_SRV_DIMENSION_BUFFER, D3D12_SRV_DIMENSION_TEXTURE1D,
+ D3D12_SRV_DIMENSION_TEXTURE1DARRAY, D3D12_SRV_DIMENSION_TEXTURE2D,
+ D3D12_SRV_DIMENSION_TEXTURE2DARRAY, D3D12_SRV_DIMENSION_TEXTURE2DMS,
+ D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY, D3D12_SRV_DIMENSION_TEXTURE3D,
+ D3D12_SRV_DIMENSION_TEXTURECUBE, D3D12_SRV_DIMENSION_TEXTURECUBEARRAY };
+constexpr unsigned D3D12_REQ_BUFFER_RESOURCE_TEXEL_COUNT_2_TO_EXP=27;
+#define MIN2(a,b) std::min<unsigned>(a,b)
+#define FALLTHROUGH [[fallthrough]]
+#define debug_printf(...) ((void)0)
+#define unreachable(message) assert(false)
+#define D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(r,g,b,a) ((r)|((g)<<3)|((b)<<6)|((a)<<9))
+struct Fields {
+ unsigned MostDetailedMip, MipLevels, PlaneSlice, FirstArraySlice, ArraySize;
+ unsigned First2DArrayFace, NumCubes;
+ float ResourceMinLODClamp;
+};
+struct D3D12_SHADER_RESOURCE_VIEW_DESC {
+ unsigned Format, ViewDimension, Shader4ComponentMapping;
+ Fields Texture1D, Texture1DArray, Texture2D, Texture2DArray, Texture2DMSArray;
+ Fields Texture3D, TextureCube, TextureCubeArray;
+ struct { uint64_t FirstElement; unsigned NumElements, StructureByteStride; } Buffer;
+};
+struct ID3D12Resource { std::vector<uint8_t> bytes; };
+struct Device {
+ D3D12_SHADER_RESOURCE_VIEW_DESC last{};
+ void CreateShaderResourceView(ID3D12Resource *, const D3D12_SHADER_RESOURCE_VIEW_DESC *d,int) { last=*d; }
+};
+struct d3d12_screen { Device *dev; };
+struct pipe_resource { unsigned target=PIPE_BUFFER, nr_samples=0; struct d3d12_screen *screen; };
+struct d3d12_resource {
+ struct { pipe_resource b; } base; pipe_format overall_format=PIPE_FORMAT_R8_UNORM; ID3D12Resource native;
+};
+struct d3d12_resource *d3d12_resource(pipe_resource *r) { return reinterpret_cast<struct d3d12_resource *>(r); }
+struct d3d12_screen *d3d12_screen(struct d3d12_screen *s) { return s; }
+struct pipe_sampler_view {
+ pipe_resource *texture; pipe_format format; unsigned target=PIPE_BUFFER;
+ struct { struct { unsigned first_layer=0,last_layer=0,first_level=0; } tex;
+          struct { unsigned offset=8,size=8; } buf; } u;
+};
+struct d3d12_sampler_view {
+ pipe_sampler_view base; void *nxbox_srv_shadow=nullptr;
+ unsigned swizzle_override_r=0,swizzle_override_g=1,swizzle_override_b=2,swizzle_override_a=3;
+ unsigned mip_levels=1; struct { int cpu_handle=0; } handle;
+};
+pipe_resource *nxbox_srv_shadow_texture(void *) { assert(false); return nullptr; }
+struct d3d12_format_info { unsigned plane_slice=0; };
+d3d12_format_info d3d12_get_format_info(pipe_format,pipe_format,unsigned) { return {}; }
+unsigned d3d12_get_resource_srv_format(pipe_format f,unsigned) { return unsigned(f); }
+unsigned d3d12_get_typeless_format(pipe_format f) { return unsigned(f); }
+unsigned util_format_get_blocksize(pipe_format f) { return f==PIPE_FORMAT_R8_UNORM ? 1 : 4; }
+bool util_format_is_pure_integer(pipe_format) { return false; }
+unsigned component_mapping(unsigned s) { return s; }
+D3D12_SRV_DIMENSION view_dimension(unsigned t,unsigned) {
+ return t==PIPE_BUFFER ? D3D12_SRV_DIMENSION_BUFFER : D3D12_SRV_DIMENSION_TEXTURE2D;
+}
+ID3D12Resource *d3d12_resource_underlying(struct d3d12_resource *r,uint64_t *offset) {
+ *offset=r->base.b.target==PIPE_BUFFER ? 512 : 0; return &r->native;
+}
+template<typename T> T &nxbox_api(T *p,const char *) { return *p; }
+void d3d12_init_sampler_view_descriptor
+"""
+            + function
+            + r"""
+int main() {
+ Device device; struct d3d12_screen screen{&device};
+ struct d3d12_resource resource; resource.base.b.screen=&screen;
+ resource.native.bytes.resize(528);
+ // Two independent four-channel elements after a suballocation and view offset.
+ const uint32_t pixels[]={0x80402010u,0xc0300801u};
+ memcpy(resource.native.bytes.data()+520,pixels,sizeof(pixels));
+ for(auto format:{PIPE_FORMAT_R8G8B8A8_UNORM,PIPE_FORMAT_R10G10B10A2_UNORM}) {
+  d3d12_sampler_view view; view.base.texture=&resource.base.b; view.base.format=format;
+  d3d12_init_sampler_view_descriptor(&view);
+  const auto &desc=device.last;
+  assert(desc.Format==unsigned(format));
+  assert(desc.ViewDimension==D3D12_SRV_DIMENSION_BUFFER);
+  assert(desc.Buffer.StructureByteStride==0 && desc.Buffer.FirstElement==130);
+  assert(desc.Buffer.NumElements==2 && env.count("NXBOX_D3D12_VIEW_CAST")==0);
+  for(unsigned i=0;i<2;++i) {
+   uint32_t value=0;
+   memcpy(&value,resource.native.bytes.data()+(desc.Buffer.FirstElement+i)*
+          util_format_get_blocksize(static_cast<pipe_format>(desc.Format)),4);
+   assert(value==pixels[i]);
+   if(format==PIPE_FORMAT_R8G8B8A8_UNORM) {
+    assert((value&255) && ((value>>8)&255) && ((value>>16)&255) && (value>>24));
+   } else {
+    assert((value&1023) && ((value>>10)&1023) && ((value>>20)&1023) && (value>>30));
+   }
+  }
+ }
+ // A real incompatible texture must still use the guarded fallback.
+ resource.base.b.target=PIPE_TEXTURE_2D;
+ d3d12_sampler_view view; view.base.texture=&resource.base.b;
+ view.base.target=PIPE_TEXTURE_2D; view.base.format=PIPE_FORMAT_R8G8B8A8_UNORM;
+ d3d12_init_sampler_view_descriptor(&view);
+ assert(device.last.Format==unsigned(PIPE_FORMAT_R8_UNORM));
+ assert(env["NXBOX_D3D12_VIEW_CAST_PAIRS"]=="53->49");
+}
+"""
+        )
+
     def test_gpu_bytes_cache_filters_and_cleanup(self):
         self.compile_run(
             MOCK
@@ -247,9 +367,11 @@ int main(int argc,char **argv) {
             )
             driver = root / "src/gallium/drivers/d3d12"
             context = (driver / "d3d12_context.cpp").read_text()
+            self.check_typed_buffer_descriptors(context)
             draw = (driver / "d3d12_draw.cpp").read_text()
             resource = (driver / "d3d12_resource.cpp").read_text()
             self.assertIn("sampler_view->nxbox_srv_shadow = nxbox_get_srv_shadow", context)
+            self.assertEqual(context.count("if (texture->target != PIPE_BUFFER &&"), 2)
             self.assertIn("nxbox_srv_shadow_texture(sampler_view->nxbox_srv_shadow)", context)
             self.assertIn(
                 "desc.Format = d3d12_get_resource_srv_format(res->overall_format", context
