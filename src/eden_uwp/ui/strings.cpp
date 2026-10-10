@@ -34,6 +34,15 @@ constexpr Entry kTable[] = {
     {L"Jogar", L"Play"},                            // ActionPlay
     {L"Mods", L"Mods"},                             // ActionMods
     {L"Detalhes", L"Details"},                      // ActionDetails
+    {L"Resolução", L"Resolution"},            // ResolutionTitle
+    {L"1x (720p/1080p)", L"1x (720p/1080p)"}, // Resolution1X
+    {L"1.5x", L"1.5x"},                       // Resolution1_5X
+    {L"2x", L"2x"},                           // Resolution2X
+    {L"3x (4K)", L"3x (4K)"},                 // Resolution3X
+    {L"Usa mais memória: pode ficar mais lento ou fechar em jogos pesados.",
+     L"Uses more memory: may be slower or close on heavy games."}, // ResolutionMemoryHint
+    {L"Não foi possível salvar. Pressione A para tentar de novo.",
+     L"Could not save. Press A to try again."}, // ResolutionSaveFailed
     {L"Selecionar", L"Select"},                     // HintSelect
     {L"Procurar", L"Scan"},                         // HintScan
     {L"Sair", L"Exit"},                             // HintQuit

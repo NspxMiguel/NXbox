@@ -46,6 +46,7 @@
 #include "core/hle/kernel/svc/svc_debug_string.h"
 #include "core/hle/service/am/applet_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
+#include "core/loader/loader.h"
 #include "core/perf_stats.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/diagnostic_report.h"
@@ -60,6 +61,7 @@
 #include "eden_uwp/mesa_window.h"
 #include "eden_uwp/save_sync.h"
 #include "eden_uwp/setup_ui.h"
+#include "eden_uwp/title_settings.h"
 #include "eden_uwp/ui/input.h"
 #include "eden_uwp/ui/launch_screen.h"
 #include "eden_uwp/ui/library.h"
@@ -275,23 +277,19 @@ void RememberChosenGame(const std::filesystem::path& local, const std::string& c
 // rebuild. The save sync needs the active profile (current_user) before the game boots, so this
 // runs once ahead of the boot when a sync is due and again in RunGame; applying it twice is
 // harmless.
-void ApplyEdenSettingsFile() {
-    const std::filesystem::path settings_file =
-        std::filesystem::path(winrt::to_string(
-            winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
-        "eden_settings.txt";
+void ApplyEdenSettingsFile(const std::filesystem::path& settings_file) {
     std::ifstream settings_in(settings_file);
     std::string line;
     while (std::getline(settings_in, line)) {
-        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) {
-            line.pop_back();
-        }
-        const auto eq = line.find('=');
-        if (line.empty() || line[0] == '#' || eq == std::string::npos) {
+        const auto entry = TitleSettings::ParseLine(line);
+        if (!entry) {
             continue;
         }
-        const std::string label = line.substr(0, eq);
-        const std::string value = line.substr(eq + 1);
+        const auto& [label, value] = *entry;
+        if (label == "resolution_setup" && !TitleSettings::ParseResolution(value)) {
+            Diagnostic(fmt::format("SETTING {}={} invalid", label, value));
+            continue;
+        }
         bool applied = false;
         for (auto& [category, settings] : Settings::values.linkage.by_category) {
             for (Settings::BasicSetting* setting : settings) {
@@ -303,6 +301,13 @@ void ApplyEdenSettingsFile() {
         }
         Diagnostic(fmt::format("SETTING {}={} {}", label, value, applied ? "applied" : "unknown"));
     }
+}
+
+void ApplyEdenSettingsFile() {
+    ApplyEdenSettingsFile(
+        std::filesystem::path(winrt::to_string(
+            winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())) /
+        "eden_settings.txt");
 }
 
 // NXBOX_READ_CHECK=1: reads 64 random 1 MiB chunks of the game file through IOFile (the
@@ -728,6 +733,7 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     // movie on a frame. Decode both on the CPU, which renders cleanly on the Xbox.
     Settings::values.accelerate_astc.SetValue(Settings::AstcDecodeMode::Cpu);
     Settings::values.nvdec_emulation.SetValue(Settings::NvdecEmulation::Cpu);
+    Settings::values.resolution_setup.SetValue(Settings::ResolutionSetup::Res1X);
     ApplyEdenSettingsFile();
     // Mods the player turned off in the mod store go into Eden's disabled add-ons list.
     Ui::ApplyDisabledMods(std::filesystem::path(winrt::to_string(
@@ -780,6 +786,25 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         }
     }
     system.GetFileSystemController().CreateFactories(*system.GetFilesystem());
+    {
+        // Read the actual boot package for library, game.txt and protocol launches. Release this
+        // metadata loader before reserving guest memory and constructing the game renderer.
+        const auto file = Core::GetGameFileFromPath(system.GetFilesystem(), path);
+        const auto loader = Loader::GetLoader(system, file);
+        u64 title_id = 0;
+        if (loader && loader->ReadProgramId(title_id) == Loader::ResultStatus::Success &&
+            title_id) {
+            const auto local_state = std::filesystem::path(winrt::to_string(
+                winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path()));
+            const auto title = fmt::format("{:016X}", title_id);
+            ApplyEdenSettingsFile(TitleSettings::File(local_state, title));
+            Diagnostic(fmt::format("RESOLUTION title={} resolution_setup={}", title,
+                                   static_cast<int>(Settings::values.resolution_setup.GetValue())));
+        } else {
+            Diagnostic(fmt::format("RESOLUTION title=unknown resolution_setup={}",
+                                   static_cast<int>(Settings::values.resolution_setup.GetValue())));
+        }
+    }
     system.GetUserChannel().clear();
     Diagnostic("GAME_LOADING");
     // Same parameters the desktop frontend uses to boot an application. With a zeroed applet id the

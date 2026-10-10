@@ -121,6 +121,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
   primitives. Implements its operations.
 - `src/eden_uwp/ui/widgets.h` — Provides shared pills, hint bars and other screen drawing
   primitives; declares its interface and state types.
+- `src/eden_uwp/title_settings.h` — Provides portable label/value parsing, resolution validation
+  and per-title settings paths/persistence.
 - `src/eden_uwp/usb_library.cpp` — Finds removable game folders and imports games/keys from USB
   storage.
 - `src/eden_uwp/usb_library.h` — Declares removable-library discovery and import operations.
@@ -267,6 +269,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
 - `tests/port/test_package.py` — Checks UWP payload validation and package staging.
 - `tests/port/test_package_launcher.py` — Checks per-game launcher staging and manifest/art
   generation.
+- `tests/port/test_title_settings.py` — Checks settings parsing, override precedence, title paths,
+  resolution enum values and per-title persistence on the host.
 - `tests/port/test_release_version.py` — Checks stable release-tag parsing and increasing package
   versions.
 - `tests/port/update_version.cpp` — Checks portable update-version parsing and ordering.
@@ -638,8 +642,12 @@ patch/source/policy behavior; Xbox GPU behavior still needs console validation.
    package version, game version and content configuration.
 2. Edit `LocalState\nxbox_env.txt` for environment overrides and `LocalState\eden_settings.txt` for
    Eden setting labels (`label=value`). The latter matches registered setting labels and logs
-   applied/unknown entries; it is applied over boot defaults. Keep each experiment small and restart
-   the app.
+   applied/unknown entries; it is applied over boot defaults. `LocalState\settings\<TITLEID>.txt`
+   uses the same format and is applied afterwards for the title read from the boot package, before
+   core initialization. The library's Resolution action saves 1x, 1.5x, 2x or 3x per game
+   (`resolution_setup=3`, `5`, `6` or `7`, respectively), preserving other entries. With no override,
+   resolution defaults to 1x; 2x/3x show a memory warning. `RESOLUTION` in the diagnostic log records
+   the title and effective enum value at boot. Keep each experiment small and restart the app.
 3. Launch a library game (or a per-game protocol tile), reproduce the target scene, and check frame
    progression and visual output. Suspend/resume is part of the game-session lifecycle.
 4. Retrieve `LocalState\eden_uwp_diag.txt` plus Eden's `LocalState\eden\log` output. The frontend

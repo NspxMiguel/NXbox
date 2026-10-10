@@ -25,6 +25,7 @@
 #include "common/scope_exit.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/save_sync.h"
+#include "eden_uwp/title_settings.h"
 #include "eden_uwp/ui/anim.h"
 #include "eden_uwp/ui/art.h"
 #include "eden_uwp/ui/input.h"
@@ -113,7 +114,8 @@ constexpr int kTabCount = 2;
 constexpr int kActionPlay = 0;
 constexpr int kActionMods = 1;
 constexpr int kActionDetails = 2;
-constexpr int kActionCount = 3;
+constexpr int kActionResolution = 3;
+constexpr int kActionCount = 4;
 
 // The rows of the settings list.
 constexpr int kSettingSaveSync = 0;
@@ -485,8 +487,8 @@ private:
             HandleInput(now);
         }
         // Input gets first refusal: an A press that starts a game must beat detection.
-        if (!launching_ && !leaving_ && !closed_ && !scan_ && !details_open_ && !update_open_ &&
-            tab_ == Tab::Library && usb_detection_->Ready()) {
+        if (!launching_ && !leaving_ && !closed_ && !scan_ && !details_open_ && !resolution_open_ &&
+            !update_open_ && tab_ == Tab::Library && usb_detection_->Ready()) {
             closed_ = usb_detection_->Run(renderer_, window_, input_);
             usb_mode_ = LoadUsbMode(local_state_);
             if (!closed_)
@@ -506,6 +508,32 @@ private:
                     updater_.StartInstall();
             }
             // Never start a game or another download while replacing the running package.
+            return;
+        }
+        if (resolution_open_) {
+            if (input_.Pressed(Button::B)) {
+                resolution_open_ = false;
+                return;
+            }
+            if (input_.Pressed(Button::Left) || input_.Pressed(Button::Up)) {
+                resolution_choice_ = std::max(0, resolution_choice_ - 1);
+                resolution_save_failed_ = false;
+            }
+            if (input_.Pressed(Button::Right) || input_.Pressed(Button::Down)) {
+                resolution_choice_ = std::min(3, resolution_choice_ + 1);
+                resolution_save_failed_ = false;
+            }
+            if (input_.Pressed(Button::A)) {
+                const auto file = TitleSettings::File(local_state_, Game(selected_).title_id);
+                const int value = TitleSettings::kResolutionValues[Idx(resolution_choice_)];
+                resolution_save_failed_ = !TitleSettings::SaveResolution(file, value);
+                Diagnostic("UI resolution " + Game(selected_).title_id + "=" +
+                           std::to_string(value) +
+                           (resolution_save_failed_ ? " failed" : " saved"));
+                if (!resolution_save_failed_) {
+                    resolution_open_ = false;
+                }
+            }
             return;
         }
         if (details_open_) {
@@ -644,6 +672,8 @@ private:
                 OpenMods();
             } else if (action_ == kActionDetails) {
                 details_open_ = true;
+            } else if (action_ == kActionResolution) {
+                OpenResolution();
             }
             break;
         case Layer::Nav:
@@ -658,6 +688,24 @@ private:
         launched_ = selected_;
         launching_ = true;
         launch_started_ = now;
+    }
+
+    void OpenResolution() {
+        if (!HasGame()) {
+            return;
+        }
+        std::ifstream global(local_state_ / "eden_settings.txt");
+        int value = TitleSettings::ReadResolution(global);
+        std::ifstream title(TitleSettings::File(local_state_, Game(selected_).title_id));
+        value = TitleSettings::ReadResolution(title, value);
+        resolution_choice_ = 0;
+        for (std::size_t i = 0; i < TitleSettings::kResolutionValues.size(); ++i) {
+            if (TitleSettings::kResolutionValues[i] == value) {
+                resolution_choice_ = static_cast<int>(i);
+            }
+        }
+        resolution_save_failed_ = false;
+        resolution_open_ = true;
     }
 
     // The mod store of the focused game, on this window and this renderer. It runs its own loop
@@ -850,6 +898,9 @@ private:
         }
         if (details_open_) {
             DrawDetails();
+        }
+        if (resolution_open_) {
+            DrawResolution();
         }
         if (update_open_)
             DrawUpdateSheet();
@@ -1069,10 +1120,11 @@ private:
         DrawActions();
     }
 
-    // Play, Mods and Details.
+    // The focused game's actions.
     void DrawActions() {
         const std::array<const wchar_t*, kActionCount> labels = {
-            Tr(Text::ActionPlay), Tr(Text::ActionMods), Tr(Text::ActionDetails)};
+            Tr(Text::ActionPlay), Tr(Text::ActionMods), Tr(Text::ActionDetails),
+            Tr(Text::ResolutionTitle)};
         float x = kMargin;
         for (int i = 0; i < kActionCount; ++i) {
             const bool primary = i == kActionPlay;
@@ -1255,6 +1307,10 @@ private:
             return {{Theme::kButtonA, L"A", Tr(Text::UpdateAction)},
                     {Theme::kButtonB, L"B", Tr(Text::HintQuit)}};
         }
+        if (resolution_open_) {
+            return {{Theme::kButtonA, L"A", Tr(Text::HintSelect)},
+                    {Theme::kButtonB, L"B", Tr(Text::HintBack)}};
+        }
         if (details_open_) {
             return {{Theme::kButtonB, L"B", Tr(Text::HintBack)}};
         }
@@ -1399,6 +1455,42 @@ private:
         }
     }
 
+    void DrawResolution() {
+        const D2D1_RECT_F sheet =
+            RectF(kSheetLeft, kSheetTop, kSheetLeft + kSheetWidth, kSheetTop + kSheetHeight);
+        DrawSheet(renderer_, sheet);
+        const float left = sheet.left + kSheetPadding;
+        const float right = sheet.right - kSheetPadding;
+        renderer_.DrawString(Tr(Text::ResolutionTitle), Font::Heading,
+                             RectF(left, sheet.top + 40.0f, right, sheet.top + 110.0f),
+                             Theme::kText);
+        renderer_.DrawString(Game(selected_).name, Font::Meta,
+                             RectF(left, sheet.top + 115.0f, right, sheet.top + 155.0f),
+                             Theme::kTextSecondary);
+        const std::array<Text, 4> labels = {Text::Resolution1X, Text::Resolution1_5X,
+                                            Text::Resolution2X, Text::Resolution3X};
+        float x = left;
+        for (int i = 0; i < 4; ++i) {
+            const std::wstring label = Tr(labels[Idx(i)]);
+            const float width = PillWidth(renderer_, label, false);
+            DrawChoicePill(
+                renderer_,
+                RectF(x, sheet.top + 200.0f, x + width, sheet.top + 200.0f + kPillHeight), label,
+                false, resolution_choice_ == i);
+            x += width + kPillGap;
+        }
+        if (resolution_choice_ >= 2) {
+            renderer_.DrawString(Tr(Text::ResolutionMemoryHint), Font::Body,
+                                 RectF(left, sheet.top + 300.0f, right, sheet.top + 380.0f),
+                                 Theme::kTextSecondary);
+        }
+        if (resolution_save_failed_) {
+            renderer_.DrawString(Tr(Text::ResolutionSaveFailed), Font::Meta,
+                                 RectF(left, sheet.top + 400.0f, right, sheet.bottom - 24.0f),
+                                 Theme::kTextSecondary);
+        }
+    }
+
     // ---- Members ----
 
     Renderer& renderer_;
@@ -1431,6 +1523,9 @@ private:
     SyncAccount sync_account_ = SyncAccount::SignedOut;
     int launched_ = -1;
     bool details_open_ = false;
+    bool resolution_open_ = false;
+    bool resolution_save_failed_ = false;
+    int resolution_choice_ = 0;
 
     Look hero_from_;
     Look hero_to_;
