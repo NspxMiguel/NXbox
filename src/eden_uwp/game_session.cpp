@@ -376,6 +376,7 @@ void LogVirtualMemoryMap() {
     };
     std::vector<Region> regions;
     std::uint64_t by_type[3]{0, 0, 0};
+    std::map<std::uintptr_t, std::uint64_t> by_allocation;
     std::uintptr_t address = 0;
     MEMORY_BASIC_INFORMATION info{};
     Region current{0, 0, 0};
@@ -384,6 +385,7 @@ void LogVirtualMemoryMap() {
         if (info.State == MEM_COMMIT) {
             const int slot = info.Type == MEM_PRIVATE ? 0 : info.Type == MEM_MAPPED ? 1 : 2;
             by_type[slot] += info.RegionSize;
+            by_allocation[reinterpret_cast<std::uintptr_t>(info.AllocationBase)] += info.RegionSize;
             if (current.committed != 0 && current.type == info.Type &&
                 current.base + current.committed == begin) {
                 current.committed += info.RegionSize;
@@ -417,6 +419,18 @@ void LogVirtualMemoryMap() {
     }
     Diagnostic(fmt::format("VMMAP private={}MiB mapped={}MiB image={}MiB top:{}", by_type[0] >> 20,
                            by_type[1] >> 20, by_type[2] >> 20, top));
+    // The same committed bytes grouped by the reservation they belong to (one VirtualAlloc, one
+    // mapped view): the guest DRAM backing, each JIT code cache, driver heaps and so on.
+    std::vector<std::pair<std::uint64_t, std::uintptr_t>> by_base;
+    for (const auto& [base, bytes] : by_allocation) {
+        by_base.emplace_back(bytes, base);
+    }
+    std::sort(by_base.rbegin(), by_base.rend());
+    std::string groups;
+    for (std::size_t i = 0; i < by_base.size() && i < 24; ++i) {
+        groups += fmt::format(" {:x}={}MiB", by_base[i].second, by_base[i].first >> 20);
+    }
+    Diagnostic(fmt::format("VMGROUPS count={} top:{}", by_base.size(), groups));
 }
 
 // Kept free of objects with destructors so MSVC accepts the structured exception handler.
