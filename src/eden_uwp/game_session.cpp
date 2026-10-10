@@ -621,6 +621,18 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
              bool chosen_in_library, const std::string& protocol_path, Ui::LaunchScreen* splash,
              Ui::LaunchStatus& launch_status) {
     Diagnostic("GAME_BEGIN");
+    // The default timer tick is about 15.6 ms: every host sleep and timed wait rounds up to it. Ask
+    // for 1 ms through ntdll (it may be refused inside the sandbox; the result is logged).
+    {
+        using SetResolution = long(__stdcall*)(unsigned long, unsigned char, unsigned long*);
+        const auto ntdll = GetModuleHandleW(L"ntdll.dll");
+        const auto set = ntdll ? reinterpret_cast<SetResolution>(
+                                     GetProcAddress(ntdll, "NtSetTimerResolution"))
+                               : nullptr;
+        unsigned long actual = 0;
+        const long status = set ? set(10000, 1, &actual) : -1;
+        Diagnostic(fmt::format("TIMER_RESOLUTION status={:#x} actual={} x100ns", status, actual));
+    }
     if (const char* track = std::getenv("NXBOX_ALLOC_TRACK"); track != nullptr && track[0] == '1') {
         NxboxAllocTrackEnable();
     }

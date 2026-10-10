@@ -9,6 +9,20 @@ import os
 SKIP = set(filter(None, os.environ.get("NXBOX_MESA_SKIP", "").split(",")))
 
 
+
+# Waiting for a fence with Sleep(1) costs a whole scheduler tick (about 15 ms on the console) even
+# when the GPU finishes in microseconds: a frame with several batches then spends most of its time
+# asleep. The installed helpers yield the processor instead.
+FAST_POLL_PRELUDE = (
+    "#ifndef NXBOX_POLL_PAUSE\n"
+    "#define NXBOX_POLL_PAUSE() do { if (!SwitchToThread()) YieldProcessor(); } while (0)\n"
+    "#endif\n"
+)
+
+
+def fast_poll(text: str) -> str:
+    return FAST_POLL_PRELUDE + text.replace("Sleep(1);", "NXBOX_POLL_PAUSE();")
+
 def patch(root: Path) -> None:
     path = root / "src/gallium/winsys/uwp/gdi_uwp.cpp"
     source = path.read_text()
@@ -1508,7 +1522,7 @@ def patch_sync_batch(root: Path) -> None:
     target = driver / "nxbox_sync_batch.h"
     if target.exists():
         raise RuntimeError("Pinned Mesa sync batch helper already exists")
-    helper = Path(__file__).with_name("mesa_sync_batch.h").read_text()
+    helper = fast_poll(Path(__file__).with_name("mesa_sync_batch.h").read_text())
     marker = "/* NXBOX_GPU_PROFILE_HOOK: patch_mesa_uwp.py splices tools/nxbox/mesa_gpu_profile.h here. */\n"
     if helper.count(marker) != 1:
         raise RuntimeError("Sync batch helper lost its GPU profile hook")
@@ -1801,7 +1815,7 @@ def patch_batch_reuse(root: Path) -> None:
     target = driver / "nxbox_batch_reuse.h"
     if target.exists():
         raise RuntimeError("Pinned Mesa batch reuse helper already exists")
-    helper = Path(__file__).with_name("mesa_batch_reuse.h").read_text()
+    helper = fast_poll(Path(__file__).with_name("mesa_batch_reuse.h").read_text())
     for name, source in sources.items():
         (driver / name).write_text(source)
     target.write_text(helper)
@@ -1897,7 +1911,7 @@ def patch_render_safety(root: Path) -> None:
         raise RuntimeError("Pinned Mesa query wait helper already exists")
     for name, source in sources.items():
         (driver / name).write_text(source)
-    target.write_text(Path(__file__).with_name("mesa_query_wait.h").read_text())
+    target.write_text(fast_poll(Path(__file__).with_name("mesa_query_wait.h").read_text()))
 
 
 def patch_invalid_commands(root: Path) -> None:
