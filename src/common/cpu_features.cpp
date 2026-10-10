@@ -29,8 +29,6 @@
 #include "common/common_types.h"
 #include "common/cpu_features.h"
 #include "common/logging.h"
-#include "common/native_clock_policy.h"
-#include <cstdlib>
 
 #ifdef ARCHITECTURE_x86_64
 #include "common/x64/rdtsc.h"
@@ -426,31 +424,4 @@ const WallClock g_wall_clock = [] {
     return WallClock(true, 1);
 #endif
 }();
-
-const WallClock& GetWallClock() {
-#if defined(YUZU_UWP_APPCONTAINER) && defined(ARCHITECTURE_x86_64)
-    static const WallClock clock = [] {
-        const auto& caps = g_cpu_caps;
-        const auto sample = [] {
-            const auto start = SteadyClock::Now();
-            const auto first = X64::FencedRDTSC();
-            std::this_thread::sleep_for(std::chrono::milliseconds{100});
-            const auto last = X64::FencedRDTSC();
-            const auto elapsed = (SteadyClock::Now() - start).count();
-            return last > first ? NativeClockPolicy::SampleFrequency(last - first, elapsed) : 0;
-        };
-        const auto frequency = NativeClockPolicy::ResolveFrequency(
-            caps.invariant_tsc, caps.tsc_frequency,
-            NativeClockPolicy::Enabled(std::getenv("NXBOX_NATIVE_CLOCK")), [&] {
-                const auto first = sample();
-                const auto second = sample();
-                return NativeClockPolicy::StableFrequency(first, second);
-            });
-        return WallClock(caps.invariant_tsc && frequency > std::nano::den, frequency);
-    }();
-    return clock;
-#else
-    return g_wall_clock;
-#endif
-}
 } // namespace Common

@@ -488,7 +488,7 @@ Status BufferQueueProducer::QueueBuffer(s32 slot, const QueueBufferInput& input,
         slots[slot].buffer_state = BufferState::Queued;
         slots[slot].frame_number = core->frame_counter;
         slots[slot].queue_time = timestamp;
-        slots[slot].presentation_time = Common::GetWallClock().GetTimeNS().count();
+        slots[slot].presentation_time = Common::g_wall_clock.GetTimeNS().count();
         slots[slot].fence = fence;
 
         item.slot = slot;

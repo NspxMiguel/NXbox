@@ -31,8 +31,6 @@
 
 #include <fmt/format.h>
 #include "common/fs/fs.h"
-#include "common/cpu_features.h"
-#include "common/native_clock_policy.h"
 #include "common/nxbox_stall.h"
 #include "common/logging.h"
 #include "common/scope_exit.h"
@@ -628,16 +626,6 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
              bool chosen_in_library, const std::string& protocol_path, Ui::LaunchScreen* splash,
              Ui::LaunchStatus& launch_status) {
     Diagnostic("GAME_BEGIN");
-    const auto& host_clock = Common::GetWallClock();
-    Diagnostic(fmt::format(
-        "CPU_CLOCK native={} invariant_tsc={} reported_hz={} selected_hz={} calibration_enabled={}",
-        host_clock.IsNative(), static_cast<bool>(Common::g_cpu_caps.invariant_tsc),
-        Common::g_cpu_caps.tsc_frequency, host_clock.rdtsc_frequency,
-        Common::NativeClockPolicy::Enabled(std::getenv("NXBOX_NATIVE_CLOCK"))));
-    Diagnostic(fmt::format("CPU_TIMED_WAIT path={}",
-                           Common::NativeClockPolicy::Enabled(std::getenv("NXBOX_EVENT_WAIT"))
-                               ? "notified-condition-variable"
-                               : "legacy-tsc-poll"));
     // The default timer tick is about 15.6 ms: every host sleep and timed wait rounds up to it. Ask
     // for 1 ms through ntdll (it may be refused inside the sandbox; the result is logged).
     {
@@ -747,12 +735,6 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     Settings::values.nvdec_emulation.SetValue(Settings::NvdecEmulation::Cpu);
     Settings::values.resolution_setup.SetValue(Settings::ResolutionSetup::Res1X);
     ApplyEdenSettingsFile();
-    Diagnostic(fmt::format("CPU_JIT accuracy={} multicore={} fastmem={} fastmem_exclusives=false "
-                           "memory=private-demand-commit cache_mib=128 fiber_stack_kib=512 "
-                           "priority=normal affinity=none",
-                           static_cast<int>(Settings::values.cpu_accuracy.GetValue()),
-                           Settings::values.use_multi_core.GetValue(),
-                           Settings::IsFastmemEnabled()));
     // Mods the player turned off in the mod store go into Eden's disabled add-ons list.
     Ui::ApplyDisabledMods(std::filesystem::path(winrt::to_string(
         winrt::Windows::Storage::ApplicationData::Current().LocalFolder().Path())));

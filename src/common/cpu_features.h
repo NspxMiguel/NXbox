@@ -185,7 +185,4 @@ extern const CPUCaps g_cpu_caps;
 /// @brief Global wall clock
 extern const WallClock g_wall_clock;
 
-// Lazily select the UWP clock after nxbox_env.txt has been loaded. Desktop uses g_wall_clock.
-const WallClock& GetWallClock();
-
 } // namespace Common
