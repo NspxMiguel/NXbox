@@ -77,7 +77,7 @@ Everything below was measured on a retail Xbox Series X in Developer Mode.
 | Movies | Decoded on the CPU with FFmpeg |
 | Textures | ASTC decoded on the CPU. The GPU decoder is being fixed for D3D12 |
 | Input | Xbox controller, mapped to a Pro Controller |
-| Compatibility | No game is playable. Persona 5 Royal is the closest: it boots and reaches gameplay, with serious bugs. Breath of the Wild and Mario Kart 8 Deluxe boot and submit frames, but I have not confirmed that the picture is correct, and both lose the GPU after a few minutes. Super Mario 3D World boots, with menus and gameplay that do not render correctly |
+| Compatibility | No game is playable. Persona 5 Royal is the closest: it boots and reaches gameplay, with serious bugs. Breath of the Wild runs its intro and renders the first area at about 5 to 10 FPS; Mario Kart 8 Deluxe boots and submits frames, but I have not confirmed that the picture is correct, and it loses the GPU after a few minutes. Super Mario 3D World boots, with menus and gameplay that do not render correctly |
 
 <details>
 <summary><b>The hard parts so far</b>, each found on the console</summary>
@@ -104,11 +104,13 @@ Written up in the [port notes](docs/nxbox-port.md).
 - **Current focus: The Legend of Zelda: Breath of the Wild**, at the request of a person who asked
   for it. Super Mario 3D World, Mario Kart 8 Deluxe and Bayonetta wait until it is playable and
   renders without graphical glitches.
-- **What is being fixed right now:** Breath of the Wild draws its intro (the Nintendo logo and the
-  Zelda title with its lens flare) and then the Direct3D 12 device is removed about two minutes in.
-  Two real causes are already fixed: block-compressed texture uploads with unaligned copy boxes,
-  and a workaround that was skipping draws and left the picture black. The next cause is still
-  being traced.
+- **Where it stands:** Breath of the Wild now gets through the intro, the opening cutscene and
+  into the first area (the Shrine of Resurrection) and keeps running for minutes without losing the
+  GPU, at about 5 to 10 frames per second. It is not playable yet: it is far too slow and I have not
+  checked the picture beyond the first scene. What was fixed to get here: block-compressed copies
+  with unaligned boxes, views in formats the resource cannot be cast to, resources transitioned to a
+  state they do not support, a texture barrier that waited for the GPU hundreds of times a frame, and
+  the memory limit (shaders now go to Mesa as SPIR-V, which keeps the app under 5 GiB).
 - **How it is built:** by one person in their spare time, with AI coding tools doing much of the
   hard work on a small budget. Progress comes in bursts, and long waits are usually tool limits.
 - **What you need:** an Xbox in Developer Mode, and your own game dumps, firmware and keys.
@@ -124,7 +126,7 @@ nothing is there yet.
 
 | Game | State | What happens |
 | --- | --- | --- |
-| The Legend of Zelda: Breath of the Wild | **In focus**, not playable | Boots and draws its intro (Nintendo logo, Zelda title, lens flare), then the GPU is lost about two minutes in, before the title screen is usable |
+| The Legend of Zelda: Breath of the Wild | **In focus**, not playable | Boots, plays the intro and the opening cutscene and renders the first area (Shrine of Resurrection) for minutes without losing the GPU, at about 5 to 10 FPS; too slow to play |
 | Persona 5 Royal | Not playable | The closest: boots, plays cutscenes and reaches the first playable area, with audio, but it still stutters on loads and has serious bugs |
 | Mario Kart 8 Deluxe | Not playable | Boots, then the GPU is lost after under a minute; the picture has not been checked |
 | Super Mario 3D World | Not playable | Boots; menus and gameplay do not render correctly |
