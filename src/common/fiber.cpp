@@ -14,7 +14,7 @@
 
 namespace Common {
 
-#if defined(__OPENORBIS__) || defined(NXBOX_UWP)
+#if defined(__OPENORBIS__) || defined(YUZU_UWP_APPCONTAINER)
 // The Xbox app has a fixed memory limit and Breath of the Wild creates over a hundred guest threads,
 // each with two of these stacks: 512 KiB keeps them near 120 MiB instead of 460 MiB.
 constexpr size_t DEFAULT_STACK_SIZE = 128 * 4096;
