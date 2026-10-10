@@ -708,7 +708,12 @@ std::unique_ptr<ComputePipeline> ShaderCache::CreateComputePipeline(
         code = EmitGLASM(profile, info, program);
         break;
     case Settings::RendererBackend::OpenGL_SPIRV:
+#ifdef NXBOX_UWP
+        // Mesa's SPIR-V front end falls over on Breath of the Wild's compute shaders: they stay GLSL.
+        code = EmitGLSL(profile, program);
+#else
         code_spirv = EmitSPIRV(profile, program);
+#endif
         break;
     default:
         UNREACHABLE();

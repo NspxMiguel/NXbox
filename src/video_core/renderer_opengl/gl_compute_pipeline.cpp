@@ -45,7 +45,11 @@ ComputePipeline::ComputePipeline(const Device& device, TextureCache& texture_cac
         assembly_program = CompileProgram(code, GL_COMPUTE_PROGRAM_NV);
         break;
     case Settings::RendererBackend::OpenGL_SPIRV:
+#ifdef NXBOX_UWP
+        source_program = CreateProgram(code, GL_COMPUTE_SHADER);
+#else
         source_program = CreateProgram(code_v, GL_COMPUTE_SHADER);
+#endif
         break;
     default:
         UNREACHABLE();
