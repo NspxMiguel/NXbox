@@ -224,7 +224,8 @@ void CoreTiming::ResetTicks() {
 }
 
 u64 CoreTiming::GetClockTicks() const {
-    u64 fres = is_multicore ? Common::g_wall_clock.GetCNTPCT() : Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
+    u64 fres = is_multicore ? Common::GetWallClock().GetCNTPCT()
+                            : Common::WallClock::CPUTickToCNTPCT(cpu_ticks);
     if (const u32 target = CpuClockTargetMhz(Settings::values.cpu_clock.GetValue());
         target != CPU_CLOCK_BASE_MHZ) {
         fres = fres * target / CPU_CLOCK_BASE_MHZ;
@@ -238,9 +239,8 @@ u64 CoreTiming::GetClockTicks() const {
 }
 
 u64 CoreTiming::GetGPUTicks() const {
-    return is_multicore
-        ? Common::g_wall_clock.GetGPUTick()
-        : Common::WallClock::CPUTickToGPUTick(cpu_ticks);
+    return is_multicore ? Common::GetWallClock().GetGPUTick()
+                        : Common::WallClock::CPUTickToGPUTick(cpu_ticks);
 }
 
 std::optional<s64> CoreTiming::Advance() {
@@ -315,16 +315,14 @@ void CoreTiming::Reset() {
 
 /// @brief Returns current time in nanoseconds.
 std::chrono::nanoseconds CoreTiming::GetGlobalTimeNs() const noexcept {
-    return is_multicore
-        ? Common::g_wall_clock.GetTimeNS()
-        : std::chrono::nanoseconds{Common::WallClock::CPUTickToNS(cpu_ticks)};
+    return is_multicore ? Common::GetWallClock().GetTimeNS()
+                        : std::chrono::nanoseconds{Common::WallClock::CPUTickToNS(cpu_ticks)};
 }
 
 /// @brief Returns current time in microseconds.
 std::chrono::microseconds CoreTiming::GetGlobalTimeUs() const noexcept {
-    return is_multicore
-        ? Common::g_wall_clock.GetTimeUS()
-        : std::chrono::microseconds{Common::WallClock::CPUTickToUS(cpu_ticks)};
+    return is_multicore ? Common::GetWallClock().GetTimeUS()
+                        : std::chrono::microseconds{Common::WallClock::CPUTickToUS(cpu_ticks)};
 }
 
 #ifdef _WIN32

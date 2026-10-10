@@ -439,6 +439,8 @@ void RememberCurrentThreadNice(pid_t tid, s32 nice_value) {
 #endif
 
 #include "common/cpu_features.h"
+#include "common/native_clock_policy.h"
+#include <cstdlib>
 #ifdef ARCHITECTURE_x86_64
 #ifdef _MSC_VER
 #include <intrin.h>
@@ -653,10 +655,23 @@ __attribute__((target("waitpkg,mwaitx")))
 #pragma GCC target("mwaitx")
 #endif
 bool Event::WaitFor(const std::chrono::nanoseconds time) {
+#ifdef YUZU_UWP_APPCONTAINER
+    // Avoid mixing nanoseconds with raw TSC ticks when native-clock detection fails.
+    // Notification also wakes the timing thread without polling the system timer tick.
+    static const bool notified_wait = NativeClockPolicy::Enabled(std::getenv("NXBOX_EVENT_WAIT"));
+    if (notified_wait) {
+        std::unique_lock lk{mutex};
+        if (!condvar.wait_for(lk, time, [this] { return is_set.load(); })) {
+            return false;
+        }
+        is_set = false;
+        return true;
+    }
+#endif
 #ifdef _WIN32
     auto const start = Common::X64::FencedRDTSC();
     auto const& caps = Common::g_cpu_caps;
-    [[maybe_unused]] auto const end = start + Common::g_wall_clock.NsToTicks(time);
+    [[maybe_unused]] auto const end = start + Common::GetWallClock().NsToTicks(time);
     if (caps.monitorx) {
         while (true) {
             // Armed monitor, as per manual, MWAITX must be conditional if the condition isn't satisfied
@@ -719,8 +734,8 @@ bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #else
 bool Event::WaitFor(const std::chrono::nanoseconds time) {
 #ifdef _WIN32
-    auto const end = Common::g_wall_clock.GetTimeNS() + time;
-    while (!is_set.load() && end > Common::g_wall_clock.GetTimeNS())
+    auto const end = Common::GetWallClock().GetTimeNS() + time;
+    while (!is_set.load() && end > Common::GetWallClock().GetTimeNS())
         Common::Windows::SleepForOneTick();
     if (is_set.load())
         Reset();

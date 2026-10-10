@@ -243,6 +243,7 @@ Eden. Each entry below describes one file; generated caches are identified separ
   inspection.
 - `tests/port/test_image_slot_patch.py` — Checks shader-image format-emulation indexing at nonzero
   start slots.
+- `tests/port/test_cpu_jit_policy.py` — Checks native-clock calibration selection and notified timed waits with host C++ compilation.
 - `tests/port/test_jit_hot_paths.py` — Checks JIT assertion/hot-path source invariants.
 - `tests/port/test_mesa_api_ring.py` — Checks process-wide API-ring generation and reporting with
   host mocks.
@@ -288,6 +289,8 @@ and YUZU_UWP_APPCONTAINER are compile definitions, not environment switches.
 - `src/common/CMakeLists.txt` — Enables AppContainer code and sparse-memory sources for
   WindowsStore.
 - `src/common/assert.h` — Provides the optional inline JIT assertion fast path.
+- `src/common/cpu_features.cpp` — Selects the UWP native clock with validated monotonic calibration.
+- `src/common/native_clock_policy.h` — Defines portable calibration and override policy.
 - `src/common/fiber.cpp` — Reduces AppContainer fiber stacks to 512 KiB.
 - `src/common/fs/file.cpp` — Uses FromApp file-opening fallback and handle-based size queries.
 - `src/common/fs/fs.cpp` — Uses FromApp file/directory operations and enumeration fallbacks.
@@ -300,7 +303,7 @@ and YUZU_UWP_APPCONTAINER are compile definitions, not environment switches.
 - `src/common/settings.cpp` — Disables fastmem in the AppContainer configuration.
 - `src/common/sparse_large_vector.cpp` — Uses the sparse allocator for AppContainer reservations and
   touched-page commitment.
-- `src/common/thread.cpp` — Caps AppContainer host thread priority at normal.
+- `src/common/thread.cpp` — Caps AppContainer host thread priority at normal and uses notified timed waits by default.
 - `src/core/CMakeLists.txt` — Enables NXBOX_UWP and YUZU_UWP_APPCONTAINER privately for core.
 - `src/core/arm/dynarmic/arm_dynarmic_32.cpp` — Caps the UWP ARM32 JIT cache at 128 MiB.
 - `src/core/arm/dynarmic/arm_dynarmic_64.cpp` — Caps the UWP ARM64 JIT cache and records
@@ -493,6 +496,8 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_VERIFY_ROMFS`           | Off                                                   | Leading `1` enables RomFS verification and BKTR read diagnostics.                                                                                        | Yes         | src/core/file_sys/romfs_read_diagnostics.h:IsRomfsVerificationEnabled; content_archive.cpp/romfs_verify.cpp |
 | `NXBOX_VIEW_CAST_COPY` | On | Exact `0` disables GPU SRV reinterpretation and restores resource-format fallback. Read once. Shadows are refreshed on bind and before draw/dispatch, with two GPU copies per mip/layer. | Yes | tools/nxbox/mesa_view_cast.h:nxbox_view_cast_copy_enabled |
 | `NXBOX_VMMAP`                  | Off                                                   | Leading `1` logs committed virtual memory and guest accounting every 30 seconds.                                                                         | Yes         | src/eden_uwp/game_session.cpp:RunGame/LogVirtualMemoryMap                                                   |
+| `NXBOX_EVENT_WAIT` | On | Exact `0` restores legacy raw-TSC timed waits; default uses condition-variable notification. | Yes | src/common/thread.cpp:Event::WaitFor |
+| `NXBOX_NATIVE_CLOCK` | On | Exact `0` disables missing-frequency TSC calibration and restores original clock selection. | Yes | src/common/cpu_features.cpp:GetWallClock |
 | `GALLIUM_THREAD`               | true                                                  | Mesa boolean option; `0` returns the underlying pipe context without the threaded-context wrapper.                                                       | Yes         | Pinned Mesa src/gallium/auxiliary/util/u_threaded_context.c:threaded_context_create                         |
 
 ### Names that are not user switches
