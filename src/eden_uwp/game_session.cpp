@@ -464,17 +464,19 @@ void RunStackSampler(const std::atomic<bool>& closed) {
     };
     const std::array<Range, 2> ranges{range_of(nullptr, "exe"),
                                       range_of(L"libgallium_wgl.dll", "gallium")};
-    HANDLE threads[2]{nullptr, nullptr};
-    std::uint32_t thread_ids[2]{0, 0};
+    HANDLE threads[6]{};
+    std::uint32_t thread_ids[6]{};
     std::map<std::string, unsigned> leaf, frames, inner, paths;
     unsigned samples = 0;
     auto window_start = std::chrono::steady_clock::now();
     while (!closed.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(8));
-        for (int which = 0; which < 2; ++which) {
+        for (int which = 0; which < 6; ++which) {
             std::uint32_t id = 0;
             if (which == 0) {
                 id = NxboxStall::gpu_thread_id.load();
+            } else if (which >= 2) {
+                id = NxboxStall::cpu_thread_ids[static_cast<std::size_t>(which - 2)].load();
             } else {
                 // The thread running Mesa's d3d12 draws publishes its id on its first draw.
                 char value[16]{};
@@ -525,7 +527,8 @@ void RunStackSampler(const std::atomic<bool>& closed) {
                 continue;
             }
             ++samples;
-            const char* label = which == 0 ? "gpu:" : "drv:";
+            static constexpr const char* labels[]{"gpu:", "drv:", "cpu0:", "cpu1:", "cpu2:", "cpu3:"};
+            const char* label = labels[which];
             const auto describe = [&](std::uintptr_t address) -> std::string {
                 for (const Range& range : ranges) {
                     if (address >= range.begin && address < range.end) {

@@ -5,6 +5,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/fiber.h"
+#include "common/nxbox_stall.h"
+#ifdef YUZU_UWP_APPCONTAINER
+// Declared directly: windows.h in core code clashes with other headers.
+extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId();
+#endif
 #include "common/scope_exit.h"
 #include "common/thread.h"
 #include "common/settings.h"
@@ -173,6 +178,11 @@ void CpuManager::RunThread(std::stop_token token, std::size_t core) {
     system.RegisterCoreThread(core);
     std::string name = is_multicore ? ("CPUCore_" + std::to_string(core)) : std::string{"CPUThread"};
     Common::SetCurrentThreadName(name.c_str());
+#ifdef YUZU_UWP_APPCONTAINER
+    if (core < NxboxStall::cpu_thread_ids.size()) {
+        NxboxStall::cpu_thread_ids[core].store(static_cast<std::uint32_t>(GetCurrentThreadId()));
+    }
+#endif
     Common::SetCurrentThreadPriority(Common::ThreadPriority::Critical);
     Common::SetCurrentThreadToPerformanceCores();
     auto& data = core_data[core];

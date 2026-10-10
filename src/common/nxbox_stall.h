@@ -17,6 +17,8 @@ namespace NxboxStall {
 
 // Thread id of the emulated GPU thread, for the optional stack sampler (NXBOX_SAMPLER=1).
 inline std::atomic<std::uint32_t> gpu_thread_id{0};
+// Host thread ids of the emulated CPU cores (CPUCore_0..3), for the same sampler.
+inline std::array<std::atomic<std::uint32_t>, 4> cpu_thread_ids{};
 
 enum class Kind {
     Shader,
