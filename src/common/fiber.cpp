@@ -14,7 +14,9 @@
 
 namespace Common {
 
-#ifdef __OPENORBIS__
+#if defined(__OPENORBIS__) || defined(NXBOX_UWP)
+// The Xbox app has a fixed memory limit and Breath of the Wild creates over a hundred guest threads,
+// each with two of these stacks: 512 KiB keeps them near 120 MiB instead of 460 MiB.
 constexpr size_t DEFAULT_STACK_SIZE = 128 * 4096;
 #else
 constexpr size_t DEFAULT_STACK_SIZE = 512 * 4096;
@@ -25,8 +27,9 @@ struct Fiber::FiberImpl {
     FiberImpl() {}
 
     u32 canary_1 = CANARY_VALUE;
-    std::array<u8, DEFAULT_STACK_SIZE> stack{};
-    std::array<u8, DEFAULT_STACK_SIZE> rewind_stack{};
+    // Left uninitialised: zeroing them made every page of every stack resident.
+    std::array<u8, DEFAULT_STACK_SIZE> stack;
+    std::array<u8, DEFAULT_STACK_SIZE> rewind_stack;
     u32 canary_2 = CANARY_VALUE;
 
     boost::context::detail::fcontext_t context{};
