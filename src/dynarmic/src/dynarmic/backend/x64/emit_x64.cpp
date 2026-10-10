@@ -106,7 +106,7 @@ void EmitX64::PushRSBHelper(Xbyak::Reg64 loc_desc_reg, Xbyak::Reg64 index_reg, I
 
     code.mov(index_reg.cvt32(), dword[code.ABI_JIT_PTR + code.GetJitStateInfo().offsetof_rsb_ptr]);
     code.mov(loc_desc_reg, target.Value());
-    patch_information[target].mov_rcx.push_back(code.getCurr());
+    patch_information[target].Add(PatchInformation::Kind::MovRcx, code.getCurr());
     EmitPatchMovRcx(target_code_ptr);
     code.mov(qword[code.ABI_JIT_PTR + index_reg * 8 + code.GetJitStateInfo().offsetof_rsb_location_descriptors], loc_desc_reg);
     code.mov(qword[code.ABI_JIT_PTR + index_reg * 8 + code.GetJitStateInfo().offsetof_rsb_codeptrs], rcx);
@@ -365,7 +365,7 @@ EmitX64::BlockDescriptor EmitX64::RegisterBlock(const IR::LocationDescriptor& de
 }
 
 void EmitX64::Patch(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr) {
-#if defined(NXBOX_UWP)
+#if defined(NXBOX_UWP) || defined(YUZU_UWP_APPCONTAINER)
     // Most new blocks have no incoming patch sites. A lookup must not allocate four
     // empty vectors per block. Retain existing sites for invalidation and relinking.
     const auto patch = patch_information.find(target_desc);
@@ -378,6 +378,25 @@ void EmitX64::Patch(const IR::LocationDescriptor& target_desc, CodePtr target_co
 #endif
     const CodePtr save_code_ptr = code.getCurr();
 
+#if defined(YUZU_UWP_APPCONTAINER)
+    for (const auto& site : patch_info.sites) {
+        code.SetCodePtr(site.location);
+        switch (site.kind) {
+        case PatchInformation::Kind::Jg:
+            EmitPatchJg(target_desc, target_code_ptr);
+            break;
+        case PatchInformation::Kind::Jz:
+            EmitPatchJz(target_desc, target_code_ptr);
+            break;
+        case PatchInformation::Kind::Jmp:
+            EmitPatchJmp(target_desc, target_code_ptr);
+            break;
+        case PatchInformation::Kind::MovRcx:
+            EmitPatchMovRcx(target_code_ptr);
+            break;
+        }
+    }
+#else
     for (CodePtr location : patch_info.jg) {
         code.SetCodePtr(location);
         EmitPatchJg(target_desc, target_code_ptr);
@@ -398,6 +417,7 @@ void EmitX64::Patch(const IR::LocationDescriptor& target_desc, CodePtr target_co
         EmitPatchMovRcx(target_code_ptr);
     }
 
+#endif
     code.SetCodePtr(save_code_ptr);
 }
 
@@ -412,7 +432,13 @@ void EmitX64::ClearCache() {
     NxboxStall::AddJit(NxboxStall::JitEvent::ClearBlocks, block_descriptors.size());
 #endif
     block_descriptors.clear();
+#if defined(YUZU_UWP_APPCONTAINER)
+    // A flat map retains its bucket allocation after clear(). No sites survive a full
+    // code-cache reset, so release the high-water allocation as well as the site vectors.
+    decltype(patch_information){}.swap(patch_information);
+#else
     patch_information.clear();
+#endif
 
     PerfMapClear();
 }

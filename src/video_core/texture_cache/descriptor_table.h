@@ -23,6 +23,9 @@ class DescriptorTable {
 public:
     [[nodiscard]] bool Synchronize(GPUVAddr gpu_addr, u32 limit) noexcept {
         bool ret = !(current_gpu_addr == gpu_addr && current_limit == limit);
+#if defined(NXBOX_UWP)
+        ret |= descriptors.empty();
+#endif
         if (ret) {
             Refresh(gpu_addr, limit);
         }
@@ -53,9 +56,15 @@ public:
     void Refresh(GPUVAddr gpu_addr, u32 limit) noexcept {
         current_gpu_addr = gpu_addr;
         current_limit = limit;
+#if defined(NXBOX_UWP)
+        // Limits are inclusive. Keep the high-water mark when a channel changes tables,
+        // but do not allocate half a million unused entries on a 5 GiB host.
+        const size_t num_descriptors = (std::max)(descriptors.size(), size_t{limit} + 1);
+#else
         // Mario Brothership reallocates a lot of times, so use aggressive pre-alloc sizes
         // std::vector<T> by default uses quadratic growth, but that isn't even enough to satisfy brothership
         const size_t num_descriptors = ((limit + 0x80000) & (~0x7ffff)) + 1;
+#endif
         size_t old_size = read_descriptors.size();
         read_descriptors.resize(Common::DivCeil(num_descriptors, 64U));
         old_size = (std::min)(old_size, read_descriptors.size());

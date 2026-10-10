@@ -60,8 +60,14 @@ public:
         const void* code_ptr = nullptr;
     };
     static_assert(sizeof(FastDispatchEntry) == 0x10);
-    static constexpr u64 fast_dispatch_table_mask = 0xFFFFF0;
+#if defined(YUZU_UWP_APPCONTAINER)
+    // This is a tagged lookup cache, not guest state. Collisions fall back to LookupBlock.
+    // Keep one MiB per core instead of sixteen MiB on the 5 GiB Xbox host.
+    static constexpr size_t fast_dispatch_table_size = 0x10000;
+#else
     static constexpr size_t fast_dispatch_table_size = 0x100000;
+#endif
+    static constexpr u64 fast_dispatch_table_mask = (fast_dispatch_table_size - 1) * sizeof(FastDispatchEntry);
 
     void ClearFastDispatchTable();
     void GenMemory128Accessors();

@@ -117,10 +117,45 @@ public:
 
     // Patching
     struct PatchInformation {
+        enum class Kind { Jg,
+                          Jz,
+                          Jmp,
+                          MovRcx };
+#if defined(YUZU_UWP_APPCONTAINER)
+        struct Site {
+            CodePtr location;
+            Kind kind;
+        };
+        // One 24-byte vector per target replaces four inline small-vectors (224 bytes).
+        // Sites remain alive across target invalidation so incoming blocks can be relinked.
+        std::vector<Site> sites;
+
+        void Add(Kind kind, CodePtr location) {
+            sites.push_back({location, kind});
+        }
+#else
         boost::container::small_vector<CodePtr, 4> jg; //4*8=32
         boost::container::small_vector<CodePtr, 4> jz; //4*8=32
         boost::container::small_vector<CodePtr, 4> jmp; //4*8=32
         boost::container::small_vector<CodePtr, 4> mov_rcx; //4*8=32
+
+        void Add(Kind kind, CodePtr location) {
+            switch (kind) {
+            case Kind::Jg:
+                jg.push_back(location);
+                break;
+            case Kind::Jz:
+                jz.push_back(location);
+                break;
+            case Kind::Jmp:
+                jmp.push_back(location);
+                break;
+            case Kind::MovRcx:
+                mov_rcx.push_back(location);
+                break;
+            }
+        }
+#endif
     };
     void Patch(const IR::LocationDescriptor& target_desc, CodePtr target_code_ptr);
     virtual void Unpatch(const IR::LocationDescriptor& target_desc);

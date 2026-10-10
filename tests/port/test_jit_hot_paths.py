@@ -51,7 +51,7 @@ class JitHotPathTests(unittest.TestCase):
     def test_patch_lifetime_and_unused_profiler(self):
         source = EMITTER.read_text()
         methods = []
-        for name in ("RegisterBlock", "Patch", "Unpatch"):
+        for name in ("RegisterBlock", "Patch", "Unpatch", "ClearCache", "InvalidateBasicBlocks"):
             match = re.search(
                 rf"^(?:void|EmitX64::BlockDescriptor) EmitX64::{name}\([^\n]*\) \{{.*?^\}}",
                 source,
@@ -59,12 +59,25 @@ class JitHotPathTests(unittest.TestCase):
             )
             self.assertIsNotNone(match, name)
             methods.append(match.group())
+        header = EMITTER.with_suffix(".h").read_text()
+        patch_struct = re.search(
+            r"    struct PatchInformation \{.*?^    \};",
+            header,
+            re.MULTILINE | re.DOTALL,
+        ).group()
         program = r"""
 #include <cassert>
 #include <cstddef>
 #include <map>
 #include <string>
 #include <vector>
+#include <set>
+namespace boost::container {
+template<typename T, unsigned N> using small_vector = std::vector<T>;
+}
+namespace Common {
+template<typename T> using unordered_set = std::set<T>;
+}
 namespace IR {
 struct LocationDescriptor {
     unsigned value;
@@ -79,14 +92,17 @@ std::string LocationDescriptorToFriendlyName(IR::LocationDescriptor) {
     return "block";
 }
 void PerfMapRegister(CodePtr, CodePtr, const std::string&) {}
+void PerfMapClear() {}
 struct EmitX64 {
     struct Code {
         CodePtr cursor = nullptr;
         unsigned moves = 0;
+        void EnableWriting() {}
+        void DisableWriting() {}
         CodePtr getCurr() const { return cursor; }
         void SetCodePtr(CodePtr p) { cursor = p; ++moves; }
     } code;
-    struct PatchInformation { std::vector<CodePtr> jg, jz, jmp, mov_rcx; };
+PATCH_STRUCT
     struct BlockDescriptor { CodePtr entrypoint; size_t size; };
     std::map<IR::LocationDescriptor, PatchInformation> patch_information;
     std::map<IR::LocationDescriptor, BlockDescriptor> block_descriptors;
@@ -98,6 +114,8 @@ struct EmitX64 {
     BlockDescriptor RegisterBlock(const IR::LocationDescriptor&, CodePtr, size_t);
     void Patch(const IR::LocationDescriptor&, CodePtr);
     void Unpatch(const IR::LocationDescriptor&);
+    void ClearCache();
+    void InvalidateBasicBlocks(const Common::unordered_set<IR::LocationDescriptor>&);
 };
 METHODS
 int main() {
@@ -111,8 +129,22 @@ int main() {
     assert(emitter.patch_information.size() == 100000);
 #endif
     emitter.patch_information.clear();
-    emitter.patch_information[{7}] = {{storage + 1, storage + 2},
-        {storage + 3}, {storage + 4}, {storage + 5}};
+    auto& info = emitter.patch_information[{7}];
+    using Kind = EmitX64::PatchInformation::Kind;
+    info.Add(Kind::Jg, storage + 1);
+    info.Add(Kind::Jmp, storage + 4);
+    info.Add(Kind::Jz, storage + 3);
+    info.Add(Kind::MovRcx, storage + 5);
+    info.Add(Kind::Jg, storage + 2);
+#ifdef YUZU_UWP_APPCONTAINER
+    static_assert(sizeof(info) == sizeof(std::vector<CodePtr>));
+    // Exercise growth and movement of the actual compact production records.
+    for (unsigned i = 0; i < 100; ++i) info.Add(Kind::Jmp, storage + 4);
+    auto moved = std::move(info);
+    assert(moved.sites.size() == 105);
+    assert(moved.sites[0].kind == Kind::Jg && moved.sites[1].kind == Kind::Jmp);
+    info = std::move(moved);
+#endif
     emitter.RegisterBlock({7}, storage + 20, 8);
     assert(emitter.targets.size() == 5 && emitter.code.cursor == storage + 63);
     for (const auto& [site, target] : emitter.targets) { (void)site; assert(target == storage + 20); }
@@ -120,17 +152,29 @@ int main() {
     for (const auto& [site, target] : emitter.targets) { (void)site; assert(target == nullptr); }
     emitter.RegisterBlock({7}, storage + 30, 8);
     for (const auto& [site, target] : emitter.targets) { (void)site; assert(target == storage + 30); }
+    emitter.InvalidateBasicBlocks({{7}});
+    assert(emitter.block_descriptors.empty());
+    assert(emitter.patch_information.size() == 1);
+    for (const auto& [site, target] : emitter.targets) { (void)site; assert(target == nullptr); }
+    emitter.RegisterBlock({7}, storage + 40, 8);
+    for (const auto& [site, target] : emitter.targets) { (void)site; assert(target == storage + 40); }
     emitter.Unpatch({8});
     assert(emitter.patch_information.size() == 1);
     assert(emitter.code.cursor == storage + 63);
 #ifdef NXBOX_UWP
     assert(formatted_names == 0);
 #else
-    assert(formatted_names == 2);
+    assert(formatted_names == 3);
+#endif
+    emitter.ClearCache();
+    assert(emitter.patch_information.empty() && emitter.block_descriptors.empty());
+    emitter.Patch({7}, storage);
+#ifdef NXBOX_UWP
+    assert(emitter.patch_information.empty());
 #endif
 }
-""".replace("METHODS", "\n".join(methods))
-        for defines in ((), ("NXBOX_UWP=1",)):
+""".replace("METHODS", "\n".join(methods)).replace("PATCH_STRUCT", patch_struct)
+        for defines in ((), ("NXBOX_UWP=1",), ("NXBOX_UWP=1", "YUZU_UWP_APPCONTAINER=1")):
             with self.subTest(defines=defines):
                 self.compile_and_run(program, defines)
 

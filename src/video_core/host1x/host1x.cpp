@@ -22,18 +22,26 @@ Host1x::Host1x(Core::System& system_)
 Host1x::~Host1x() = default;
 
 void Host1x::StartDevice(s32 fd, ChannelType type, u32 syncpt) {
+#if defined(NXBOX_UWP)
+    if (!devices[fd]) {
+        devices[fd] = std::make_unique<Device>();
+    }
+    auto& device = *devices[fd];
+#else
+    auto& device = devices[fd];
+#endif
     switch (type) {
     case ChannelType::NvDec:
 #ifdef YUZU_LEGACY
         std::call_once(nvdec_first_init, []() {std::this_thread::sleep_for(std::chrono::milliseconds{500});}); // HACK: For Astroneer
 #endif
-        devices[fd].emplace<Tegra::Host1x::Nvdec>(*this, fd, syncpt);
+        device.emplace<Tegra::Host1x::Nvdec>(*this, fd, syncpt);
         break;
     case ChannelType::VIC:
 #ifdef YUZU_LEGACY
         std::call_once(vic_first_init, []() {std::this_thread::sleep_for(std::chrono::milliseconds{500});}); // HACK: For Astroneer
 #endif
-        devices[fd].emplace<Tegra::Host1x::Vic>(*this, fd, syncpt);
+        device.emplace<Tegra::Host1x::Vic>(*this, fd, syncpt);
         break;
     default:
         LOG_ERROR(HW_GPU, "Unimplemented host1x device {}", u32(type));
@@ -42,7 +50,11 @@ void Host1x::StartDevice(s32 fd, ChannelType type, u32 syncpt) {
 }
 
 void Host1x::StopDevice(s32 fd, ChannelType type) {
+#if defined(NXBOX_UWP)
+    devices[fd].reset();
+#else
     devices[fd].emplace<std::monostate>();
+#endif
 }
 
 } // namespace Tegra::Host1x

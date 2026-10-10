@@ -7,6 +7,7 @@
 #pragma once
 
 #include "common/container/unordered_map.h"
+#include <memory>
 #include <unordered_map>
 #include <variant>
 
@@ -172,9 +173,17 @@ public:
     void StopDevice(s32 fd, ChannelType type);
 
     void PushEntries(s32 fd, ChCommandHeaderList&& entries) {
-        if (auto const nvdec = std::get_if<Tegra::Host1x::Nvdec>(&devices[fd])) {
+#if defined(NXBOX_UWP)
+        if (!devices[fd]) {
+            return;
+        }
+        auto& device = *devices[fd];
+#else
+        auto& device = devices[fd];
+#endif
+        if (auto const nvdec = std::get_if<Tegra::Host1x::Nvdec>(&device)) {
             nvdec->PushEntries(std::move(entries));
-        } else if (auto const vic = std::get_if<Tegra::Host1x::Vic>(&devices[fd])) {
+        } else if (auto const vic = std::get_if<Tegra::Host1x::Vic>(&device)) {
             vic->PushEntries(std::move(entries));
         }
     }
@@ -185,11 +194,18 @@ public:
     Tegra::MemoryManager gmmu_manager;
     Common::FlatAllocator<u32, 0, 32> allocator;
     FrameQueue frame_queue;
+#if defined(NXBOX_UWP)
+    // System::Impl embeds Host1x even before it starts. Avoid reserving 1024 copies
+    // of the largest decoder. Keep separate slots and stable addresses for running devices.
+    using Device = std::variant<std::monostate, Tegra::Host1x::Nvdec, Tegra::Host1x::Vic>;
+    std::array<std::unique_ptr<Device>, 1024> devices;
+#else
     std::array<std::variant<
         std::monostate,
         Tegra::Host1x::Nvdec,
         Tegra::Host1x::Vic
     >, 1024> devices;
+#endif
 #ifdef YUZU_LEGACY
     std::once_flag nvdec_first_init;
     std::once_flag vic_first_init;
