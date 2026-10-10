@@ -18,8 +18,8 @@ extern "C" __declspec(dllimport) void* __stdcall GetModuleHandleW(const wchar_t*
 
 namespace {
 
-constexpr std::size_t kMinTracked = 64 * 1024;
-constexpr std::size_t kSlots = 1 << 16;
+constexpr std::size_t kMinTracked = 2 * 1024;
+constexpr std::size_t kSlots = 1 << 21;
 
 struct Entry {
     void* pointer;
