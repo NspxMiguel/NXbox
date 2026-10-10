@@ -612,6 +612,23 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                                winrt::Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
     };
     memory_stage("begin");
+    // The app's memory limit is the wall BotW hits while loading the world. Ask the shell for more;
+    // it may refuse (the result and the limit afterwards are logged either way).
+    for (const std::uint64_t gib : {10ULL, 8ULL, 7ULL, 6ULL}) {
+        bool granted = false;
+        try {
+            granted = winrt::Windows::System::MemoryManager::TrySetAppMemoryUsageLimit(gib << 30);
+        } catch (const winrt::hresult_error& error) {
+            Diagnostic(fmt::format("MEMORY_LIMIT request {} GiB threw {:#x}", gib,
+                                   static_cast<std::uint32_t>(error.code())));
+        }
+        Diagnostic(fmt::format("MEMORY_LIMIT request {} GiB granted={} limit_now={} MiB", gib,
+                               granted,
+                               winrt::Windows::System::MemoryManager::AppMemoryUsageLimit() >> 20));
+        if (granted) {
+            break;
+        }
+    }
     const std::string path =
         protocol_path.empty() ? ResolveGamePath(bundled_path, chosen_in_library) : protocol_path;
     SCOPE_EXIT {
