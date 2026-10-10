@@ -362,6 +362,60 @@ void CheckGameReads(const std::string& path) {
                            mismatches));
 }
 
+// NXBOX_VMMAP=1: every 30 s, walks the process address space and logs the committed bytes by
+// kind (private, mapped, image) and the twelve largest committed regions, to see what is filling
+// the app's memory limit.
+void LogVirtualMemoryMap() {
+    struct Region {
+        std::uintptr_t base;
+        std::uint64_t committed;
+        DWORD type;
+    };
+    std::vector<Region> regions;
+    std::uint64_t by_type[3]{0, 0, 0};
+    std::uintptr_t address = 0;
+    MEMORY_BASIC_INFORMATION info{};
+    Region current{0, 0, 0};
+    while (VirtualQuery(reinterpret_cast<LPCVOID>(address), &info, sizeof(info)) == sizeof(info)) {
+        const auto begin = reinterpret_cast<std::uintptr_t>(info.BaseAddress);
+        if (info.State == MEM_COMMIT) {
+            const int slot = info.Type == MEM_PRIVATE ? 0 : info.Type == MEM_MAPPED ? 1 : 2;
+            by_type[slot] += info.RegionSize;
+            if (current.committed != 0 && current.type == info.Type &&
+                current.base + current.committed == begin) {
+                current.committed += info.RegionSize;
+            } else {
+                if (current.committed != 0) {
+                    regions.push_back(current);
+                }
+                current = {begin, info.RegionSize, info.Type};
+            }
+        } else if (current.committed != 0) {
+            regions.push_back(current);
+            current = {0, 0, 0};
+        }
+        const auto next = begin + info.RegionSize;
+        if (next <= address) {
+            break;
+        }
+        address = next;
+    }
+    if (current.committed != 0) {
+        regions.push_back(current);
+    }
+    std::sort(regions.begin(), regions.end(),
+              [](const Region& a, const Region& b) { return a.committed > b.committed; });
+    std::string top;
+    for (std::size_t i = 0; i < regions.size() && i < 12; ++i) {
+        top += fmt::format(" {:x}:{}MiB:{}", regions[i].base, regions[i].committed >> 20,
+                           regions[i].type == MEM_PRIVATE ? "priv"
+                                                           : regions[i].type == MEM_MAPPED ? "map"
+                                                                                           : "img");
+    }
+    Diagnostic(fmt::format("VMMAP private={}MiB mapped={}MiB image={}MiB top:{}", by_type[0] >> 20,
+                           by_type[1] >> 20, by_type[2] >> 20, top));
+}
+
 // Kept free of objects with destructors so MSVC accepts the structured exception handler.
 bool CopyStackSlice(std::uintptr_t from, void* to, std::size_t bytes) {
     __try {
@@ -879,6 +933,15 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
             }
             last_frame_count = count;
             last_frame_at = now;
+        }
+        static const bool vmmap = [] {
+            const char* value = std::getenv("NXBOX_VMMAP");
+            return value != nullptr && value[0] == '1';
+        }();
+        static auto last_vmmap = std::chrono::steady_clock::now();
+        if (vmmap && now - last_vmmap >= std::chrono::seconds(30)) {
+            last_vmmap = now;
+            LogVirtualMemoryMap();
         }
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
         if (elapsed >= 5.0) {
