@@ -689,9 +689,13 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
     Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_GLSL;
     // NXBOX_SHADER_BACKEND=spirv feeds Mesa SPIR-V instead of GLSL text, which skips the GLSL front
     // end and the intermediate representation it keeps for every program.
-    if (const char* backend = std::getenv("NXBOX_SHADER_BACKEND");
-        backend != nullptr && _stricmp(backend, "spirv") == 0) {
-        Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_SPIRV;
+    // It is the default: it costs about 40% less memory per program, which is what keeps Breath of
+    // the Wild under the 5 GiB limit. NXBOX_SHADER_BACKEND=glsl restores the GLSL text path.
+    {
+        const char* backend = std::getenv("NXBOX_SHADER_BACKEND");
+        if (backend == nullptr || _stricmp(backend, "glsl") != 0) {
+            Settings::values.renderer_backend = Settings::RendererBackend::OpenGL_SPIRV;
+        }
     }
     // XAudio2 is the audio path available to UWP; NXBOX_AUDIO=null (LocalState\nxbox_env.txt)
     // falls back to silence.
