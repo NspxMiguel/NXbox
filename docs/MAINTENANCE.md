@@ -178,6 +178,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
   implements opt-in known-pair quarantine.
 - `tools/nxbox/mesa_query_wait.h` — Waits for query completion with device-loss and
   unsubmitted-fence checks.
+- `tools/nxbox/mesa_perf_waits.h` — Defines async-submit and GPU-only stream-output wait policies
+  plus sampled performance counters.
 - `tools/nxbox/mesa_sync_batch.h` — Implements synchronous submission helpers, command journaling
   and copy/clear safety wrappers.
 - `tools/nxbox/__pycache__/patch_mesa_uwp.cpython-314.pyc` — Tracked generated Python bytecode; the
@@ -249,6 +251,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
 - `tests/port/test_mesa_dred.py` — Checks fixture integrity and DRED patch integration.
 - `tests/port/test_mesa_first_bad_batch.py` — Checks BC/view/barrier fixes and complete-source patch
   integration.
+- `tests/port/test_mesa_perf_waits.py` — Checks generated submit policy, fallback flags, counters,
+  failure handling and retained completion requirements.
 - `tests/port/test_mesa_full_chain.py` — Checks the whole patch chain, including pristine pinned
   sources and CRLF handling.
 - `tests/port/test_mesa_heap_policy.py` — Checks heap properties and feature-gated residency policy.
@@ -421,6 +425,7 @@ calls every `patch_*` function in the order below. Helper destinations are under
 | 26    | `patch_resident_create`       | Adds an override that disables non-resident resource creation.                                       | —                                                                                      |
 | 27    | `patch_view_cast`             | Reinterprets equal-size color SRVs via GPU buffers; guards other invalid views.                       | mesa_view_cast.h → nxbox_view_cast.h; mesa_view_cast_copy.h → nxbox_view_cast_copy.h                          |
 | 28    | `patch_buffer_staging`        | Routes eligible busy-buffer discard writes through upload staging instead of waiting.                | —                                                                                      |
+| 29 | `patch_perf_waits` | Removes diagnostic submission drains and GPU-only SO drains by default; keeps profiler and required completion waits. | mesa_perf_waits.h → nxbox_perf_waits.h |
 
 `NXBOX_MESA_SKIP` is a **patch-time** comma-separated setting, not a console switch. The code
 supports `query`, `pso`, `dxil` and `fence`; the CI input description advertises only query/fence.
@@ -445,6 +450,7 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_ASTC_CHECK`             | Off                                                   | Presence, including `0`, requests bounded GPU-versus-CPU ASTC comparisons.                                                                               | Yes         | src/video_core/renderer_opengl/gl_texture_cache.cpp:NxboxAstcCheckWanted                                    |
 | `NXBOX_ASTC_SRGB_VIA_UNORM`    | Off                                                   | Leading `1` decodes sRGB ASTC into a UNORM scratch texture before copying.                                                                               | Yes         | src/video_core/renderer_opengl/util_shaders.cpp:ASTCDecode                                                  |
 | `NXBOX_AUDIO`                  | XAudio2                                               | Exact `null` selects silence.                                                                                                                            | Yes         | src/eden_uwp/game_session.cpp:RunGame                                                                       |
+| `NXBOX_ASYNC_SUBMIT` | On | Leading `0` restores the post-Execute drain when SYNC_BATCH is enabled. GPU_PROFILE=1 forces synchronous collection. | Yes | patch_mesa_uwp.py:patch_perf_waits → d3d12_batch.cpp; mesa_perf_waits.h |
 | `NXBOX_BUFFER_STAGING`         | On                                                    | Leading `0` disables eligible busy-buffer upload staging.                                                                                                | Yes         | patch_mesa_uwp.py:patch_buffer_staging → d3d12_resource.cpp:nxbox_use_staging                               |
 | `NXBOX_CTX_DIRECT`             | Off                                                   | Leading `1` creates later shared contexts on the caller instead of UI dispatch.                                                                          | Yes         | src/eden_uwp/mesa_window.cpp:CreateSharedContext                                                            |
 | `NXBOX_D3D12_DEBUG`            | Off                                                   | Exact `1` requests the debug layer and unfiltered info queue when available.                                                                             | Yes         | tools/nxbox/mesa_list_ring.h:nxbox_debug_enabled; patch_device_api_ring → d3d12_screen.cpp                  |
@@ -479,7 +485,8 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_SKIP_COPY`              | Off                                                   | Exact `1` drops wrapped copy commands.                                                                                                                   | Yes         | tools/nxbox/mesa_sync_batch.h:NxboxJournalCommands via nxbox_skip_class                                     |
 | `NXBOX_SKIP_DRAW`              | Off                                                   | Leading `1` drops all graphics draws.                                                                                                                    | Yes         | patch_mesa_uwp.py:patch_bisect_switches → d3d12_draw.cpp                                                    |
 | `NXBOX_SKIP_SO`                | Off                                                   | Leading `1` drops draws with stream-output targets.                                                                                                      | Yes         | patch_mesa_uwp.py:patch_bisect_switches → d3d12_draw.cpp                                                    |
-| `NXBOX_SYNC_BATCH`             | On                                                    | Exact `0` disables synchronous completion waits and the dependent API ring/journal paths.                                                                | Yes         | tools/nxbox/mesa_sync_batch.h:nxbox_sync_batch_enabled; mesa_api_ring.h                                     |
+| `NXBOX_SO_NO_WAIT` | On | Leading `0` restores fake stream-output enable/disable drains. | Yes | patch_mesa_uwp.py:patch_perf_waits → d3d12_context.cpp; mesa_perf_waits.h |
+| `NXBOX_SYNC_BATCH`             | On                                                    | Exact `0` disables diagnostic sync and dependent API ring/journal paths. Actual submit drains also require ASYNC_SUBMIT=0 or GPU_PROFILE=1.                                                                | Yes         | tools/nxbox/mesa_sync_batch.h:nxbox_sync_batch_enabled; mesa_api_ring.h                                     |
 | `NXBOX_TEXCACHE_MB`            | No override; 512/768 MiB expected/critical thresholds | Positive MiB sets expected cache threshold and critical to 1.25× that value; this is a collection threshold, not a hard allocation cap.                  | Yes         | src/video_core/renderer_opengl/gl_texture_cache.cpp:ApplyMemoryBudgetOverride                               |
 | `NXBOX_TEXTURE_BARRIER`        | Aliasing barrier                                      | Value beginning with `w` (normally `wait`) restores submit-and-wait texture barriers.                                                                    | Yes         | patch_mesa_uwp.py:patch_first_bad_batch → d3d12_context.cpp                                                 |
 | `NXBOX_UPDATES`                | On                                                    | Leading `0` disables external content directories used for updates/DLC.                                                                                  | Yes         | src/eden_uwp/game_session.cpp:RunGame                                                                       |
@@ -544,6 +551,7 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_D3D12_LIST_RING`
 - `NXBOX_D3D12_MESSAGE`
 - `NXBOX_D3D12_PREVIOUS_GOOD_BATCH`
+- `NXBOX_D3D12_PERF_WAITS`
 - `NXBOX_D3D12_PSO`
 - `NXBOX_D3D12_PSO_DXIL`
 - `NXBOX_D3D12_PSO_DXIL_`
@@ -664,23 +672,24 @@ patch/source/policy behavior; Xbox GPU behavior still needs console validation.
 
 ### Device removed or Close failed
 
-Set `NXBOX_JOURNAL=1` and `NXBOX_API_RING=1` in nxbox_env.txt, keeping synchronous batches enabled
-(the default). Read the earliest `D3D12_FIRST_FAILURE`, `D3D12_BATCH`, `D3D12_REMOVED`, DRED/DRED2,
-first PSO rejection, API-ring/list captures and current/previous batch journal chunks in
-eden_uwp_diag.txt. The frontend drops the NXBOX_ prefix in report labels. Follow command-list
-identity, batch/submission and fence values through `mesa_api_ring.h`, `mesa_list_ring.h`,
-`mesa_sync_batch.h` and patch_dred. DRED/debug availability is reported; unavailable output does not
-prove the command was valid. Final-chain Close/Reset failures and device loss enter the terminal
-session path rather than providing device recovery.
+Set `NXBOX_JOURNAL=1` and `NXBOX_API_RING=1` in nxbox_env.txt, keeping `NXBOX_SYNC_BATCH` enabled,
+and set `NXBOX_ASYNC_SUBMIT=0`. Read the earliest `D3D12_FIRST_FAILURE`, `D3D12_BATCH`,
+`D3D12_REMOVED`, DRED/DRED2, first PSO rejection, API-ring/list captures and current/previous batch
+journal chunks in eden_uwp_diag.txt. The frontend drops the NXBOX_ prefix in report labels. Follow
+command-list identity, batch/submission and fence values through `mesa_api_ring.h`,
+`mesa_list_ring.h`, `mesa_sync_batch.h` and patch_dred. DRED/debug availability is reported;
+unavailable output does not prove the command was valid. Final-chain Close/Reset failures and device
+loss enter the terminal session path rather than providing device recovery.
 
 ### Slow frames
 
 Set `NXBOX_SAMPLER=1` and `NXBOX_GPU_PROFILE=1`; also set `NXBOX_JOURNAL=1` for GPU command
-attribution and retain default synchronous submission. Compare GAME_PRESENT frame gaps, STALL/JIT
-categories, SAMPLER stacks, D3D12_DRAWTIME, D3D12_BATCH_TIME and D3D12_GPUPROF. Look at
-`game_session.cpp`, `common/nxbox_stall.h`, shader/cache/readback wait sites, and
-`mesa_gpu_profile.h`. Instrumentation changes timing; compare an uninstrumented run afterward. Check
-shader warm-up, repeated texture barriers and busy-buffer uploads before changing scheduling policy.
+attribution. GPU_PROFILE automatically restores synchronous submission for timestamp collection.
+Compare GAME_PRESENT frame gaps, STALL/JIT categories, SAMPLER stacks, D3D12_DRAWTIME,
+D3D12_BATCH_TIME and D3D12_GPUPROF. Look at `game_session.cpp`, `common/nxbox_stall.h`,
+shader/cache/readback wait sites, [the GPU wait audit](perf-waits.md), and `mesa_gpu_profile.h`.
+Instrumentation changes timing; compare an uninstrumented run afterward. Check shader warm-up,
+repeated texture barriers and busy-buffer uploads before changing scheduling policy.
 
 ### Memory limit
 

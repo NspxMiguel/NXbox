@@ -57,6 +57,7 @@ checkout are not the maintained source.
 - `mesa_view_cast.h` — Counts view-cast paths and bounded distinct format pairs.
 - `mesa_view_cast_copy.h` — Caches SRV shadows and reinterprets texels using GPU buffer copies.
 - `mesa_query_wait.h` — Waits for query completion with device-loss and unsubmitted-fence checks.
+- `mesa_perf_waits.h` — Defines async-submit and GPU-only SO wait policies and performance counters.
 - `mesa_sync_batch.h` — Implements synchronous submission helpers, command journaling and copy/clear
   safety wrappers.
 
