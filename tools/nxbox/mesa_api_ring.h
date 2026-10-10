@@ -468,6 +468,7 @@ template <typename T> struct NxboxApi {
             std::lock_guard<std::mutex> lock(journal.p->mutex);
             for (auto &entry : journal.p->entries)
               entry.clear();
+            journal.p->full_entries.clear();
             journal.p->next = 0;
             ++journal.p->generation;
             journal.p->record(site, name, list_args);

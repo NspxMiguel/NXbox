@@ -94,6 +94,25 @@ class MesaJournalTests(unittest.TestCase):
     setUp = safety.MesaRenderSafetyTests.setUp
     compile_run = safety.MesaRenderSafetyTests.compile_run
 
+    def test_absent_journal_distinguishes_disabled_from_allocation_failure(self):
+        header = (ROOT / "tools/nxbox/mesa_sync_batch.h").read_text().replace("#pragma once", "")
+        code = (
+            MOCK
+            + header
+            + r"""
+int main(int argc, char **argv) {
+ assert(argc==2);
+ if(argv[1][0]=='0') env["NXBOX_JOURNAL"]="0";
+ if(argv[1][0]=='2') env["NXBOX_SYNC_BATCH"]="0";
+ nxbox_sync_publish(nullptr,nullptr,5,123,0,-2,false,false);
+ const auto manifest=env["NXBOX_D3D12_FIRST_BAD_BATCH"];
+ assert(manifest.find(argv[1][0]=='1' ? "journal=allocation-failed" : "journal=disabled")!=std::string::npos);
+}
+"""
+        )
+        for mode in ("0", "1", "2"):
+            self.compile_run(code, (mode,))
+
     def test_complete_journal_snapshot_and_publication(self):
         header = (ROOT / "tools/nxbox/mesa_sync_batch.h").read_text().replace("#pragma once", "")
         self.compile_run(

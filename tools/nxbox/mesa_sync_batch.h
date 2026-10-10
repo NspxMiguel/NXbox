@@ -37,16 +37,22 @@ struct NxboxBatchJournal {
   std::vector<size_t> stamp_entry;
 };
 
-inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
+inline bool nxbox_journal_enabled() {
   if (!nxbox_sync_batch_enabled())
-    return;
-  // The journal formats a string per recorded command: off in the app unless NXBOX_JOURNAL=1 (the frontend sets it to 0).
+    return false;
+  // The journal formats a string per recorded command: off in the app unless
+  // NXBOX_JOURNAL=1 (the frontend sets it to 0).
   static const bool journal_wanted = [] {
     char value[4] = {};
-    return !(GetEnvironmentVariableA("NXBOX_JOURNAL", value, sizeof(value)) == 1 &&
+    return !(GetEnvironmentVariableA("NXBOX_JOURNAL", value, sizeof(value)) ==
+                 1 &&
              value[0] == '0');
   }();
-  if (!journal_wanted)
+  return journal_wanted;
+}
+
+inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
+  if (!nxbox_journal_enabled())
     return;
   if (!journal)
     journal = new (std::nothrow) NxboxBatchJournal{};
@@ -456,18 +462,21 @@ inline void nxbox_sync_publish(const NxboxBatchJournal *journal,
     snprintf(name, sizeof(name), "%s_%u", prefix, part++);
     SetEnvironmentVariableA(name, text);
   }
-  snprintf(text, sizeof(text),
-           "%s id=%llu ctx=%p batch=%u removed=0x%08x "
-           "fence=%llu "
-           "parts=%u entries=%llu dropped=%llu journal=%s order=execution "
-           "gpu_order=fixup,main fixup_executed=%u completed=%u attribution=%s",
-           key, (unsigned long long)submit, ctx, batch, (unsigned)removed,
-           (unsigned long long)fence, part, (unsigned long long)(next - first),
-           (unsigned long long)first, journal ? "ok" : "allocation-failed",
-           fixup_executed ? 1u : 0u, completed ? 1u : 0u,
-           previous ? "checked-good-submit"
-                    : (completed ? "delayed-after-checked-submit"
-                                 : "in-flight-submit"));
+  snprintf(
+      text, sizeof(text),
+      "%s id=%llu ctx=%p batch=%u removed=0x%08x "
+      "fence=%llu "
+      "parts=%u entries=%llu dropped=%llu journal=%s order=execution "
+      "gpu_order=fixup,main fixup_executed=%u completed=%u attribution=%s",
+      key, (unsigned long long)submit, ctx, batch, (unsigned)removed,
+      (unsigned long long)fence, part, (unsigned long long)(next - first),
+      (unsigned long long)first,
+      journal ? "ok"
+              : (nxbox_journal_enabled() ? "allocation-failed" : "disabled"),
+      fixup_executed ? 1u : 0u, completed ? 1u : 0u,
+      previous
+          ? "checked-good-submit"
+          : (completed ? "delayed-after-checked-submit" : "in-flight-submit"));
   SetEnvironmentVariableA(key, text);
   /* The current frontend already reads this key; full journal parts use the
    * keys above. */

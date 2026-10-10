@@ -27,6 +27,12 @@ node mask, allocator and initial PSO (or creation flags for `CreateCommandList1`
 
 Optional environment switches, set **before Mesa device initialization**:
 
+- `NXBOX_D3D12_LIST_FULL=1`: retain every command in the current reset generation,
+  independently of `NXBOX_JOURNAL` and `NXBOX_SYNC_BATCH`. Default off keeps the
+  128-command ring. Full mode uses memory proportional to recorded argument text
+  until reset/destruction. Successful Reset clears this history; failed Reset
+  preserves it. Both modes publish `history generation=... recorded=... retained=...
+  dropped=... full=...` before commands, so a truncated capture is explicit.
 - `NXBOX_D3D12_DEBUG=1`: default off. Resolve `D3D12GetDebugInterface`, enable
   `ID3D12Debug` before device creation, and configure `ID3D12InfoQueue` with empty
   storage/retrieval filters and `UINT64_MAX` message limit. All stored messages
@@ -67,6 +73,46 @@ The debug queue may be unavailable on Xbox UWP. Only a subsequent console run
 can establish the command responsible for the two reported failures.
 
 ## Static audit of the pin and final patch chain
+
+### BotW calibrated-clock failure (2026-10-10)
+
+The capture in `/tmp/botwfail/diag.txt` identifies list `000001D84FE25B50`,
+context `000001D84DA02040`, batch 5, generation 397. Close returns `E_INVALIDARG`
+with device removal still `S_OK`. Only sequences 1386 through 1513 survive:
+1,386 earlier records are missing. `journal=allocation-failed` in the old batch
+manifest also covered intentionally disabled journaling; the manifest now
+distinguishes `disabled` from `allocation-failed`.
+
+- Sequences 1422/1423 and subsequent pairs are null/null ALIASING (type 1) and
+  null UAV (type 2) barriers. Both permit null resources under the documented
+  [ResourceBarrier contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier).
+- Sequence 1420 changes `0x880` (COPY_SOURCE | PIXEL_SHADER_RESOURCE, both reads)
+  to `0x4` (RENDER_TARGET) on a texture with flags `0x1` (ALLOW_RENDER_TARGET).
+  Sequence 1428 changes that texture to COPY_SOURCE and its scratch buffer from
+  COPY_SOURCE to COPY_DEST. Visible transitions have different before/after
+  states, no read/write unions, and no UNORDERED_ACCESS state on a non-UAV resource.
+- Sequences 1429/1431 copy RGBA8 (format 28) to a buffer footprint of format 28,
+  then a format-24 footprint to a format-24 texture. This is the intentional
+  byte reinterpretation through a buffer, not a direct incompatible texture copy.
+  For 1280x720 the pitch is 5120 and the buffer is 3,686,400 bytes. Repeated
+  320x180 copies use pitch 1280 and 230,400-byte buffers. Offsets are zero,
+  dimensions agree, and pitches are 256-byte aligned.
+- Sequence 1509 uploads format 26 to a matching 16x8x1 format-26 3D texture,
+  pitch 256, from a 65,536-byte buffer. No visible format or bounds violation.
+- Sequences 1511/1512 end and resolve occlusion query 15 at byte offset 120 in
+  a 65,536-byte buffer. The preceding BeginQuery and initial destination state
+  are outside the retained window, so query pairing/state cannot be established.
+- Recording changes from thread 6560 to 6228 at sequence 1428. This demonstrates
+  thread migration, not simultaneous recording or a cross-context state race.
+  The list contains draws/clears; its different context pointer alone does not
+  establish that it is a shader-only worker context.
+
+No retained command proves the root cause. Enable `NXBOX_D3D12_LIST_FULL=1` for
+the next run (optionally `NXBOX_D3D12_DEBUG=1` where supported) and preserve all
+capture parts. This recovers initial state/heap/vertex/index bindings, query
+begins and every barrier/copy, including existing resource descriptions,
+StateBefore/StateAfter, footprints and boxes. Async submission is unchanged:
+restoring a drain would not establish which recording argument was rejected.
 
 | Candidate | Finding / action |
 | --- | --- |

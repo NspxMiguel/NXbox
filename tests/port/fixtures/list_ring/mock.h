@@ -116,8 +116,8 @@ struct ID3D12DescriptorHeap final : IUnknown {
   }
 };
 constexpr unsigned D3D12_RESOURCE_BARRIER_TYPE_TRANSITION = 0,
-                   D3D12_RESOURCE_BARRIER_TYPE_UAV = 1,
-                   D3D12_RESOURCE_BARRIER_TYPE_ALIASING = 2;
+                   D3D12_RESOURCE_BARRIER_TYPE_UAV = 2,
+                   D3D12_RESOURCE_BARRIER_TYPE_ALIASING = 1;
 struct D3D12_RESOURCE_BARRIER {
   unsigned Type = 0, Flags = 0;
   struct {
@@ -264,6 +264,10 @@ struct ID3D12GraphicsCommandList final : ID3D12CommandList {
   }
   void DrawInstanced(unsigned, unsigned, unsigned, unsigned) { ++draws; }
   void ResourceBarrier(unsigned, const D3D12_RESOURCE_BARRIER *) { ++barriers; }
+  void CopyTextureRegion(const D3D12_TEXTURE_COPY_LOCATION *, unsigned,
+                         unsigned, unsigned,
+                         const D3D12_TEXTURE_COPY_LOCATION *,
+                         const D3D12_BOX *) {}
 };
 HRESULT ID3D12Device::CreateCommandList(unsigned, unsigned, IUnknown *,
                                         IUnknown *, REFIID, void **out) {

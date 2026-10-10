@@ -108,7 +108,8 @@ int main() {
  assert(nxbox_api(a,"close:3").Close()==E_INVALIDARG);
  assert(nxbox_command_stopped());
  assert(published.back()=="NXBOX_D3D12_COMMAND_FAILURE");
- assert(env["NXBOX_D3D12_LIST_CAPTURE_0"].find("ring_parts=130")!=std::string::npos);
+ assert(env["NXBOX_D3D12_LIST_CAPTURE_0"].find("ring_parts=131")!=std::string::npos);
+ assert(env["NXBOX_D3D12_LIST_0_RING_2"].find("recorded=161 retained=128 dropped=33 full=0")!=std::string::npos);
  std::string log;
  EdenXbox::CollectDeviceApiRing([](const char *key){return env[key];},
   [&](const char *key,const std::string &v){EdenXbox::DiagnosticReportLines(key,v,[&](const std::string &line){log+=line+'\n';});});
@@ -131,14 +132,16 @@ int main() {
             self.code()
             + r"""
 int main() {
- env["NXBOX_SYNC_BATCH"]="0";
+env["NXBOX_SYNC_BATCH"]="0";
+ env["NXBOX_D3D12_LIST_FULL"]="1";
  ID3D12Device dev; ID3D12GraphicsCommandList *a=nullptr,*b=nullptr;
  nxbox_api(&dev,"create:1").CreateCommandList(0,0,nullptr,nullptr,IID_PPV_ARGS(&a));
  nxbox_api(&dev,"create:2").CreateCommandList(0,0,nullptr,nullptr,IID_PPV_ARGS(&b));
  nxbox_api(a,"old").DrawInstanced(1,1,0,0);
  nxbox_api(b,"other").DrawInstanced(9,1,0,0);
  assert(nxbox_api(a,"reset").Reset(nullptr,nullptr)==S_OK);
- { NxboxListRef ja(a),jb(b); assert(ja.p->next==1 && ja.p->generation==1 && jb.p->next==1 && jb.p->generation==0); }
+ { NxboxListRef ja(a),jb(b); assert(ja.p->next==1 && ja.p->generation==1 && jb.p->next==1 && jb.p->generation==0);
+   assert(ja.p->full_entries.size()==1 && jb.p->full_entries.size()==1); }
  nxbox_api(a,"new").DrawInstanced(2,1,0,0);
  a->reset_hr=E_INVALIDARG;
  assert(nxbox_api(a,"bad-reset").Reset(nullptr,nullptr)==E_INVALIDARG);
@@ -147,6 +150,44 @@ int main() {
  assert(log.find("site=old")==std::string::npos && log.find("site=new")!=std::string::npos);
  assert(log.find("call=Reset site=bad-reset")!=std::string::npos);
  assert(!env.count("NXBOX_D3D12_API_RING"));
+ delete a; delete b;
+}
+"""
+        )
+
+    def test_full_generation_keeps_early_barrier_and_copy_when_ring_wraps(self):
+        self.compile_run(
+            self.code()
+            + r"""
+int main() {
+ env["NXBOX_D3D12_LIST_FULL"]="1";
+ env["NXBOX_SYNC_BATCH"]="0";
+ ID3D12Device dev; ID3D12GraphicsCommandList *a=nullptr,*b=nullptr;
+ nxbox_api(&dev,"create-a").CreateCommandList(0,0,nullptr,nullptr,IID_PPV_ARGS(&a));
+ nxbox_api(&dev,"create-b").CreateCommandList(0,0,nullptr,nullptr,IID_PPV_ARGS(&b));
+ ID3D12Resource resource;
+ D3D12_RESOURCE_BARRIER barrier; barrier.Transition={&resource,7,0x800,0x400};
+ nxbox_api(a,"early-barrier").ResourceBarrier(1,&barrier);
+ D3D12_TEXTURE_COPY_LOCATION loc; loc.pResource=&resource;
+ D3D12_BOX box{0,0,0,4,4,1};
+ nxbox_api(a,"early-copy").CopyTextureRegion(&loc,1,2,3,&loc,&box);
+ for(unsigned i=0;i<1511;++i) nxbox_api(a,"draw").DrawInstanced(i,1,0,0);
+ nxbox_api(b,"other-list").DrawInstanced(9999,1,0,0);
+ { NxboxListRef j(a); assert(j.p->full_entries.size()==1513); }
+ a->close_hr=E_INVALIDARG;
+ nxbox_api(a,"close").Close();
+ std::string log;
+ EdenXbox::CollectCommandListReports([](const char *key){return env[key];},
+   [&](const char *,const std::string &value){log+=value+'\n';});
+ assert(log.find("recorded=1514 retained=1514 dropped=0 full=1")!=std::string::npos);
+ assert(log.find("call=ResourceBarrier site=early-barrier")!=std::string::npos);
+ assert(log.find("sub=7 before=0x800 after=0x400")!=std::string::npos);
+ assert(log.find("call=CopyTextureRegion site=early-copy")!=std::string::npos);
+ assert(log.find("box=0,0,0:4,4,1")!=std::string::npos);
+ assert(log.find("format=28")!=std::string::npos);
+ assert(log.find("seq=0 ")<log.find("seq=1513 "));
+ assert(log.find("other-list")==std::string::npos);
+ assert(env["NXBOX_D3D12_LIST_CAPTURE_0"].find("ring_parts=1517")!=std::string::npos);
  delete a; delete b;
 }
 """

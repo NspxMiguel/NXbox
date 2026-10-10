@@ -414,6 +414,8 @@ struct NxboxListJournal final : IUnknown {
   std::mutex mutex;
   std::string creation;
   std::array<std::string, 128> entries;
+  const bool full = nxbox_env_flag("NXBOX_D3D12_LIST_FULL");
+  std::vector<std::string> full_entries;
   uint64_t next = 0, generation = 0;
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
@@ -437,7 +439,11 @@ struct NxboxListJournal final : IUnknown {
     line.add("seq=%llu generation=%llu tid=%lu call=%s site=%s ",
              (unsigned long long)next, (unsigned long long)generation,
              (unsigned long)GetCurrentThreadId(), name, site);
-    entries[next++ % entries.size()] = line.text + args;
+    if (full)
+      full_entries.emplace_back(line.text + args);
+    else
+      entries[next % entries.size()] = line.text + args;
+    ++next;
   }
 };
 struct NxboxListRef {
@@ -540,9 +546,17 @@ inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
     std::lock_guard<std::mutex> guard(journal.p->mutex);
     out.write("RING", "creation " + journal.p->creation);
     const auto end = journal.p->next;
-    const auto begin = end > 128 ? end - 128 : 0;
+    const auto begin = journal.p->full ? 0 : (end > 128 ? end - 128 : 0);
+    NxboxListText history;
+    history.add("history generation=%llu recorded=%llu retained=%llu "
+                "dropped=%llu full=%u",
+                (unsigned long long)journal.p->generation,
+                (unsigned long long)end, (unsigned long long)(end - begin),
+                (unsigned long long)begin, journal.p->full ? 1u : 0u);
+    out.write("RING", history.text);
     for (auto seq = begin; seq < end; ++seq)
-      out.write("RING", journal.p->entries[seq % 128]);
+      out.write("RING", journal.p->full ? journal.p->full_entries[seq]
+                                        : journal.p->entries[seq % 128]);
   } else
     out.write("RING", "journal=unavailable");
   ID3D12InfoQueue *queue = nullptr;
