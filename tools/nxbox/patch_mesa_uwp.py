@@ -2951,44 +2951,95 @@ def patch_resident_create(root: Path) -> None:
 
 
 def patch_view_cast(root: Path) -> None:
-    """Never create a view whose format is not castable from the resource's format.
-
-    Breath of the Wild's title screen samples an R11G11B10_FLOAT cube map (32x32x6 render target)
-    through an R8G8B8A8_UNORM shader resource view; the two formats share no typeless family, so
-    the view is invalid and the Xbox removes the device (DXGI_ERROR_INVALID_CALL) the moment it is
-    created. Fall back to a view in the resource's own format and count it."""
+    """Reinterpret equal-size color SRVs through GPU buffers; guard all other invalid casts."""
     driver = root / "src/gallium/drivers/d3d12"
-    helper = driver / "nxbox_view_cast.h"
-    helper.write_text(
-        "#pragma once\n"
-        "#include <stdio.h>\n"
-        "static inline void\n"
-        "nxbox_count_view_cast(const char *kind, unsigned view_format, unsigned resource_format)\n"
-        "{\n"
-        "   static unsigned srv = 0, rtv = 0, dsv = 0, uav = 0;\n"
-        "   if (kind[0] == 's') ++srv; else if (kind[0] == 'r') ++rtv; else if (kind[0] == 'u') ++uav; else ++dsv;\n"
-        "   char text[128];\n"
-        "   snprintf(text, sizeof(text), \"srv=%u rtv=%u dsv=%u uav=%u last=%s:%u->%u\", srv, rtv, dsv, uav,\n"
-        "            kind, view_format, resource_format);\n"
-        "   SetEnvironmentVariableA(\"NXBOX_D3D12_VIEW_CAST\", text);\n"
-        "}\n"
+    for name in ("view_cast", "view_cast_copy"):
+        (driver / f"nxbox_{name}.h").write_text(
+            Path(__file__).with_name(f"mesa_{name}.h").read_text()
+        )
+
+    def replace(name: str, old: str, new: str) -> None:
+        path = driver / name
+        source = path.read_text()
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa view cast anchor mismatch in {name}: {old[:100]}")
+        path.write_text(source.replace(old, new, 1))
+
+    replace(
+        "d3d12_resource.h",
+        "   unsigned generation_id;",
+        "   unsigned generation_id;\n   struct nxbox_srv_shadow *nxbox_srv_shadows;",
     )
-    context = driver / "d3d12_context.cpp"
-    source = context.read_text()
+    replace(
+        "d3d12_resource.h",
+        "#endif",
+        "struct nxbox_srv_shadow *\n"
+        "nxbox_get_srv_shadow(struct d3d12_context *ctx, struct d3d12_resource *res,\n"
+        "                     enum pipe_format format);\n\n"
+        "struct pipe_resource *\n"
+        "nxbox_srv_shadow_texture(struct nxbox_srv_shadow *shadow);\n\n"
+        "void\nnxbox_refresh_srv_shadow(struct d3d12_context *ctx, struct d3d12_resource *source,\n"
+        "                         struct nxbox_srv_shadow *shadow);\n\n"
+        "void\nnxbox_destroy_srv_shadows(struct d3d12_resource *res);\n\n#endif",
+    )
+    replace(
+        "d3d12_context.h",
+        "   unsigned texture_generation_id;",
+        "   unsigned texture_generation_id;\n   struct nxbox_srv_shadow *nxbox_srv_shadow;",
+    )
+    replace(
+        "d3d12_resource.cpp",
+        "   threaded_resource_deinit(presource);",
+        "   nxbox_destroy_srv_shadows(resource);\n   threaded_resource_deinit(presource);",
+    )
+    # Reuse Mesa's copy helper, already wrapped by the earlier journal/API patches.
+    replace(
+        "d3d12_resource.cpp",
+        "static void\ntransfer_buf_to_image_part",
+        '#include "nxbox_view_cast_copy.h"\n\nstatic void\ntransfer_buf_to_image_part',
+    )
+    replace(
+        "d3d12_context.cpp",
+        '#include "d3d12_context.h"\n',
+        '#include "d3d12_context.h"\n#include "nxbox_view_cast.h"\n',
+    )
+    # Keep base.texture as the source so Gallium's lifetime and binding bookkeeping stay intact.
+    replace(
+        "d3d12_context.cpp",
+        "   struct pipe_resource *texture = state->texture;",
+        "   struct pipe_resource *texture = sampler_view->nxbox_srv_shadow ?\n"
+        "      nxbox_srv_shadow_texture(sampler_view->nxbox_srv_shadow) : state->texture;",
+    )
     srv_old = "   desc.Format = d3d12_get_resource_srv_format(state->format, state->target);\n"
-    srv_new = srv_old + (
-        "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
-        "      nxbox_count_view_cast(\"srv\", (unsigned)state->format, (unsigned)res->overall_format);\n"
+    replace(
+        "d3d12_context.cpp",
+        srv_old,
+        srv_old
+        + "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+        '      nxbox_count_view_cast("srv", (unsigned)state->format, (unsigned)res->overall_format);\n'
         "      desc.Format = d3d12_get_resource_srv_format(res->overall_format, state->target);\n"
-        "   }\n"
+        "   }\n",
     )
-    if source.count(srv_old) != 1:
-        raise RuntimeError("Pinned Mesa d3d12_context.cpp does not match the view cast patch")
-    include = '#include "d3d12_context.h"\n'
-    if source.count(include) < 1:
-        raise RuntimeError("Pinned Mesa d3d12_context.cpp has no context include for the view cast patch")
-    source = source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1)
-    context.write_text(source.replace(srv_old, srv_new, 1))
+    replace(
+        "d3d12_context.cpp",
+        "   sampler_view->texture_generation_id = p_atomic_read(&res->generation_id);\n",
+        "   sampler_view->texture_generation_id = p_atomic_read(&res->generation_id);\n"
+        "   if (d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
+        "      sampler_view->nxbox_srv_shadow = nxbox_get_srv_shadow(d3d12_context(pctx), res, state->format);\n"
+        "      if (sampler_view->nxbox_srv_shadow) {\n"
+        "         nxbox_refresh_srv_shadow(d3d12_context(pctx), res, sampler_view->nxbox_srv_shadow);\n"
+        "         res = d3d12_resource(nxbox_srv_shadow_texture(sampler_view->nxbox_srv_shadow));\n"
+        "      }\n"
+        "   }\n",
+    )
+    replace(
+        "d3d12_context.cpp",
+        "      struct pipe_sampler_view *new_view = views[i];\n",
+        "      struct pipe_sampler_view *new_view = views[i];\n"
+        "      if (new_view && d3d12_sampler_view(new_view)->nxbox_srv_shadow)\n"
+        "         nxbox_refresh_srv_shadow(ctx, d3d12_resource(new_view->texture),\n"
+        "                                  d3d12_sampler_view(new_view)->nxbox_srv_shadow);\n",
+    )
     surface = driver / "d3d12_surface.cpp"
     source = surface.read_text()
     rt_old = "   DXGI_FORMAT dxgi_format = d3d12_get_resource_rt_format(tpl->format);\n"
@@ -3052,6 +3103,55 @@ def patch_view_cast(root: Path) -> None:
     if source.count(include) < 1:
         raise RuntimeError("Pinned Mesa d3d12_draw.cpp has no context include for the view cast patch")
     draw.write_text(source.replace(include, include + '#include "nxbox_view_cast.h"\n', 1))
+    # SRV descriptors and state transitions must name the same shadow resource.
+    replace(
+        "d3d12_draw.cpp",
+        "         D3D12_RESOURCE_STATES state = (stage == PIPE_SHADER_FRAGMENT) ?",
+        "         if (view->nxbox_srv_shadow)\n"
+        "            res = d3d12_resource(nxbox_srv_shadow_texture(view->nxbox_srv_shadow));\n"
+        "         d3d12_batch_reference_resource(batch, res, false);\n\n"
+        "         D3D12_RESOURCE_STATES state = (stage == PIPE_SHADER_FRAGMENT) ?",
+    )
+    path = driver / "d3d12_draw.cpp"
+    source = path.read_text()
+    old = "d3d12_transition_subresources_state(ctx, d3d12_resource(view->base.texture),"
+    if source.count(old) != 1:
+        raise RuntimeError("Pinned Mesa view cast SRV transition anchor mismatch")
+    path.write_text(source.replace(old, "d3d12_transition_subresources_state(ctx, res,", 1))
+    # Refresh every relevant stage BEFORE any SRV transitions (a shadow can span stages).
+    # Also mark tables dirty before checking descriptor capacity.
+    refresh = """static void
+nxbox_refresh_bound_srv_shadows(struct d3d12_context *ctx, bool compute)
+{
+   const unsigned first = compute ? PIPE_SHADER_COMPUTE : PIPE_SHADER_VERTEX;
+   const unsigned end = compute ? PIPE_SHADER_COMPUTE + 1 : PIPE_SHADER_COMPUTE;
+   for (unsigned stage = first; stage < end; ++stage) {
+      for (unsigned slot = 0; slot < ctx->num_sampler_views[stage]; ++slot) {
+         struct pipe_sampler_view *pview = ctx->sampler_views[stage][slot];
+         if (!pview)
+            continue;
+         struct d3d12_sampler_view *view = d3d12_sampler_view(pview);
+         if (view->nxbox_srv_shadow) {
+            nxbox_refresh_srv_shadow(ctx, d3d12_resource(pview->texture), view->nxbox_srv_shadow);
+            ctx->shader_dirty[stage] |= D3D12_SHADER_DIRTY_SAMPLER_VIEWS;
+         }
+      }
+   }
+}
+
+"""
+    replace(
+        "d3d12_draw.cpp",
+        "static void\nupdate_shader_stage_root_parameters",
+        refresh + "static void\nupdate_shader_stage_root_parameters",
+    )
+    for compute in ("false", "true"):
+        anchor = f"\n   if (!check_descriptors_left(ctx, {compute}))"
+        replace(
+            "d3d12_draw.cpp",
+            anchor,
+            f"\n   nxbox_refresh_bound_srv_shadows(ctx, {compute});" + anchor,
+        )
 
 
 def patch_buffer_staging(root: Path) -> None:

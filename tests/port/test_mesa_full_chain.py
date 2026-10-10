@@ -260,6 +260,10 @@ int main() {
                 self.assertIn("desc.Width = ALIGN(desc.Width, util_format_get_blockwidth", resource)
                 self.assertIn("nxbox_bc_copy_end", (driver / "nxbox_sync_batch.h").read_text())
                 context = (driver / "d3d12_context.cpp").read_text()
+                self.assertIn("sampler_view->nxbox_srv_shadow = nxbox_get_srv_shadow", context)
+                self.assertIn("nxbox_destroy_srv_shadows(resource);", resource)
+                self.assertIn("NXBOX_VIEW_CAST_COPY", (driver / "nxbox_view_cast.h").read_text())
+                self.assertIn("NXBOX_D3D12_VIEW_CAST_PAIRS", (driver / "nxbox_view_cast.h").read_text())
                 # The texture barrier is an in-list barrier again; the old submit-and-wait stays
                 # behind NXBOX_TEXTURE_BARRIER=wait.
                 self.assertIn("NXBOX_TEXTURE_BARRIER", context)

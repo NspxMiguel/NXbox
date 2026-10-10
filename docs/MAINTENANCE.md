@@ -180,6 +180,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
   and copy/clear safety wrappers.
 - `tools/nxbox/__pycache__/patch_mesa_uwp.cpython-314.pyc` — Tracked generated Python bytecode; the
   maintained patch source is patch_mesa_uwp.py.
+- `tools/nxbox/mesa_view_cast.h` — Counts view-cast paths and bounded distinct format pairs.
+- `tools/nxbox/mesa_view_cast_copy.h` — Owns SRV shadows and copies raw texels through a GPU buffer.
 - `tools/nxbox/README.md` — Script usage and helper ownership index.
 
 ### CI: .github/workflows
@@ -258,6 +260,7 @@ Eden. Each entry below describes one file; generated caches are identified separ
   integration.
 - `tests/port/test_mesa_pso_guard.py` — Checks conservative guards and known-bytecode quarantine
   behavior.
+- `tests/port/test_mesa_view_cast.py` — Checks SRV shadow copies, lifetime, format filters, diagnostics and full-chain integration.
 - `tests/port/test_mesa_query_policy.py` — Checks software versus hardware query modes.
 - `tests/port/test_mesa_render_safety.py` — Checks subresource/copy/query safety and frontend
   device-loss exit integration.
@@ -412,7 +415,7 @@ calls every `patch_*` function in the order below. Helper destinations are under
 | 24    | `patch_vidmem_report`         | Publishes residency-manager video-memory budget and usage.                                           | —                                                                                      |
 | 25    | `patch_no_evict`              | Adds an eviction bypass and eviction/residency failure counters.                                     | —                                                                                      |
 | 26    | `patch_resident_create`       | Adds an override that disables non-resident resource creation.                                       | —                                                                                      |
-| 27    | `patch_view_cast`             | Falls back to resource-format views when the requested format is not castable.                       | Generated nxbox_view_cast.h, not a tools/nxbox/mesa_*.h input                          |
+| 27    | `patch_view_cast`             | Reinterprets equal-size color SRVs via GPU buffers; guards other invalid views.                       | mesa_view_cast.h → nxbox_view_cast.h; mesa_view_cast_copy.h → nxbox_view_cast_copy.h                          |
 | 28    | `patch_buffer_staging`        | Routes eligible busy-buffer discard writes through upload staging instead of waiting.                | —                                                                                      |
 
 `NXBOX_MESA_SKIP` is a **patch-time** comma-separated setting, not a console switch. The code
@@ -477,6 +480,7 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_TEXTURE_BARRIER`        | Aliasing barrier                                      | Value beginning with `w` (normally `wait`) restores submit-and-wait texture barriers.                                                                    | Yes         | patch_mesa_uwp.py:patch_first_bad_batch → d3d12_context.cpp                                                 |
 | `NXBOX_UPDATES`                | On                                                    | Leading `0` disables external content directories used for updates/DLC.                                                                                  | Yes         | src/eden_uwp/game_session.cpp:RunGame                                                                       |
 | `NXBOX_VERIFY_ROMFS`           | Off                                                   | Leading `1` enables RomFS verification and BKTR read diagnostics.                                                                                        | Yes         | src/core/file_sys/romfs_read_diagnostics.h:IsRomfsVerificationEnabled; content_archive.cpp/romfs_verify.cpp |
+| `NXBOX_VIEW_CAST_COPY` | On | Exact `0` disables GPU SRV reinterpretation and restores resource-format fallback. Read once. Shadows are refreshed on bind and before draw/dispatch, with two GPU copies per mip/layer. | Yes | tools/nxbox/mesa_view_cast.h:nxbox_view_cast_copy_enabled |
 | `NXBOX_VMMAP`                  | Off                                                   | Leading `1` logs committed virtual memory and guest accounting every 30 seconds.                                                                         | Yes         | src/eden_uwp/game_session.cpp:RunGame/LogVirtualMemoryMap                                                   |
 | `GALLIUM_THREAD`               | true                                                  | Mesa boolean option; `0` returns the underlying pipe context without the threaded-context wrapper.                                                       | Yes         | Pinned Mesa src/gallium/auxiliary/util/u_threaded_context.c:threaded_context_create                         |
 
@@ -557,6 +561,7 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_D3D12_SYNC_ERROR`
 - `NXBOX_D3D12_VIDMEM`
 - `NXBOX_D3D12_VIEW_CAST`
+- `NXBOX_D3D12_VIEW_CAST_PAIRS`
 - `NXBOX_DXIL`
 - `NXBOX_DXIL_ERROR`
 - `NXBOX_DXIL_VALIDATE`

@@ -54,6 +54,8 @@ checkout are not the maintained source.
 - `mesa_pso_guard.h` — Defines the opt-in conservative PSO shape guard.
 - `mesa_pso_input.h` — Parses input signatures, normalizes PSO input/blend state and implements
   opt-in known-pair quarantine.
+- `mesa_view_cast.h` — Counts view-cast paths and bounded distinct format pairs.
+- `mesa_view_cast_copy.h` — Caches SRV shadows and reinterprets texels using GPU buffer copies.
 - `mesa_query_wait.h` — Waits for query completion with device-loss and unsubmitted-fence checks.
 - `mesa_sync_batch.h` — Implements synchronous submission helpers, command journaling and copy/clear
   safety wrappers.
