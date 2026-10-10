@@ -38,6 +38,13 @@ struct NxboxBatchJournal {
 };
 
 inline bool nxbox_journal_enabled() {
+  // Full list capture already snapshots these commands without formatting or
+  // growth. Avoid running the legacy string journal alongside it.
+  char full[4]{};
+  if (GetEnvironmentVariableA("NXBOX_D3D12_LIST_FULL", full, sizeof(full)) ==
+          1 &&
+      full[0] == '1')
+    return false;
   if (!nxbox_sync_batch_enabled())
     return false;
   // The journal formats a string per recorded command: off in the app unless
@@ -101,13 +108,19 @@ struct NxboxCopyExtent {
 
 inline NxboxCopyExtent
 nxbox_copy_extent(const D3D12_TEXTURE_COPY_LOCATION *loc) {
+  if (!loc || !loc->pResource)
+    return {static_cast<DXGI_FORMAT>(0), 0, 0, 0};
   if (loc->Type != D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX) {
     const auto &f = loc->PlacedFootprint.Footprint;
     return {f.Format, f.Width, f.Height, f.Depth};
   }
   const auto d = loc->pResource->GetDesc();
+  if (!d.MipLevels)
+    return {d.Format, 0, 0, 0};
   const UINT mip = loc->SubresourceIndex % d.MipLevels;
-  auto minify = [mip](UINT n) { return n >> mip ? n >> mip : 1u; };
+  auto minify = [mip](UINT n) {
+    return mip < 32 && (n >> mip) ? n >> mip : 1u;
+  };
   const UINT block = nxbox_is_bc(d.Format) ? 4u : 1u;
   return {d.Format, (minify((UINT)d.Width) + block - 1) / block * block,
           (minify(d.Height) + block - 1) / block * block,
@@ -149,10 +162,14 @@ inline bool nxbox_skip_class(const char *name) {
 #define NXBOX_PROFILE_SUBMIT(journal) ((void)0)
 #define NXBOX_PROFILE_COLLECT(queue, journal) ((void)0)
 #endif
+#ifndef NXBOX_API_SITE_SCOPE
+#define NXBOX_API_SITE_SCOPE(site) ((void)(site))
+#endif
 struct NxboxJournalCommands {
   NxboxBatchJournal *journal;
   ID3D12GraphicsCommandList *commands;
   const char *list;
+  const char *site = nullptr;
 
   static void resource(char *text, size_t size, ID3D12Resource *res) {
     if (!res) {
@@ -168,7 +185,8 @@ struct NxboxJournalCommands {
              d.SampleDesc.Count, d.SampleDesc.Quality, (unsigned)d.Flags);
   }
   void ResourceBarrier(UINT count, const D3D12_RESOURCE_BARRIER *barriers) {
-    if (journal) {
+    NXBOX_API_SITE_SCOPE(site);
+    if (journal && barriers) {
       for (UINT i = 0; i < count; ++i) {
         const auto &b = barriers[i];
         if (b.Type == D3D12_RESOURCE_BARRIER_TYPE_TRANSITION) {
@@ -195,6 +213,7 @@ struct NxboxJournalCommands {
   }
   void CopyBufferRegion(ID3D12Resource *dst, UINT64 dst_offset,
                         ID3D12Resource *src, UINT64 src_offset, UINT64 bytes) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal) {
       char d[192], s[192];
       resource(d, sizeof(d), dst);
@@ -232,6 +251,7 @@ struct NxboxJournalCommands {
   void CopyTextureRegion(const D3D12_TEXTURE_COPY_LOCATION *dst, UINT x, UINT y,
                          UINT z, const D3D12_TEXTURE_COPY_LOCATION *src,
                          const D3D12_BOX *box) {
+    NXBOX_API_SITE_SCOPE(site);
     D3D12_BOX aligned_box;
     const auto source = nxbox_copy_extent(src);
     const auto destination = nxbox_copy_extent(dst);
@@ -284,6 +304,7 @@ struct NxboxJournalCommands {
       commands->CopyTextureRegion(dst, x, y, z, src, box);
   }
   void CopyResource(ID3D12Resource *dst, ID3D12Resource *src) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal) {
       char d[192], s[192];
       resource(d, sizeof(d), dst);
@@ -295,12 +316,14 @@ struct NxboxJournalCommands {
   void ClearRenderTargetView(D3D12_CPU_DESCRIPTOR_HANDLE view,
                              const FLOAT *color, UINT count,
                              const D3D12_RECT *rects) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(
           journal, list,
           "ClearRenderTargetView view=%llu rgba=%g,%g,%g,%g rects=%u "
           "first=%ld,%ld,%ld,%ld",
-          (unsigned long long)view.ptr, color[0], color[1], color[2], color[3],
+          (unsigned long long)view.ptr, color ? color[0] : 0,
+          color ? color[1] : 0, color ? color[2] : 0, color ? color[3] : 0,
           count, count && rects ? (long)rects[0].left : 0L,
           count && rects ? (long)rects[0].top : 0L,
           count && rects ? (long)rects[0].right : 0L,
@@ -313,6 +336,7 @@ struct NxboxJournalCommands {
                              D3D12_CLEAR_FLAGS flags, FLOAT depth,
                              UINT8 stencil, UINT count,
                              const D3D12_RECT *rects) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(
           journal, list,
@@ -328,6 +352,7 @@ struct NxboxJournalCommands {
   void ResolveSubresource(ID3D12Resource *dst, UINT dst_sub,
                           ID3D12Resource *src, UINT src_sub,
                           DXGI_FORMAT format) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(
           journal, list, "ResolveSubresource dst=%p/%u src=%p/%u fmt=%u",
@@ -335,6 +360,7 @@ struct NxboxJournalCommands {
     commands->ResolveSubresource(dst, dst_sub, src, src_sub, format);
   }
   void SetPipelineState(ID3D12PipelineState *pso) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal) {
       journal->pso = pso;
       nxbox_journal_add(journal, list, "SetPipelineState pso=%p", (void *)pso);
@@ -342,6 +368,7 @@ struct NxboxJournalCommands {
     commands->SetPipelineState(pso);
   }
   void SetGraphicsRootSignature(ID3D12RootSignature *signature) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal) {
       journal->graphics_root = signature;
       nxbox_journal_add(journal, list, "SetGraphicsRootSignature rs=%p",
@@ -350,6 +377,7 @@ struct NxboxJournalCommands {
     commands->SetGraphicsRootSignature(signature);
   }
   void SetComputeRootSignature(ID3D12RootSignature *signature) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal) {
       journal->compute_root = signature;
       nxbox_journal_add(journal, list, "SetComputeRootSignature rs=%p",
@@ -359,6 +387,7 @@ struct NxboxJournalCommands {
   }
   void DrawInstanced(UINT vertices, UINT instances, UINT first,
                      UINT first_instance) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(
           journal, list,
@@ -370,6 +399,7 @@ struct NxboxJournalCommands {
   }
   void DrawIndexedInstanced(UINT indices, UINT instances, UINT first, INT base,
                             UINT first_instance) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(
           journal, list,
@@ -381,6 +411,7 @@ struct NxboxJournalCommands {
                                    first_instance);
   }
   void Dispatch(UINT x, UINT y, UINT z) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(journal, list, "Dispatch pso=%p rs=%p xyz=%u,%u,%u",
                         (void *)journal->pso, (void *)journal->compute_root, x,
@@ -388,6 +419,7 @@ struct NxboxJournalCommands {
     commands->Dispatch(x, y, z);
   }
   void ExecuteBundle(ID3D12GraphicsCommandList *bundle) {
+    NXBOX_API_SITE_SCOPE(site);
     nxbox_journal_add(journal, list, "ExecuteBundle bundle=%p pso=%p",
                       (void *)bundle, journal ? (void *)journal->pso : nullptr);
     commands->ExecuteBundle(bundle);
@@ -395,6 +427,7 @@ struct NxboxJournalCommands {
   void ExecuteIndirect(ID3D12CommandSignature *signature, UINT count,
                        ID3D12Resource *args, UINT64 offset,
                        ID3D12Resource *counter, UINT64 counter_offset) {
+    NXBOX_API_SITE_SCOPE(site);
     if (journal)
       nxbox_journal_add(journal, list,
                         "ExecuteIndirect pso=%p gfx_rs=%p cs_rs=%p %s sig=%p "
@@ -409,15 +442,20 @@ struct NxboxJournalCommands {
   }
 };
 
-
 inline NxboxJournalCommands
-nxbox_journal_commands(NxboxBatchJournal *journal,
-                       ID3D12GraphicsCommandList *commands,
-                       const char *list = "main") {
+nxbox_journal_commands_at(const char *site, NxboxBatchJournal *journal,
+                          ID3D12GraphicsCommandList *commands,
+                          const char *list = "main") {
   if (strcmp(list, "main") == 0)
     NXBOX_PROFILE_STAMP(journal, commands);
-  return {journal, commands, list};
+  return {journal, commands, list, site};
 }
+
+#define NXBOX_SITE_STRING_IMPL(value) #value
+#define NXBOX_SITE_STRING(value) NXBOX_SITE_STRING_IMPL(value)
+#define nxbox_journal_commands(...)                                            \
+  nxbox_journal_commands_at(__FILE__ ":" NXBOX_SITE_STRING(__LINE__),          \
+                            __VA_ARGS__)
 
 inline std::atomic<bool> &nxbox_sync_stopped() {
   static std::atomic<bool> stopped{false};

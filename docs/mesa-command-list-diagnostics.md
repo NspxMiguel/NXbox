@@ -17,9 +17,11 @@ The heap policy and existing counter accounting are unchanged.
 The per-list ring runs independently of `NXBOX_SYNC_BATCH`. Every graphics
 recording method used by the pinned Mesa driver is wrapped, including calls
 inside the existing journal helpers, versioned graphics lists, fixup lists and
-video lists. A command owns a text snapshot of its arguments; resources are
-inspected before the call and no resource references are retained. Each list
-owns its last 128 commands through COM private data. Successful `Reset` starts a
+video lists. A command snapshots its arguments into fixed-size binary records; resources are
+inspected before the call and no resource references are retained. There is no
+per-command heap allocation or text formatting in the list capture. Text is
+formatted only on Close/Reset failure. Each list owns its last 128 record
+fragments through COM private data. Successful `Reset` starts a
 new generation; failed `Reset` preserves the preceding commands plus the failed
 attempt. Destruction releases the journal, including lists managed by `ComPtr`.
 Creation records contain the list pointer/type, device, site, timestamp/thread,
@@ -27,16 +29,32 @@ node mask, allocator and initial PSO (or creation flags for `CreateCommandList1`
 
 Optional environment switches, set **before Mesa device initialization**:
 
-- `NXBOX_D3D12_LIST_FULL=1`: retain every command in the current reset generation,
-  independently of `NXBOX_JOURNAL` and `NXBOX_SYNC_BATCH`. Default off keeps the
-  128-command ring. Full mode uses memory proportional to recorded argument text
-  until reset/destruction. Successful Reset clears this history; failed Reset
-  preserves it. Both modes publish `history generation=... recorded=... retained=...
-  dropped=... full=...` before commands, so a truncated capture is explicit.
+- `NXBOX_D3D12_LIST_FULL=1`: retain the last **4096 fixed 512-byte records** in the
+  current reset generation (2 MiB per list), independently of `NXBOX_SYNC_BATCH`.
+  Default off keeps 128 records (64 KiB). The legacy heap-formatted batch journal
+  is disabled in full mode even with `NXBOX_JOURNAL=1`, avoiding duplicate,
+  unbounded string storage. Successful Reset starts a fresh ring using the same
+  allocation; failed Reset preserves history. Large argument arrays span record
+  fragments with the same command `seq`, `site`, and increasing `fragment`.
+  `recorded` counts calls; `retained`, `dropped`, and `fragments` count fixed
+  records. `capacity` and `record_bytes` make the memory bound explicit. When
+  wrapping cuts into a command, its first retained `fragment` is greater than 0.
+- `NXBOX_D3D12_VALIDATE=1`: enable cheap static validation at recording time,
+  independent of API-ring/journal flags and capture allocation success. Publish
+  only the first offender as `D3D12_VALIDATE_FIRST`, with call, Gallium site,
+  barrier element, and reason. Checks include transitions to/from UAV/RT/depth
+  states without required resource flags, equal transition states, incompatible
+  texture format families, source/destination bounds (including mip and BC block
+  extents), partial depth/stencil copies, and buffer bounds with overflow-safe
+  arithmetic. Legal null aliasing/UAV barriers and compatible typeless or
+  BC reinterpret-copy formats are preserved. Validation observes commands;
+  it does not repair barriers, skip texture copies, or change submission.
 - `NXBOX_D3D12_DEBUG=1`: default off. Resolve `D3D12GetDebugInterface`, enable
   `ID3D12Debug` before device creation, and configure `ID3D12InfoQueue` with empty
-  storage/retrieval filters and `UINT64_MAX` message limit. All stored messages
-  are retained, including ID, severity, category and complete description.
+  storage/retrieval filters and a 4096-message limit. Failure capture retains
+  ID, severity, category and description, bounded to 4096 messages, 64 KiB per
+  message and roughly 1 MiB total description text. Oversized messages and
+  count/byte truncation are reported explicitly.
   Debug mode uses the module's device creation path rather than an isolated
   device factory. Unavailable interfaces produce `D3D12_DEBUG_UNAVAILABLE hr=...`.
   `D3D12_INFOQUEUE` also reports discarded/denied counts and read failures.
@@ -56,7 +74,15 @@ rg '^D3D12_(LIST_RING|INFOQUEUE|DEBUG_STATUS|DEBUG_UNAVAILABLE|LIST_ERROR|API_FI
 information and the list's ordered commands. `seq` is local to a reset generation.
 Argument names describe root parameters, handles, copy endpoints, query ranges,
 draw counts and PSO/root signatures. Barriers include every element in order,
-not just the first element. RTV/DSV handles report both the expected type and
+not just the first element. Resource descriptions include dimension, format,
+flags and named ALLOW_UNORDERED_ACCESS/RENDER_TARGET/DEPTH_STENCIL/
+SIMULTANEOUS_ACCESS bits. Copy endpoints retain subresources, placed footprints,
+source boxes and destination offsets. Clear and Discard retain all rectangles;
+RTV/DSV resource descriptions come from snapshots taken when views are created,
+with descriptor-slot reuse and heap destruction accounted for. Unknown handles
+and null resources/arrays are explicit. Failure formatting never dereferences
+resources, view pointers or caller-owned arrays, including those from other
+contexts. RTV/DSV handles report both the expected type and
 the actual type/alignment found in the live descriptor heap registry; an
 unregistered handle is explicitly `heap_type=unknown`.
 
@@ -109,9 +135,10 @@ distinguishes `disabled` from `allocation-failed`.
 
 No retained command proves the root cause. Enable `NXBOX_D3D12_LIST_FULL=1` for
 the next run (optionally `NXBOX_D3D12_DEBUG=1` where supported) and preserve all
-capture parts. This recovers initial state/heap/vertex/index bindings, query
-begins and every barrier/copy, including existing resource descriptions,
-StateBefore/StateAfter, footprints and boxes. Async submission is unchanged:
+capture parts. The bounded window can recover initial state/heap/vertex/index bindings and
+query begins when the generation fits in 4096 record fragments; check `dropped`
+before assuming it contains every command. Use `NXBOX_D3D12_VALIDATE=1` as well:
+the first static offender is retained even if its history record later wraps. Async submission is unchanged:
 restoring a drain would not establish which recording argument was rejected.
 
 | Candidate | Finding / action |
@@ -144,6 +171,9 @@ arguments, lexical scope and include order. The full-chain test applies the
 patches to pristine LF and CRLF trees and rejects repeat application. New host
 tests cover list isolation, wraparound, reset success/failure, COM-owned cleanup,
 long arrays/messages, five immutable captures, actual heap types, debug opt-in,
+bounded 100,000-call capture with allocation rejection, null/destroyed resource
+snapshots, Clear/Discard rectangles, first-offender validation and valid format
+families,
 terminal frontend draining and array-layer resolves. The real DirectX-Headers
 syntax test instantiates graphics and video wrappers with clang; set
 `NXBOX_DIRECTX_HEADERS` to their include directory if no local Mesa artifact

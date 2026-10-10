@@ -86,7 +86,7 @@ struct D3D12_GPU_DESCRIPTOR_HANDLE {
 struct D3D12_CPU_DESCRIPTOR_HANDLE {
   uint64_t ptr;
 };
-struct ID3D12Resource : IUnknown {
+struct ID3D12Resource final : IUnknown {
   D3D12_RESOURCE_DESC desc;
   auto GetDesc() { return desc; }
 };
@@ -148,6 +148,11 @@ struct D3D12_BOX {
 struct D3D12_RECT {
   long left, top, right, bottom;
 };
+struct D3D12_DISCARD_REGION {
+  unsigned NumRects = 0;
+  const D3D12_RECT *pRects = nullptr;
+  unsigned FirstSubresource = 0, NumSubresources = 0;
+};
 struct D3D12_VIEWPORT {
   float TopLeftX, TopLeftY, Width, Height, MinDepth, MaxDepth;
 };
@@ -180,7 +185,7 @@ struct ID3D12InfoQueue : IUnknown {
   void ClearStorageFilter() { ++setups; }
   void ClearRetrievalFilter() { ++setups; }
   HRESULT SetMessageCountLimit(uint64_t v) {
-    assert(v == UINT64_MAX);
+    assert(v == 4096);
     ++setups;
     return 0;
   }

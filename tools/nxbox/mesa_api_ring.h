@@ -328,6 +328,20 @@ struct NxboxApiArgs {
 #ifndef NXBOX_API_RING_NO_LIST
 #include "nxbox_list_ring.h"
 #endif
+// Journal helpers otherwise hide the Gallium origin behind a helper-header
+// line. Scope attribution on this thread without retaining a context pointer.
+inline const char *&nxbox_api_origin() {
+  static thread_local const char *site = nullptr;
+  return site;
+}
+struct NxboxApiSiteScope {
+  const char *previous;
+  explicit NxboxApiSiteScope(const char *site) : previous(nxbox_api_origin()) {
+    nxbox_api_origin() = site;
+  }
+  ~NxboxApiSiteScope() { nxbox_api_origin() = previous; }
+};
+#define NXBOX_API_SITE_SCOPE(site) NxboxApiSiteScope nxbox_api_site_scope(site)
 template <typename T> struct NxboxApi {
   T *object;
   const char *site;
@@ -360,15 +374,25 @@ template <typename T> struct NxboxApi {
       }
     }
 #ifndef NXBOX_API_RING_NO_LIST
-    std::string list_args;
     if constexpr (list_object) {
-      NxboxListArgs details(name);
-      details.collect(args...);
-      list_args = std::move(details.text);
+      nxbox_validate(name, site, args...);
       NxboxListRef journal(object);
       if (journal.p) {
         std::lock_guard<std::mutex> lock(journal.p->mutex);
-        journal.p->record(site, name, list_args);
+        journal.p->record(site, name, args...);
+      }
+    }
+    if constexpr (sizeof...(A) >= 3) {
+      const auto tuple = std::tie(args...);
+      if constexpr (std::is_same<std::decay_t<decltype(std::get<sizeof...(A) -
+                                                                1>(tuple))>,
+                                 D3D12_CPU_DESCRIPTOR_HANDLE>::value &&
+                    std::is_convertible<decltype(std::get<0>(tuple)),
+                                        ID3D12Resource *>::value) {
+        if (!strcmp(name, "CreateRenderTargetView") ||
+            !strcmp(name, "CreateDepthStencilView"))
+          nxbox_view_created(std::get<0>(tuple),
+                             std::get<sizeof...(A) - 1>(tuple));
       }
     }
 #endif
@@ -466,12 +490,10 @@ template <typename T> struct NxboxApi {
           NxboxListRef journal(object);
           if (journal.p) {
             std::lock_guard<std::mutex> lock(journal.p->mutex);
-            for (auto &entry : journal.p->entries)
-              entry.clear();
-            journal.p->full_entries.clear();
+            journal.p->fragments = 0;
             journal.p->next = 0;
             ++journal.p->generation;
-            journal.p->record(site, name, list_args);
+            journal.p->record(site, name, args...);
           }
         }
       }
@@ -603,6 +625,10 @@ template <typename T> struct NxboxApi {
   // turn an out-of-bounds copy into an apparently valid end offset.
   void CopyBufferRegion(ID3D12Resource *dst, UINT64 dst_offset,
                         ID3D12Resource *src, UINT64 src_offset, UINT64 bytes) {
+#ifndef NXBOX_API_RING_NO_LIST
+    nxbox_validate("CopyBufferRegion", site, dst, dst_offset, src, src_offset,
+                   bytes);
+#endif
     const UINT64 dst_size = dst ? dst->GetDesc().Width : 0;
     const UINT64 src_size = src ? src->GetDesc().Width : 0;
     const bool valid =
@@ -690,6 +716,7 @@ template <typename T> struct NxboxApi {
 };
 template <typename T> auto nxbox_api(const T &object, const char *site) {
   auto *raw = nxbox_api_raw(object);
-  return NxboxApi<std::remove_pointer_t<decltype(raw)>>{raw, site};
+  return NxboxApi<std::remove_pointer_t<decltype(raw)>>{
+      raw, nxbox_api_origin() ? nxbox_api_origin() : site};
 }
 #endif

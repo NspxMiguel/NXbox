@@ -109,8 +109,8 @@ void CollectBatchJournals(Read read, Emit emit) {
 // Captures use disjoint immutable keys, so even five failures between polls
 // cannot overwrite an earlier list or a long InfoQueue description.
 template <typename Read, typename Emit> void CollectCommandListReports(Read read, Emit emit) {
-    for (const auto* key :
-         {"NXBOX_D3D12_DEBUG_STATUS", "NXBOX_D3D12_DEBUG_UNAVAILABLE", "NXBOX_D3D12_LIST_ERROR"}) {
+    for (const auto* key : {"NXBOX_D3D12_DEBUG_STATUS", "NXBOX_D3D12_DEBUG_UNAVAILABLE",
+                            "NXBOX_D3D12_LIST_ERROR", "NXBOX_D3D12_VALIDATE_FIRST"}) {
         const auto value = read(key);
         if (!value.empty())
             emit(key, value);

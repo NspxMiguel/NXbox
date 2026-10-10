@@ -69,6 +69,13 @@ void check_more(ID3D12GraphicsCommandList8 *list, ID3D12Device *dev,
   float color[4]{};
   api.OMSetBlendFactor(color);
   api.ClearRenderTargetView(cpu, color, 0, nullptr);
+  api.ClearUnorderedAccessViewFloat(gpu, cpu, res, color, 0, nullptr);
+  UINT values[4]{};
+  api.ClearUnorderedAccessViewUint(gpu, cpu, res, values, 0, nullptr);
+  D3D12_DISCARD_REGION discard{};
+  api.DiscardResource(res, &discard);
+  nxbox_api(dev, "view:1").CreateRenderTargetView(res, nullptr, cpu);
+  nxbox_api(dev, "view:2").CreateDepthStencilView(res, nullptr, cpu);
   api.ClearDepthStencilView(cpu, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
   api.BeginQuery(nullptr, D3D12_QUERY_TYPE_OCCLUSION, 0);
   api.EndQuery(nullptr, D3D12_QUERY_TYPE_OCCLUSION, 0);

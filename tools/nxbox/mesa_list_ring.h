@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: MIT
  * Per-command-list recording history. COM private data owns the journal, so
  * destruction and pointer reuse cannot leak or misattribute another list's log.
- * Argument snapshots own text only, never resource/descriptor references.
+ * Fixed-size argument snapshots never retain resource/descriptor references.
  */
 #pragma once
 #include <array>
+#include <cstddef>
 #include <directx/d3d12sdklayers.h>
+#include <memory>
 #include <mutex>
 #include <new>
 #include <string>
@@ -34,23 +36,39 @@ struct NxboxListText {
     snprintf(&text[at], n + 1, fmt, args...);
     text.resize(at + n);
   }
-  void resource(ID3D12Resource *res) {
-    add("res=%p ", (void *)res);
-    if (!res)
-      return;
-    const auto d = res->GetDesc();
-    add("{dim=%u format=%u size=%llux%ux%u mips=%u samples=%u:%u flags=0x%x} ",
+  template <typename Out>
+  static void describe(Out &out, uintptr_t address,
+                       const D3D12_RESOURCE_DESC &d) {
+    out.add("res=%p ", (void *)address);
+    out.add(
+        "{dim=%u format=%u size=%llux%ux%u mips=%u samples=%u:%u flags=0x%x "
+        "ALLOW_UNORDERED_ACCESS=%u ALLOW_RENDER_TARGET=%u "
+        "ALLOW_DEPTH_STENCIL=%u ALLOW_SIMULTANEOUS_ACCESS=%u} ",
         (unsigned)d.Dimension, (unsigned)d.Format, (unsigned long long)d.Width,
         d.Height, (unsigned)d.DepthOrArraySize, (unsigned)d.MipLevels,
-        d.SampleDesc.Count, d.SampleDesc.Quality, (unsigned)d.Flags);
+        d.SampleDesc.Count, d.SampleDesc.Quality, (unsigned)d.Flags,
+        !!(d.Flags & 4), !!(d.Flags & 1), !!(d.Flags & 2), !!(d.Flags & 32));
+  }
+  void resource(ID3D12Resource *res) {
+    if (!res) {
+      add("res=NULL ");
+      return;
+    }
+    describe(*this, (uintptr_t)res, res->GetDesc());
   }
 };
 // CPU descriptor handles do not encode their heap type. Track live heap
 // ranges, with removal tied to COM private-data lifetime, to report actual and
 // expected types instead of guessing from OM/Clear's method name.
+struct NxboxViewSnapshot {
+  uintptr_t resource = 0;
+  D3D12_RESOURCE_DESC desc{};
+  bool known = false;
+};
 struct NxboxDescriptorRange {
   UINT64 start;
   UINT increment, count, type;
+  std::vector<NxboxViewSnapshot> views;
 };
 inline std::mutex &nxbox_descriptor_mutex() {
   static std::mutex value;
@@ -98,17 +116,27 @@ inline void nxbox_heap_created(ID3D12Device *dev, ID3D12DescriptorHeap *heap) {
     return;
   const auto desc = heap->GetDesc();
   const auto start = heap->GetCPUDescriptorHandleForHeapStart();
-  {
-    std::lock_guard<std::mutex> lock(nxbox_descriptor_mutex());
-    nxbox_descriptor_ranges()[owner] = {
-        start.ptr, dev->GetDescriptorHandleIncrementSize(desc.Type),
-        desc.NumDescriptors, (UINT)desc.Type};
+  try {
+    {
+      std::lock_guard<std::mutex> lock(nxbox_descriptor_mutex());
+      nxbox_descriptor_ranges()[owner] = {
+          start.ptr,
+          dev->GetDescriptorHandleIncrementSize(desc.Type),
+          desc.NumDescriptors,
+          (UINT)desc.Type,
+          {}};
+      if ((UINT)desc.Type == 2 || (UINT)desc.Type == 3)
+        nxbox_descriptor_ranges()[owner].views.resize(desc.NumDescriptors);
+    }
+    heap->SetPrivateDataInterface(nxbox_heap_key, owner);
+  } catch (const std::bad_alloc &) {
+    SetEnvironmentVariableA("NXBOX_D3D12_LIST_ERROR",
+                            "descriptor registry allocation failed");
   }
-  heap->SetPrivateDataInterface(nxbox_heap_key, owner);
   owner->Release();
 }
-inline void nxbox_cpu_handle(NxboxListText &out,
-                             D3D12_CPU_DESCRIPTOR_HANDLE handle,
+template <typename Out>
+inline void nxbox_cpu_handle(Out &out, D3D12_CPU_DESCRIPTOR_HANDLE handle,
                              const char *expected) {
   std::lock_guard<std::mutex> lock(nxbox_descriptor_mutex());
   out.add("cpu=%llu expected=%s ", (unsigned long long)handle.ptr, expected);
@@ -119,16 +147,101 @@ inline void nxbox_cpu_handle(NxboxListText &out,
       out.add("heap_type=%u heap_start=%llu aligned=%u ", range.type,
               (unsigned long long)range.start,
               (unsigned)((handle.ptr - range.start) % range.increment == 0));
+      const auto slot = (handle.ptr - range.start) / range.increment;
+      if ((handle.ptr - range.start) % range.increment == 0 &&
+          slot < range.views.size() && range.views[slot].known) {
+        if (range.views[slot].resource)
+          NxboxListText::describe(out, range.views[slot].resource,
+                                  range.views[slot].desc);
+        else
+          out.add("res=NULL ");
+      } else
+        out.add("res=unknown ");
       return;
     }
   }
-  out.add("heap_type=unknown ");
+  out.add("heap_type=unknown res=unknown ");
 }
-struct NxboxListArgs : NxboxListText {
+inline void nxbox_view_created(ID3D12Resource *resource,
+                               D3D12_CPU_DESCRIPTOR_HANDLE handle) {
+  NxboxViewSnapshot snapshot;
+  snapshot.resource = (uintptr_t)resource;
+  snapshot.known = true;
+  if (resource)
+    snapshot.desc = resource->GetDesc();
+  std::lock_guard<std::mutex> lock(nxbox_descriptor_mutex());
+  for (auto &entry : nxbox_descriptor_ranges()) {
+    auto &r = entry.second;
+    if (r.increment && handle.ptr >= r.start &&
+        (handle.ptr - r.start) % r.increment == 0) {
+      const auto slot = (handle.ptr - r.start) / r.increment;
+      if (slot < r.views.size()) {
+        r.views[slot] = snapshot;
+        return;
+      }
+    }
+  }
+}
+// A fragment holds deferred printf operations. Arguments are scalar copies or
+// pointers to static format/label strings, never pointers into caller arrays.
+// Large arrays spill into further fixed records; wraparound is explicit.
+struct NxboxListRecord {
+  const char *site = nullptr, *name = nullptr;
+  uint64_t seq = 0, generation = 0;
+  unsigned tid = 0, part = 0, used = 0;
+  alignas(std::max_align_t) unsigned char data[464]{};
+};
+static_assert(sizeof(NxboxListRecord) == 512, "Bound capture memory per list");
+struct NxboxListOperation {
+  void (*format)(NxboxListText &, const void *);
+  unsigned size;
+};
+struct NxboxListJournal;
+struct NxboxListSink {
+  NxboxListJournal &journal;
+  const char *site, *name;
+  uint64_t seq;
+  unsigned part = 0;
+  NxboxListRecord *entry = nullptr;
+  NxboxListRecord &room(unsigned bytes);
+  void add(const char *literal) { add("%s", literal); }
+  template <typename... A> void add(const char *fmt, A... args) {
+    using Values = std::tuple<const char *, A...>;
+    static_assert(std::is_trivially_destructible<Values>::value,
+                  "Deferred values must not own memory");
+    constexpr unsigned alignment = alignof(std::max_align_t);
+    constexpr unsigned bytes =
+        (sizeof(NxboxListOperation) + sizeof(Values) + alignment - 1) /
+        alignment * alignment;
+    static_assert(bytes <= sizeof(NxboxListRecord::data),
+                  "Operation too large");
+    auto &r = room(bytes);
+    auto *op = new (r.data + r.used) NxboxListOperation;
+    op->size = bytes;
+    op->format = [](NxboxListText &out, const void *data) {
+      const auto &values = *static_cast<const Values *>(data);
+      std::apply([&](const auto &...v) { out.add(v...); }, values);
+    };
+    new (r.data + r.used + sizeof(NxboxListOperation)) Values(fmt, args...);
+    r.used += bytes;
+  }
+  void resource(ID3D12Resource *res) {
+    if (res)
+      NxboxListText::describe(*this, (uintptr_t)res, res->GetDesc());
+    else
+      add("res=NULL ");
+  }
+};
+template <typename Out> struct NxboxListArgsT : Out {
+  using Out::add;
+  using Out::resource;
+
   const char *name;
   unsigned index = 0;
   uint64_t numbers[16]{};
-  explicit NxboxListArgs(const char *method) : name(method) {}
+  template <typename... A>
+  explicit NxboxListArgsT(const char *method, A &&...args)
+      : Out{std::forward<A>(args)...}, name(method) {}
   bool is(const char *method) const { return !strcmp(name, method); }
   template <typename T> void number(const T &v) {
     if constexpr (std::is_integral<T>::value || std::is_enum<T>::value)
@@ -136,7 +249,9 @@ struct NxboxListArgs : NxboxListText {
         numbers[index] = (uint64_t)v;
     ++index;
   }
-  uint64_t previous() const { return index ? numbers[index - 1] : 0; }
+  uint64_t previous() const {
+    return index && index <= 16 ? numbers[index - 1] : 0;
+  }
   template <typename T> void value(const T &v) {
     if constexpr (std::is_integral<T>::value && std::is_signed<T>::value)
       add("%lld ", (long long)v);
@@ -218,6 +333,33 @@ struct NxboxListArgs : NxboxListText {
     for (uint64_t i = 0; i < previous(); ++i)
       add("rect[%llu]=%ld,%ld:%ld,%ld ", (unsigned long long)i, (long)v[i].left,
           (long)v[i].top, (long)v[i].right, (long)v[i].bottom);
+  }
+  void value(const D3D12_DISCARD_REGION *v) {
+    if (!v) {
+      add("discard=FULL ");
+      return;
+    }
+    add("first_sub=%u sub_count=%u rect_count=%u ", v->FirstSubresource,
+        v->NumSubresources, v->NumRects);
+    if (!v->pRects && v->NumRects) {
+      add("rects=NULL ");
+      return;
+    }
+    for (UINT i = 0; i < v->NumRects; ++i)
+      add("rect[%u]=%ld,%ld:%ld,%ld ", i, (long)v->pRects[i].left,
+          (long)v->pRects[i].top, (long)v->pRects[i].right,
+          (long)v->pRects[i].bottom);
+  }
+  void value(const unsigned int *v) {
+    if (!v) {
+      add("NULL ");
+      return;
+    }
+    if (is("ClearUnorderedAccessViewUint"))
+      for (unsigned i = 0; i < 4; ++i)
+        add("%u ", v[i]);
+    else
+      add("%p ", (const void *)v);
   }
   void value(const D3D12_VIEWPORT *v) {
     if (!v) {
@@ -359,6 +501,11 @@ struct NxboxListArgs : NxboxListText {
       return "rtv color count rects";
     if (is("ClearDepthStencilView"))
       return "dsv flags depth stencil count rects";
+    if (is("DiscardResource"))
+      return "resource region";
+    if (is("ClearUnorderedAccessViewUint") ||
+        is("ClearUnorderedAccessViewFloat"))
+      return "gpu cpu resource values count rects";
     if (is("OMSetRenderTargets"))
       return "count rtvs contiguous dsv";
     if (is("SetPipelineState"))
@@ -403,6 +550,255 @@ struct NxboxListArgs : NxboxListText {
   }
 };
 
+using NxboxListArgs = NxboxListArgsT<NxboxListText>;
+
+// Conservative static checks, independent of capture availability. No state
+// tracker or resource ownership changes; only the first offender is published.
+inline bool nxbox_validate_enabled() {
+  static const bool enabled = nxbox_env_flag("NXBOX_D3D12_VALIDATE");
+  return enabled;
+}
+inline std::atomic<bool> &nxbox_validation_reported() {
+  static std::atomic<bool> reported{false};
+  return reported;
+}
+inline void nxbox_validation_error(const char *name, const char *site,
+                                   const char *reason, UINT element = 0) {
+  if (nxbox_validation_reported().exchange(true))
+    return;
+  char text[512];
+  snprintf(text, sizeof(text), "call=%s site=%s element=%u reason=%s", name,
+           site, element, reason);
+  SetEnvironmentVariableA("NXBOX_D3D12_VALIDATE_FIRST", text);
+}
+// DXGI typeless families. Unknown/new formats are not guessed compatible.
+inline unsigned nxbox_format_family(unsigned f) {
+  constexpr unsigned ranges[][2] = {
+      {1, 4},   {5, 8},   {9, 14},  {15, 18}, {19, 22}, {23, 25}, {27, 32},
+      {33, 38}, {39, 43}, {44, 47}, {48, 52}, {53, 59}, {60, 64}, {70, 72},
+      {73, 75}, {76, 78}, {79, 81}, {82, 84}, {94, 96}, {97, 99}};
+  for (const auto &r : ranges)
+    if (f >= r[0] && f <= r[1])
+      return r[0];
+  if (f == 87 || f == 90 || f == 91)
+    return 90;
+  if (f == 88 || f == 92 || f == 93)
+    return 92;
+  return f;
+}
+inline unsigned nxbox_format_bytes(unsigned f) {
+  // Only the documented uncompressed/BC reinterpret-copy pairs need this.
+  switch (nxbox_format_family(f)) {
+  case 1:
+    return 16;
+  case 9:
+  case 15:
+  case 19:
+    return 8;
+  case 23:
+  case 27:
+  case 33:
+  case 39:
+  case 44:
+  case 90:
+  case 92:
+    return 4;
+  case 48:
+  case 53:
+    return 2;
+  case 60:
+    return 1;
+  case 70:
+  case 79:
+    return 8;
+  case 73:
+  case 76:
+  case 82:
+  case 94:
+  case 97:
+    return 16;
+  default:
+    return 0;
+  }
+}
+inline bool nxbox_format_bc(unsigned f) {
+  return (f >= 70 && f <= 84) || (f >= 94 && f <= 99);
+}
+inline bool nxbox_formats_compatible(unsigned a, unsigned b) {
+  if (a == b || nxbox_format_family(a) == nxbox_format_family(b))
+    return true;
+  if ((a == 26 && nxbox_format_family(b) == 39) ||
+      (b == 26 && nxbox_format_family(a) == 39))
+    return true;
+  // D3D permits BC blocks to copy to a matching-sized uncompressed texel.
+  if (nxbox_format_bc(a) != nxbox_format_bc(b)) {
+    const auto bytes = nxbox_format_bytes(a);
+    const auto plain = nxbox_format_family(nxbox_format_bc(a) ? b : a);
+    return bytes && bytes == nxbox_format_bytes(b) &&
+           ((bytes == 8 && (plain == 9 || plain == 15)) ||
+            (bytes == 16 && plain == 1));
+  }
+  return false;
+}
+struct NxboxValidateExtent {
+  uint64_t w = 0, h = 0, d = 0;
+  unsigned format = 0;
+  bool depth = false;
+};
+inline NxboxValidateExtent
+nxbox_validate_extent(const D3D12_TEXTURE_COPY_LOCATION *loc) {
+  if (!loc || !loc->pResource)
+    return {};
+  const auto desc = loc->pResource->GetDesc();
+  if (loc->Type != D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX) {
+    const auto &f = loc->PlacedFootprint.Footprint;
+    return {f.Width, f.Height, f.Depth, (unsigned)f.Format, false};
+  }
+  if (!desc.MipLevels)
+    return {};
+  const auto mip = loc->SubresourceIndex % desc.MipLevels;
+  auto minify = [mip](uint64_t n) {
+    return mip < 64 && (n >> mip) ? n >> mip : uint64_t(1);
+  };
+  auto w = minify(desc.Width), h = minify(desc.Height);
+  if (nxbox_format_bc((unsigned)desc.Format)) {
+    w = (w + 3) / 4 * 4;
+    h = (h + 3) / 4 * 4;
+  }
+  return {w, h, desc.Dimension == 4 ? minify(desc.DepthOrArraySize) : 1,
+          (unsigned)desc.Format, !!(desc.Flags & 2)};
+}
+inline void nxbox_validate_barriers(const char *name, const char *site,
+                                    UINT count,
+                                    const D3D12_RESOURCE_BARRIER *barriers) {
+  if (!barriers) {
+    if (count)
+      nxbox_validation_error(name, site, "null-barrier-array");
+    return;
+  }
+  for (UINT i = 0; i < count && !nxbox_validation_reported().load(); ++i) {
+    const auto &b = barriers[i];
+    if (b.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION)
+      continue;
+    if (!b.Transition.pResource) {
+      nxbox_validation_error(name, site, "null-transition-resource", i);
+      continue;
+    }
+    const auto flags = b.Transition.pResource->GetDesc().Flags;
+    const auto states =
+        (unsigned)b.Transition.StateBefore | (unsigned)b.Transition.StateAfter;
+    const char *reason = nullptr;
+    if ((states & 8) && !(flags & 4))
+      reason = "UNORDERED_ACCESS-without-ALLOW_UNORDERED_ACCESS";
+    else if ((states & 4) && !(flags & 1))
+      reason = "RENDER_TARGET-without-ALLOW_RENDER_TARGET";
+    else if ((states & 16) && !(flags & 2))
+      reason = "DEPTH_WRITE-without-ALLOW_DEPTH_STENCIL";
+    else if (b.Transition.StateBefore == b.Transition.StateAfter)
+      reason = "StateBefore-equals-StateAfter";
+    if (reason)
+      nxbox_validation_error(name, site, reason, i);
+  }
+}
+inline void nxbox_validate_copy(const char *name, const char *site,
+                                const D3D12_TEXTURE_COPY_LOCATION *dst, UINT x,
+                                UINT y, UINT z,
+                                const D3D12_TEXTURE_COPY_LOCATION *src,
+                                const D3D12_BOX *box) {
+  if (!src || !dst || !src->pResource || !dst->pResource) {
+    nxbox_validation_error(name, site, "null-copy-location-or-resource");
+    return;
+  }
+  const auto s = nxbox_validate_extent(src), d = nxbox_validate_extent(dst);
+  if (!nxbox_formats_compatible(s.format, d.format)) {
+    nxbox_validation_error(name, site, "incompatible-copy-formats");
+    return;
+  }
+  if ((s.depth || d.depth) && (box || x || y || z)) {
+    nxbox_validation_error(
+        name, site,
+        "depth-stencil-copy-requires-full-subresource-and-null-box");
+    return;
+  }
+  const uint64_t l = box ? box->left : 0, t = box ? box->top : 0,
+                 f = box ? box->front : 0;
+  const uint64_t r = box ? box->right : s.w, b = box ? box->bottom : s.h,
+                 back = box ? box->back : s.d;
+  // Empty boxes are legal no-ops. Reversed or out-of-bounds coordinates are
+  // not.
+  if (r < l || b < t || back < f || r > s.w || b > s.h || back > s.d ||
+      l > s.w || t > s.h || f > s.d) {
+    nxbox_validation_error(name, site, "source-box-out-of-bounds");
+    return;
+  }
+  if (r == l || b == t || back == f)
+    return;
+  const auto source_block = nxbox_format_bc(s.format) ? 4u : 1u;
+  const auto dest_block = nxbox_format_bc(d.format) ? 4u : 1u;
+  const auto w = (r - l + source_block - 1) / source_block * dest_block;
+  const auto h = (b - t + source_block - 1) / source_block * dest_block;
+  if (x > d.w || w > d.w - x || y > d.h || h > d.h - y || z > d.d ||
+      back - f > d.d - z)
+    nxbox_validation_error(name, site, "destination-box-out-of-bounds");
+}
+template <typename... A>
+inline void nxbox_validate(const char *name, const char *site,
+                           const A &...args) {
+  if (!nxbox_validate_enabled() || nxbox_validation_reported().load())
+    return;
+  const auto t = std::tie(args...);
+  if constexpr (sizeof...(A) == 2) {
+    if constexpr (std::is_convertible<decltype(std::get<0>(t)), UINT>::value &&
+                  std::is_convertible<decltype(std::get<1>(t)),
+                                      const D3D12_RESOURCE_BARRIER *>::value)
+      if (!strcmp(name, "ResourceBarrier"))
+        nxbox_validate_barriers(name, site, std::get<0>(t), std::get<1>(t));
+  }
+  if constexpr (sizeof...(A) == 6) {
+    if constexpr (
+        std::is_convertible<decltype(std::get<0>(t)),
+                            const D3D12_TEXTURE_COPY_LOCATION *>::value &&
+        std::is_convertible<decltype(std::get<1>(t)), UINT>::value &&
+        std::is_convertible<decltype(std::get<2>(t)), UINT>::value &&
+        std::is_convertible<decltype(std::get<3>(t)), UINT>::value &&
+        std::is_convertible<decltype(std::get<4>(t)),
+                            const D3D12_TEXTURE_COPY_LOCATION *>::value &&
+        std::is_convertible<decltype(std::get<5>(t)), const D3D12_BOX *>::value)
+      if (!strcmp(name, "CopyTextureRegion"))
+        nxbox_validate_copy(name, site, std::get<0>(t), std::get<1>(t),
+                            std::get<2>(t), std::get<3>(t), std::get<4>(t),
+                            std::get<5>(t));
+  }
+  if constexpr (sizeof...(A) == 5 || sizeof...(A) == 7) {
+    if constexpr (std::is_convertible<decltype(std::get<0>(t)),
+                                      ID3D12Resource *>::value &&
+                  std::is_convertible<decltype(std::get<1>(t)),
+                                      UINT64>::value &&
+                  std::is_convertible<decltype(std::get<2>(t)),
+                                      ID3D12Resource *>::value &&
+                  std::is_convertible<decltype(std::get<3>(t)),
+                                      UINT64>::value &&
+                  std::is_convertible<decltype(std::get<4>(t)),
+                                      UINT64>::value) {
+      if (!strcmp(name, "CopyBufferRegion")) {
+        ID3D12Resource *dst = std::get<0>(t), *src = std::get<2>(t);
+        const UINT64 off_d = std::get<1>(t), off_s = std::get<3>(t),
+                     bytes = std::get<4>(t);
+        if (!dst || !src) {
+          nxbox_validation_error(name, site, "null-copy-buffer");
+          return;
+        }
+        const auto d = dst->GetDesc(), s = src->GetDesc();
+        if (d.Dimension != 1 || s.Dimension != 1 || off_d > d.Width ||
+            bytes > d.Width - off_d || off_s > s.Width ||
+            bytes > s.Width - off_s)
+          nxbox_validation_error(name, site,
+                                 "buffer-copy-out-of-bounds-or-not-buffer");
+      }
+    }
+  }
+}
+
 // A unique process-independent key; no Mesa ABI or command-list vtable changes.
 inline constexpr GUID nxbox_list_key{
     0x8c09570e,
@@ -413,9 +809,12 @@ struct NxboxListJournal final : IUnknown {
   std::atomic<ULONG> refs{1};
   std::mutex mutex;
   std::string creation;
-  std::array<std::string, 128> entries;
+  const unsigned capacity =
+      nxbox_env_flag("NXBOX_D3D12_LIST_FULL") ? 4096 : 128;
+  std::unique_ptr<NxboxListRecord[]> entries{new (std::nothrow)
+                                                 NxboxListRecord[capacity]};
   const bool full = nxbox_env_flag("NXBOX_D3D12_LIST_FULL");
-  std::vector<std::string> full_entries;
+  uint64_t fragments = 0;
   uint64_t next = 0, generation = 0;
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void **out) override {
     if (!out)
@@ -434,23 +833,47 @@ struct NxboxListJournal final : IUnknown {
       delete this;
     return left;
   }
-  void record(const char *site, const char *name, const std::string &args) {
-    NxboxListText line;
-    line.add("seq=%llu generation=%llu tid=%lu call=%s site=%s ",
-             (unsigned long long)next, (unsigned long long)generation,
-             (unsigned long)GetCurrentThreadId(), name, site);
-    if (full)
-      full_entries.emplace_back(line.text + args);
-    else
-      entries[next % entries.size()] = line.text + args;
-    ++next;
+  template <typename... A>
+  void record(const char *site, const char *name, const A &...args) {
+    if (!entries)
+      return;
+    NxboxListArgsT<NxboxListSink> details(name, *this, site, name, next++);
+    details.collect(args...);
+    // Even argument-free Close must own a record.
+    if (!details.entry)
+      details.room(0);
   }
 };
+inline NxboxListRecord &NxboxListSink::room(unsigned bytes) {
+  if (!entry || entry->used + bytes > sizeof(entry->data)) {
+    entry = &journal.entries[journal.fragments++ % journal.capacity];
+    entry->site = site;
+    entry->name = name;
+    entry->seq = seq;
+    entry->generation = journal.generation;
+    entry->tid = GetCurrentThreadId();
+    entry->part = part++;
+    entry->used = 0;
+  }
+  return *entry;
+}
+inline NxboxListText nxbox_list_format(const NxboxListRecord &r) {
+  NxboxListText out;
+  out.add("seq=%llu generation=%llu tid=%lu call=%s site=%s fragment=%u ",
+          (unsigned long long)r.seq, (unsigned long long)r.generation,
+          (unsigned long)r.tid, r.name, r.site, r.part);
+  for (unsigned at = 0; at < r.used;) {
+    const auto *op = reinterpret_cast<const NxboxListOperation *>(r.data + at);
+    op->format(out, r.data + at + sizeof(NxboxListOperation));
+    at += op->size;
+  }
+  return out;
+}
 struct NxboxListRef {
   NxboxListJournal *p = nullptr;
   explicit NxboxListRef(ID3D12CommandList *list) {
     UINT size = sizeof(p);
-    if (FAILED(list->GetPrivateData(nxbox_list_key, &size, &p)))
+    if (!list || FAILED(list->GetPrivateData(nxbox_list_key, &size, &p)))
       p = nullptr;
   }
   ~NxboxListRef() {
@@ -467,29 +890,37 @@ inline void nxbox_list_created(IUnknown *object, const char *site,
   if (FAILED(object->QueryInterface(IID_PPV_ARGS(&list))))
     return;
   auto *journal = new (std::nothrow) NxboxListJournal;
-  if (journal) {
-    NxboxListText creation;
-    creation.add("list=%p type=%u site=%s ms=%llu tid=%lu %s", (void *)list,
-                 (unsigned)list->GetType(), site,
-                 (unsigned long long)GetTickCount64(),
-                 (unsigned long)GetCurrentThreadId(), args);
-    journal->creation = std::move(creation.text);
-    const HRESULT hr = list->SetPrivateDataInterface(nxbox_list_key, journal);
-    if (FAILED(hr))
+  if (journal && journal->entries) {
+    try {
+      NxboxListText creation;
+      creation.add("list=%p type=%u site=%s ms=%llu tid=%lu %s", (void *)list,
+                   (unsigned)list->GetType(), site,
+                   (unsigned long long)GetTickCount64(),
+                   (unsigned long)GetCurrentThreadId(), args);
+      journal->creation = std::move(creation.text);
+      const HRESULT hr = list->SetPrivateDataInterface(nxbox_list_key, journal);
+      if (FAILED(hr))
+        SetEnvironmentVariableA("NXBOX_D3D12_LIST_ERROR",
+                                "SetPrivateDataInterface failed");
+    } catch (const std::bad_alloc &) {
       SetEnvironmentVariableA("NXBOX_D3D12_LIST_ERROR",
-                              "SetPrivateDataInterface failed");
+                              "creation capture allocation failed");
+    }
     journal->Release();
-  } else
+  } else {
+    if (journal)
+      journal->Release();
     SetEnvironmentVariableA("NXBOX_D3D12_LIST_ERROR",
                             "journal allocation failed");
+  }
   list->Release();
 }
 inline void nxbox_infoqueue_setup(ID3D12Device *dev) {
-  if (!nxbox_debug_enabled())
+  if (!dev || !nxbox_debug_enabled())
     return;
   ID3D12InfoQueue *queue = nullptr;
   const HRESULT hr = dev->QueryInterface(IID_PPV_ARGS(&queue));
-  if (FAILED(hr)) {
+  if (FAILED(hr) || !queue) {
     char text[96];
     snprintf(text, sizeof(text), "hr=0x%08x stage=InfoQueue", (unsigned)hr);
     SetEnvironmentVariableA("NXBOX_D3D12_DEBUG_UNAVAILABLE", text);
@@ -497,7 +928,7 @@ inline void nxbox_infoqueue_setup(ID3D12Device *dev) {
   }
   queue->ClearStorageFilter();
   queue->ClearRetrievalFilter();
-  const HRESULT limit = queue->SetMessageCountLimit(UINT64_MAX);
+  const HRESULT limit = queue->SetMessageCountLimit(4096);
   char status[128];
   snprintf(status, sizeof(status), "enabled=1 infoqueue=1 limit_hr=0x%08x",
            (unsigned)limit);
@@ -521,8 +952,9 @@ struct NxboxListPublisher {
     }
   }
 };
-inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
-                               const char *name, const char *site, HRESULT hr) {
+inline void nxbox_list_failure_impl(ID3D12CommandList *list, ID3D12Device *dev,
+                                    const char *name, const char *site,
+                                    HRESULT hr) {
   static std::mutex mutex;
   static unsigned captures = 0;
   static const unsigned limit =
@@ -545,24 +977,31 @@ inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
   if (journal.p) {
     std::lock_guard<std::mutex> guard(journal.p->mutex);
     out.write("RING", "creation " + journal.p->creation);
-    const auto end = journal.p->next;
-    const auto begin = journal.p->full ? 0 : (end > 128 ? end - 128 : 0);
+    const auto end = journal.p->fragments;
+    const auto begin =
+        end > journal.p->capacity ? end - journal.p->capacity : 0;
     NxboxListText history;
-    history.add("history generation=%llu recorded=%llu retained=%llu "
-                "dropped=%llu full=%u",
-                (unsigned long long)journal.p->generation,
-                (unsigned long long)end, (unsigned long long)(end - begin),
-                (unsigned long long)begin, journal.p->full ? 1u : 0u);
+    history.add(
+        "history generation=%llu recorded=%llu retained=%llu "
+        "dropped=%llu full=%u fragments=%llu capacity=%u record_bytes=%zu",
+        (unsigned long long)journal.p->generation,
+        (unsigned long long)journal.p->next, (unsigned long long)(end - begin),
+        (unsigned long long)begin, journal.p->full ? 1u : 0u,
+        (unsigned long long)end, journal.p->capacity, sizeof(NxboxListRecord));
     out.write("RING", history.text);
     for (auto seq = begin; seq < end; ++seq)
-      out.write("RING", journal.p->full ? journal.p->full_entries[seq]
-                                        : journal.p->entries[seq % 128]);
+      out.write("RING",
+                nxbox_list_format(journal.p->entries[seq % journal.p->capacity])
+                    .text);
   } else
     out.write("RING", "journal=unavailable");
   ID3D12InfoQueue *queue = nullptr;
   const HRESULT qi =
       dev ? dev->QueryInterface(IID_PPV_ARGS(&queue)) : E_NOINTERFACE;
-  if (SUCCEEDED(qi)) {
+  if (SUCCEEDED(qi) && queue) {
+    const auto release_queue = [](ID3D12InfoQueue *p) { p->Release(); };
+    std::unique_ptr<ID3D12InfoQueue, decltype(release_queue)> queue_ref(
+        queue, release_queue);
     const UINT64 count = queue->GetNumStoredMessagesAllowedByRetrievalFilter();
     NxboxListText stats;
     stats.add(
@@ -572,12 +1011,18 @@ inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
         (unsigned long long)queue->GetNumMessagesDeniedByStorageFilter(),
         nxbox_debug_enabled());
     out.write("INFO", stats.text);
-    for (UINT64 i = 0; i < count; ++i) {
+    size_t info_bytes = 0;
+    for (UINT64 i = 0; i < count && i < 4096 && info_bytes < 1024 * 1024; ++i) {
       SIZE_T size = 0;
       HRESULT result = queue->GetMessage(i, nullptr, &size);
-      if (SUCCEEDED(result) && size >= sizeof(D3D12_MESSAGE)) {
-        std::vector<unsigned char> bytes(size);
-        auto *message = reinterpret_cast<D3D12_MESSAGE *>(bytes.data());
+      if (SUCCEEDED(result) && size >= sizeof(D3D12_MESSAGE) && size <= 65536) {
+        std::unique_ptr<unsigned char[]> bytes(
+            new (std::nothrow) unsigned char[size]);
+        if (!bytes) {
+          out.write("INFO", "capture=allocation-failed");
+          break;
+        }
+        auto *message = reinterpret_cast<D3D12_MESSAGE *>(bytes.get());
         result = queue->GetMessage(i, message, &size);
         if (SUCCEEDED(result)) {
           NxboxListText text;
@@ -587,25 +1032,33 @@ inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
           if (message->pDescription && message->DescriptionByteLength)
             text.text.append(
                 message->pDescription,
-                message->DescriptionByteLength -
-                    (message->pDescription[message->DescriptionByteLength -
+                (message->DescriptionByteLength > 65536
+                     ? 65536
+                     : message->DescriptionByteLength) -
+                    (message->DescriptionByteLength <= 65536 &&
+                     message->pDescription[message->DescriptionByteLength -
                                            1] == '\0'));
+          if (message->DescriptionByteLength > 65536)
+            text.add(" description_truncated=1");
           // Keep multiline descriptions in one logical record; preserve bytes
           // except line separators so every physical line has an ID and prefix.
           for (auto &c : text.text)
             if (c == '\n' || c == '\r')
               c = ' ';
+          info_bytes += text.text.size();
           out.write("INFO", text.text);
           continue;
         }
       }
       NxboxListText error;
-      error.add("index=%llu GetMessage_hr=0x%08x bytes=%llu",
-                (unsigned long long)i, (unsigned)result,
-                (unsigned long long)size);
+      error.add(
+          "index=%llu GetMessage_hr=0x%08x bytes=%llu message_size_limit=65536",
+          (unsigned long long)i, (unsigned)result, (unsigned long long)size);
       out.write("INFO", error.text);
     }
-    queue->Release();
+    if (count > 4096 || info_bytes >= 1024 * 1024)
+      out.write("INFO",
+                "capture=truncated count_limit=4096 byte_limit=1048576");
   } else {
     NxboxListText error;
     error.add("unavailable hr=0x%08x debug=%u", (unsigned)qi,
@@ -619,4 +1072,16 @@ inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
   SetEnvironmentVariableA(key, manifest);
   snprintf(manifest, sizeof(manifest), "%u", ++captures);
   SetEnvironmentVariableA("NXBOX_D3D12_LIST_CAPTURES", manifest);
+}
+
+inline void nxbox_list_failure(ID3D12CommandList *list, ID3D12Device *dev,
+                               const char *name, const char *site, HRESULT hr) {
+  try {
+    nxbox_list_failure_impl(list, dev, name, site, hr);
+  } catch (const std::bad_alloc &) {
+    // Keep the terminal stop notification alive even if failure formatting
+    // cannot allocate. Never throw into Gallium from a diagnostic capture.
+    SetEnvironmentVariableA("NXBOX_D3D12_LIST_ERROR",
+                            "failure capture allocation failed");
+  }
 }

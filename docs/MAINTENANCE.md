@@ -454,8 +454,9 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_BUFFER_STAGING`         | On                                                    | Leading `0` disables eligible busy-buffer upload staging.                                                                                                | Yes         | patch_mesa_uwp.py:patch_buffer_staging → d3d12_resource.cpp:nxbox_use_staging                               |
 | `NXBOX_CTX_DIRECT`             | Off                                                   | Leading `1` creates later shared contexts on the caller instead of UI dispatch.                                                                          | Yes         | src/eden_uwp/mesa_window.cpp:CreateSharedContext                                                            |
 | `NXBOX_D3D12_DEBUG`            | Off                                                   | Exact `1` requests the debug layer and unfiltered info queue when available.                                                                             | Yes         | tools/nxbox/mesa_list_ring.h:nxbox_debug_enabled; patch_device_api_ring → d3d12_screen.cpp                  |
-| `NXBOX_D3D12_LIST_FULL`        | Off                                                   | Exact `1` retains all recording arguments until list Reset/destruction; default retains the last 128 commands.                                            | Yes         | tools/nxbox/mesa_list_ring.h:NxboxListJournal                                                               |
-| `NXBOX_D3D12_DUMP_EVERY_CLOSE` | Off                                                   | Exact `1` captures successful Close calls too and raises capture retention from one to five.                                                             | Yes         | tools/nxbox/mesa_api_ring.h; mesa_list_ring.h                                                               |
+| `NXBOX_D3D12_LIST_FULL`        | Off                                                   | Exact `1` retains 4096 fixed 512-byte record fragments per list (2 MiB); Reset reuses storage, default retains 128. Full mode disables the legacy string journal.                                            | Yes         | tools/nxbox/mesa_list_ring.h:NxboxListJournal                                                               |
+| `NXBOX_D3D12_VALIDATE` | Off | Exact `1` enables static recording checks and emits only the first offender with its Gallium site as D3D12_VALIDATE_FIRST. No state repair or submit-policy change. | Yes | tools/nxbox/mesa_list_ring.h:nxbox_validate |
+| `NXBOX_D3D12_DUMP_EVERY_CLOSE` | Off                                                   | Exact `1` raises failure capture retention from one to five and permits additional failed Close observations after the stop latch.                                                             | Yes         | tools/nxbox/mesa_api_ring.h; mesa_list_ring.h                                                               |
 | `NXBOX_D3D12_GBV`              | Off                                                   | Exact `1` requests GPU-based and synchronized-queue validation under D3D12_DEBUG.                                                                        | Yes         | patch_mesa_uwp.py:patch_device_api_ring → d3d12_screen.cpp                                                  |
 | `NXBOX_D3D12_MAX_SM`           | Device maximum                                        | Numeric minor version caps shader model 6.x (e.g. `7` for 6.7).                                                                                          | Yes         | patch_mesa_uwp.py:patch_shader_model → d3d12_screen.cpp                                                     |
 | `NXBOX_D3D12_QUERIES`          | Safe mode                                             | `full` uses hardware queries; `none` makes all non-timestamp queries software; otherwise pipeline/SO statistics are software (occlusion stays hardware). | Yes         | patch_mesa_uwp.py:patch_query_policy → d3d12_query.cpp:nxbox_soft_subquery                                  |
@@ -575,6 +576,7 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_D3D12_SRV_SWIZZLE`
 - `NXBOX_D3D12_SWIZZLE_SLOTS`
 - `NXBOX_D3D12_SYNC_ERROR`
+- `NXBOX_D3D12_VALIDATE_FIRST`
 - `NXBOX_D3D12_VIDMEM`
 - `NXBOX_D3D12_VIEW_CAST`
 - `NXBOX_D3D12_VIEW_CAST_PAIRS`
@@ -675,6 +677,12 @@ patch/source/policy behavior; Xbox GPU behavior still needs console validation.
 ## Where to look when
 
 ### Device removed or Close failed
+
+For bounded recording evidence, set `NXBOX_D3D12_LIST_FULL=1` and
+`NXBOX_D3D12_VALIDATE=1`. The full list capture replaces the legacy string journal,
+even if JOURNAL=1; it uses 4096 fixed record fragments per list and reports dropped
+records. Preserve `D3D12_VALIDATE_FIRST` as well as all capture parts. See
+[command-list diagnostics](mesa-command-list-diagnostics.md) for limits and checks.
 
 Set `NXBOX_JOURNAL=1` and `NXBOX_API_RING=1` in nxbox_env.txt, keeping `NXBOX_SYNC_BATCH` enabled,
 and set `NXBOX_ASYNC_SUBMIT=0`. Read the earliest `D3D12_FIRST_FAILURE`, `D3D12_BATCH`,
