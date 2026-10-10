@@ -1,5 +1,7 @@
 # NXbox: Xbox Series X port workbench
 
+For the current file map, Mesa patch chain and runtime switches, see [MAINTENANCE.md](MAINTENANCE.md).
+
 This is an experimental continuation of Eden's UWP work. Signed CPU and graphics diagnostics have
 been installed and executed on the Xbox Series X. **No playable guest game or commercial-game FPS
 has been demonstrated yet.** The gameplay frontend is undergoing its first Windows build.

@@ -31,6 +31,7 @@ SPDX-License-Identifier: GPL-3.0-or-later
   <a href="#trying-it">Trying it</a> ·
   <a href="#development">Development</a> ·
   <a href="#credits-and-lineage">Credits</a> ·
+  <a href="docs/MAINTENANCE.md">Maintenance map</a> ·
   <a href="docs/nxbox-port.md">Port notes</a>
 </p>
 
