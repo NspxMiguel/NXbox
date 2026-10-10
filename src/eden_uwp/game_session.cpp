@@ -942,6 +942,14 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
         if (vmmap && now - last_vmmap >= std::chrono::seconds(30)) {
             last_vmmap = now;
             LogVirtualMemoryMap();
+            if (auto* process = system.ApplicationProcess()) {
+                // What the guest believes it has committed, to tell it apart from host-side use.
+                Diagnostic(fmt::format(
+                    "GUEST_MEMORY used={}MiB used_non_system={}MiB total={}MiB",
+                    process->GetUsedUserPhysicalMemorySize(system.Kernel()) >> 20,
+                    process->GetUsedNonSystemUserPhysicalMemorySize(system.Kernel()) >> 20,
+                    process->GetTotalUserPhysicalMemorySize(system.Kernel()) >> 20));
+            }
         }
         const auto elapsed = std::chrono::duration<double>(now - measured_at).count();
         if (elapsed >= 5.0) {
