@@ -186,6 +186,7 @@ PFN_VirtualAllocFromApp g_pfn_virtual_alloc_from_app{nullptr};
 PFN_AddVectoredExceptionHandler g_pfn_add_veh{nullptr};
 PFN_RemoveVectoredExceptionHandler g_pfn_remove_veh{nullptr};
 void* g_backing_veh{nullptr};
+std::atomic<std::uint64_t> g_backing_committed{0};
 
 LONG NTAPI BackingDemandCommitHandler(EXCEPTION_POINTERS* ep) {
     if (ep == nullptr || ep->ExceptionRecord == nullptr ||
@@ -206,11 +207,16 @@ LONG NTAPI BackingDemandCommitHandler(EXCEPTION_POINTERS* ep) {
     }
     if (g_pfn_virtual_alloc_from_app(base + chunk->offset, chunk->size, MEM_COMMIT,
                                      PAGE_READWRITE)) {
+        g_backing_committed.fetch_add(chunk->size, std::memory_order_relaxed);
         return EXCEPTION_CONTINUE_EXECUTION;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
 } // namespace
+
+std::uint64_t HostMemoryCommittedBytes() {
+    return g_backing_committed.load(std::memory_order_relaxed);
+}
 #endif
 
 class HostMemory::Impl {

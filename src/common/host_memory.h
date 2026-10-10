@@ -6,12 +6,18 @@
 
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include "common/common_funcs.h"
 #include "common/common_types.h"
 
 namespace Common {
+
+#ifdef YUZU_UWP_APPCONTAINER
+// Bytes of the guest DRAM backing committed so far by demand faults (diagnostics).
+std::uint64_t HostMemoryCommittedBytes();
+#endif
 
 enum class MemoryPermission : u32 {
     Read = 1 << 0,
