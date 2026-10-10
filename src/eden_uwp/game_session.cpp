@@ -414,14 +414,6 @@ void LogVirtualMemoryMap() {
     }
     Diagnostic(fmt::format("VMMAP private={}MiB mapped={}MiB image={}MiB top:{}", by_type[0] >> 20,
                            by_type[1] >> 20, by_type[2] >> 20, top));
-    // How much of that is malloc: the process heap's allocated and committed bytes.
-    HEAP_SUMMARY summary{};
-    summary.cb = sizeof(summary);
-    if (HeapSummary(GetProcessHeap(), 0, &summary)) {
-        Diagnostic(fmt::format("HEAP allocated={}MiB committed={}MiB reserved={}MiB",
-                               summary.cbAllocated >> 20, summary.cbCommitted >> 20,
-                               summary.cbReserved >> 20));
-    }
 }
 
 // Kept free of objects with destructors so MSVC accepts the structured exception handler.
