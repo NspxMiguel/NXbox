@@ -14,9 +14,13 @@
 
 inline bool nxbox_api_enabled() {
   static const bool enabled = [] {
+    // The ring formats a line for every D3D12 call (tens of thousands a second): it is off in the app unless NXBOX_API_RING=1.
     char value[4]{};
-    return !(GetEnvironmentVariableA("NXBOX_SYNC_BATCH", value,
-                                     sizeof(value)) == 1 &&
+    if (GetEnvironmentVariableA("NXBOX_SYNC_BATCH", value, sizeof(value)) == 1 &&
+        value[0] == '0')
+      return false;
+    // The frontend sets NXBOX_API_RING=0 unless the user asked for the ring.
+    return !(GetEnvironmentVariableA("NXBOX_API_RING", value, sizeof(value)) == 1 &&
              value[0] == '0');
   }();
   return enabled;

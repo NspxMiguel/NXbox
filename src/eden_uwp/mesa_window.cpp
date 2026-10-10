@@ -109,6 +109,13 @@ struct MesaRuntime {
                 _putenv_s(key.c_str(), value.c_str());
                 Diagnostic("ENV " + key + "=" + value);
             }
+            // Mesa's per-call API ring and per-command journal format strings for every D3D12 call
+            // and command (about 30% of the render thread): off unless asked for.
+            for (const char* name : {"NXBOX_API_RING", "NXBOX_JOURNAL"}) {
+                if (std::getenv(name) == nullptr) {
+                    _putenv_s(name, "0");
+                }
+            }
             if (std::getenv("NXBOX_DRAW_BUCKETS") != nullptr) {
                 const std::string log_path = (env_file.parent_path() / "bucket.txt").string();
                 std::error_code remove_error;

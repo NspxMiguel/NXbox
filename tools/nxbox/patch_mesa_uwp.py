@@ -16,6 +16,17 @@ def patch(root: Path) -> None:
         "#include <vector>": "#include <vector>\n#include <atomic>",
         "volatile bool finished = false;": "std::atomic<bool> finished{false};",
         "      CoreWindow^ coreWindow = CoreWindow::GetForCurrentThread();\n      DisplayInformation^ currentDisplayInformation = DisplayInformation::GetForCurrentView();\n": "",
+        "      lpRect->top = 0;\n      lpRect->bottom = uwp_get_height();\n      lpRect->left = 0;\n      lpRect->right = uwp_get_width();\n": "      // Both queries are dispatched to the UI thread and spun on, about 20 ms per present; the\n"
+        "      // display size only changes on a mode switch, so it is looked up once a second.\n"
+        "      static std::atomic<int> cached_width{0}, cached_height{0};\n"
+        "      static std::atomic<unsigned long long> cached_at{0};\n"
+        "      const unsigned long long now = GetTickCount64();\n"
+        "      if (cached_width.load() == 0 || now - cached_at.load() > 1000) {\n"
+        "         cached_height = uwp_get_height();\n"
+        "         cached_width = uwp_get_width();\n"
+        "         cached_at = now;\n"
+        "      }\n"
+        "      lpRect->top = 0;\n      lpRect->bottom = cached_height.load();\n      lpRect->left = 0;\n      lpRect->right = cached_width.load();\n",
         "   CoreWindow^ coreWindow = CoreWindow::GetForCurrentThread();\n   Platform::Agile<Windows::UI::Core::CoreWindow> m_window;\n   m_window = coreWindow;\n   return (HWND)reinterpret_cast<IUnknown*>(m_window.Get());": "   // The frontend retains the CoreWindow ABI pointer used as this HDC.\n"
         "   // GPU and shader worker threads have no thread-local CoreWindow.\n"
         "   return reinterpret_cast<HWND>(hDC);",

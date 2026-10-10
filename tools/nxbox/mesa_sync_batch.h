@@ -40,6 +40,14 @@ struct NxboxBatchJournal {
 inline void nxbox_journal_reset(NxboxBatchJournal *&journal) {
   if (!nxbox_sync_batch_enabled())
     return;
+  // The journal formats a string per recorded command: off in the app unless NXBOX_JOURNAL=1 (the frontend sets it to 0).
+  static const bool journal_wanted = [] {
+    char value[4] = {};
+    return !(GetEnvironmentVariableA("NXBOX_JOURNAL", value, sizeof(value)) == 1 &&
+             value[0] == '0');
+  }();
+  if (!journal_wanted)
+    return;
   if (!journal)
     journal = new (std::nothrow) NxboxBatchJournal{};
   if (journal) {
