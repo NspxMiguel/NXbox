@@ -3004,6 +3004,18 @@ def patch_view_cast(root: Path) -> None:
         '#include "d3d12_context.h"\n',
         '#include "d3d12_context.h"\n#include "nxbox_view_cast.h"\n',
     )
+    # Shader keys read swizzles by absolute texture slot, just like sampler_views.
+    replace(
+        "d3d12_context.cpp",
+        "ctx->tex_swizzle_state[shader_type][i];",
+        "ctx->tex_swizzle_state[shader_type][start_slot + i];",
+    )
+    replace(
+        "d3d12_context.cpp",
+        "   ctx->num_sampler_views[shader_type] = start_slot + num_views;",
+        "   if (num_views)\n      nxbox_record_swizzle_slots(start_slot);\n"
+        "   ctx->num_sampler_views[shader_type] = start_slot + num_views;",
+    )
     # Keep base.texture as the source so Gallium's lifetime and binding bookkeeping stay intact.
     replace(
         "d3d12_context.cpp",
@@ -3022,6 +3034,16 @@ def patch_view_cast(root: Path) -> None:
         '      nxbox_count_view_cast("srv", (unsigned)state->format, (unsigned)res->overall_format);\n'
         "      desc.Format = d3d12_get_resource_srv_format(res->overall_format, state->target);\n"
         "   }\n",
+    )
+    replace(
+        "d3d12_context.cpp",
+        "   unsigned array_size = state->u.tex.last_layer - state->u.tex.first_layer + 1;\n",
+        "   nxbox_record_srv_swizzle((unsigned)state->format,\n"
+        "      (unsigned)d3d12_resource(state->texture)->overall_format,\n"
+        "      (unsigned)desc.Format, (unsigned)desc.Shader4ComponentMapping,\n"
+        "      sampler_view->nxbox_srv_shadow ? 1u :\n"
+        "         (desc.Format != d3d12_get_resource_srv_format(state->format, state->target) ? 2u : 0u));\n"
+        "   unsigned array_size = state->u.tex.last_layer - state->u.tex.first_layer + 1;\n",
     )
     replace(
         "d3d12_context.cpp",

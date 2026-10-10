@@ -156,6 +156,81 @@ class MesaViewCastTests(unittest.TestCase):
     setUp = safety.MesaRenderSafetyTests.setUp
     compile_run = safety.MesaRenderSafetyTests.compile_run
 
+    def check_partial_bind_swizzles(self, context):
+        declaration = re.search(
+            r"         dxil_texture_swizzle_state &swizzle_state = .*?;", context
+        ).group()
+        assignments = re.search(
+            r"         swizzle_state.swizzle_r = ss->swizzle_override_r;.*?"
+            r"         swizzle_state.swizzle_a = ss->swizzle_override_a;",
+            context,
+            re.S,
+        ).group()
+        self.compile_run(
+            r"""
+#include <cassert>
+struct dxil_texture_swizzle_state { unsigned swizzle_r,swizzle_g,swizzle_b,swizzle_a; };
+struct Context { dxil_texture_swizzle_state tex_swizzle_state[2][8]{}; };
+struct View { unsigned swizzle_override_r,swizzle_override_g,swizzle_override_b,swizzle_override_a; };
+int main() {
+ Context storage; auto *ctx=&storage;
+ // A partial bind must preserve preceding slots and the other shader stage.
+ for(unsigned start_slot:{0u,3u}) {
+  unsigned shader_type=1;
+  View views[]={{4,4,4,0},{0,0,0,0}}; // 0,0,0,R and R,R,R,R coverage maps
+  for(unsigned i=0;i<2;++i) {
+   auto *ss=&views[i];
+""".replace("#include <cassert>", "#include <cassert>\n#include <initializer_list>")
+            + declaration
+            + "\n"
+            + assignments
+            + r"""
+  }
+  assert(ctx->tex_swizzle_state[1][start_slot].swizzle_r==4);
+  assert(ctx->tex_swizzle_state[1][start_slot].swizzle_a==0);
+  assert(ctx->tex_swizzle_state[1][start_slot+1].swizzle_r==0);
+  assert(ctx->tex_swizzle_state[0][start_slot].swizzle_r==0);
+ }
+ assert(ctx->tex_swizzle_state[1][0].swizzle_r==4);
+ assert(ctx->tex_swizzle_state[1][2].swizzle_r==0);
+}
+"""
+        )
+
+    def test_srv_swizzle_diagnostic_is_opt_in_and_bounded(self):
+        self.compile_run(
+            MOCK.split("using UINT=", 1)[0]
+            + DIAGNOSTICS
+            + r"""
+int main(int argc,char **argv) {
+ assert(argc==2); setenv("NXBOX_SRV_SWIZZLE",argv[1],1);
+ nxbox_record_srv_swizzle(49,49,61,0x1124,0);
+ nxbox_record_swizzle_slots(0);
+ if(strcmp(argv[1],"1")) { assert(env.empty()); return 0; }
+ assert(env.at("NXBOX_D3D12_SWIZZLE_SLOTS")=="binds=1 partial=0 last_start=0");
+ nxbox_record_swizzle_slots(3);
+ assert(env.at("NXBOX_D3D12_SWIZZLE_SLOTS")=="binds=2 partial=1 last_start=3");
+ nxbox_record_swizzle_slots(0);
+ assert(env.at("NXBOX_D3D12_SWIZZLE_SLOTS")=="binds=2 partial=1 last_start=3");
+ auto first=env.at("NXBOX_D3D12_SRV_SWIZZLE");
+ assert(first=="view=49 resource=49 dxgi=61 map=0x1124 path=0");
+ nxbox_record_srv_swizzle(49,49,61,0x1124,0);
+ assert(env.at("NXBOX_D3D12_SRV_SWIZZLE")==first);
+ nxbox_record_srv_swizzle(49,50,61,0x1000,1);
+ nxbox_record_srv_swizzle(49,50,62,0x1124,2);
+ auto report=env.at("NXBOX_D3D12_SRV_SWIZZLE");
+ assert(report.find("map=0x1000 path=1")!=std::string::npos);
+ assert(report.find("dxgi=62 map=0x1124 path=2")!=std::string::npos);
+ for(unsigned i=3;i<40;++i) nxbox_record_srv_swizzle(i,i,61,0x1124,0);
+ report=env.at("NXBOX_D3D12_SRV_SWIZZLE");
+ assert(std::count(report.begin(),report.end(),';')==15);
+ assert(report.size()<1536 && report.find("view=16 ")==std::string::npos);
+}
+""",
+            args=("0",),
+        )
+        subprocess.run([str(self.root / "test"), "1"], check=True, timeout=10)
+
     def check_typed_buffer_descriptors(self, context):
         # Execute the patched descriptor function, including buffer element addressing.
         function = context.split("void\nd3d12_init_sampler_view_descriptor", 1)[1].split(
@@ -218,7 +293,7 @@ struct d3d12_sampler_view {
  unsigned swizzle_override_r=0,swizzle_override_g=1,swizzle_override_b=2,swizzle_override_a=3;
  unsigned mip_levels=1; struct { int cpu_handle=0; } handle;
 };
-pipe_resource *nxbox_srv_shadow_texture(void *) { assert(false); return nullptr; }
+pipe_resource *nxbox_srv_shadow_texture(void *shadow) { return static_cast<pipe_resource *>(shadow); }
 struct d3d12_format_info { unsigned plane_slice=0; };
 d3d12_format_info d3d12_get_format_info(pipe_format,pipe_format,unsigned) { return {}; }
 unsigned d3d12_get_resource_srv_format(pipe_format f,unsigned) { return unsigned(f); }
@@ -271,6 +346,24 @@ int main() {
  d3d12_init_sampler_view_descriptor(&view);
  assert(device.last.Format==unsigned(PIPE_FORMAT_R8_UNORM));
  assert(env["NXBOX_D3D12_VIEW_CAST_PAIRS"]=="53->49");
+ // Font coverage swizzles must survive native and shadow SRVs alike.
+ struct d3d12_resource shadow; shadow.base.b.screen=&screen;
+ shadow.base.b.target=PIPE_TEXTURE_2D;
+ for(auto format:{PIPE_FORMAT_R8_UNORM,PIPE_FORMAT_R8G8_UNORM,PIPE_FORMAT_RGTC1_UNORM}) {
+  resource.overall_format=format; shadow.overall_format=format;
+  view.base.format=format;
+  for(bool use_shadow:{false,true}) {
+   view.nxbox_srv_shadow=use_shadow ? &shadow.base.b : nullptr;
+   view.swizzle_override_r=view.swizzle_override_g=view.swizzle_override_b=4;
+   view.swizzle_override_a=0; // zero RGB, red-channel coverage in alpha
+   d3d12_init_sampler_view_descriptor(&view);
+   assert(device.last.Format==unsigned(format));
+   assert(device.last.Shader4ComponentMapping==D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(4,4,4,0));
+   view.swizzle_override_r=view.swizzle_override_g=view.swizzle_override_b=0;
+   d3d12_init_sampler_view_descriptor(&view);
+   assert(device.last.Shader4ComponentMapping==D3D12_ENCODE_SHADER_4_COMPONENT_MAPPING(0,0,0,0));
+  }
+ }
 }
 """
         )
@@ -367,6 +460,7 @@ int main(int argc,char **argv) {
             )
             driver = root / "src/gallium/drivers/d3d12"
             context = (driver / "d3d12_context.cpp").read_text()
+            self.check_partial_bind_swizzles(context)
             self.check_typed_buffer_descriptors(context)
             draw = (driver / "d3d12_draw.cpp").read_text()
             resource = (driver / "d3d12_resource.cpp").read_text()

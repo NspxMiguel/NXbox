@@ -1126,6 +1126,10 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                 for (std::size_t i = 0; i < std::size(extended_names); ++i) {
                     collect(extended_names[i], extended_last[i]);
                 }
+                static std::string last_srv_swizzle;
+                collect("NXBOX_D3D12_SRV_SWIZZLE", last_srv_swizzle);
+                static std::string last_swizzle_slots;
+                collect("NXBOX_D3D12_SWIZZLE_SLOTS", last_swizzle_slots);
                 static std::string last_api_ring;
                 const auto api_manifest =
                     read_report("NXBOX_D3D12_API_RING") + read_report("NXBOX_D3D12_LIST_CAPTURES");

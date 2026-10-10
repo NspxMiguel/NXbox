@@ -495,6 +495,7 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_UPDATES`                | On                                                    | Leading `0` disables external content directories used for updates/DLC.                                                                                  | Yes         | src/eden_uwp/game_session.cpp:RunGame                                                                       |
 | `NXBOX_VERIFY_ROMFS`           | Off                                                   | Leading `1` enables RomFS verification and BKTR read diagnostics.                                                                                        | Yes         | src/core/file_sys/romfs_read_diagnostics.h:IsRomfsVerificationEnabled; content_archive.cpp/romfs_verify.cpp |
 | `NXBOX_VIEW_CAST_COPY` | On | Exact `0` disables GPU SRV reinterpretation and restores resource-format fallback. Read once. Shadows are refreshed on bind and before draw/dispatch, with two GPU copies per mip/layer. | Yes | tools/nxbox/mesa_view_cast.h:nxbox_view_cast_copy_enabled |
+| `NXBOX_SRV_SWIZZLE` | Off | Exact `1` records up to 16 distinct SRV format/mapping/path combinations and sampled partial-bind counts. Read once; emits D3D12_SRV_SWIZZLE and D3D12_SWIZZLE_SLOTS. Paths: native=0, shadow=1, fallback=2. | Yes | tools/nxbox/mesa_view_cast.h:nxbox_record_srv_swizzle |
 | `NXBOX_VMMAP`                  | Off                                                   | Leading `1` logs committed virtual memory and guest accounting every 30 seconds.                                                                         | Yes         | src/eden_uwp/game_session.cpp:RunGame/LogVirtualMemoryMap                                                   |
 | `NXBOX_EVENT_WAIT` | On | Exact `0` restores legacy raw-TSC timed waits; default uses condition-variable notification. | Yes | src/common/thread.cpp:Event::WaitFor |
 | `NXBOX_NATIVE_CLOCK` | On | Exact `0` disables missing-frequency TSC calibration and restores original clock selection. | Yes | src/common/cpu_features.cpp:GetWallClock |
@@ -575,6 +576,8 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_D3D12_RESOURCES_FIRST`
 - `NXBOX_D3D12_ROOTSIG`
 - `NXBOX_D3D12_SM`
+- `NXBOX_D3D12_SRV_SWIZZLE`
+- `NXBOX_D3D12_SWIZZLE_SLOTS`
 - `NXBOX_D3D12_SYNC_ERROR`
 - `NXBOX_D3D12_VIDMEM`
 - `NXBOX_D3D12_VIEW_CAST`

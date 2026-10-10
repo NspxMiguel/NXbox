@@ -6,6 +6,64 @@
 #include <stdlib.h>
 #include <string.h>
 
+inline bool
+nxbox_srv_swizzle_diagnostic_enabled()
+{
+   static const bool enabled = []()
+   {
+      const char *value = getenv("NXBOX_SRV_SWIZZLE");
+      return value && !strcmp(value, "1");
+   }();
+   return enabled;
+}
+
+inline void
+nxbox_record_swizzle_slots(unsigned start_slot)
+{
+   if (!nxbox_srv_swizzle_diagnostic_enabled())
+      return;
+   static std::mutex mutex;
+   std::lock_guard<std::mutex> lock(mutex);
+   static unsigned binds = 0, partial = 0;
+   ++binds;
+   partial += start_slot != 0;
+   /* Publish the first bind and partial bind, then at powers of two. */
+   if ((binds & (binds - 1)) && !(start_slot && partial == 1))
+      return;
+   char text[96];
+   snprintf(text, sizeof(text), "binds=%u partial=%u last_start=%u", binds, partial, start_slot);
+   SetEnvironmentVariableA("NXBOX_D3D12_SWIZZLE_SLOTS", text);
+}
+
+/* Opt-in, bounded descriptor evidence. Paths: native=0, shadow=1, fallback=2.
+ * Mapping is the actual D3D12 SRV mapping, including constants and format composition.
+ * A descriptor record proves the requested mapping, not that the GPU honored it. */
+inline void
+nxbox_record_srv_swizzle(unsigned view, unsigned resource, unsigned dxgi, unsigned mapping,
+                         unsigned path)
+{
+   if (!nxbox_srv_swizzle_diagnostic_enabled())
+      return;
+   static std::mutex mutex;
+   std::lock_guard<std::mutex> lock(mutex);
+   static unsigned records[16][5] = {};
+   static unsigned count = 0;
+   const unsigned record[5] = {view, resource, dxgi, mapping, path};
+   for (unsigned i = 0; i < count; ++i)
+      if (!memcmp(records[i], record, sizeof(record)))
+         return;
+   if (count == 16)
+      return;
+   memcpy(records[count++], record, sizeof(record));
+   char text[1536] = {};
+   size_t used = 0;
+   for (unsigned i = 0; i < count; ++i)
+      used += snprintf(text + used, sizeof(text) - used,
+                       "%sview=%u resource=%u dxgi=%u map=0x%x path=%u", i ? "; " : "",
+                       records[i][0], records[i][1], records[i][2], records[i][3], records[i][4]);
+   SetEnvironmentVariableA("NXBOX_D3D12_SRV_SWIZZLE", text);
+}
+
 /* External inline linkage shares these diagnostics across driver translation units. */
 inline void
 nxbox_count_view_cast(const char *kind, unsigned view_format, unsigned resource_format)
