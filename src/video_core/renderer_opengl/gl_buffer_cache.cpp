@@ -13,6 +13,9 @@
 #include "video_core/renderer_opengl/gl_device.h"
 #include "video_core/renderer_opengl/maxwell_to_gl.h"
 #ifdef NXBOX_UWP
+// Avoid windows.h: its OpenGL declarations conflict with glad.
+extern "C" __declspec(dllimport) int __stdcall SetEnvironmentVariableA(const char*, const char*);
+#include "common/nxbox_geometry_diag.h"
 #include "common/nxbox_stall.h"
 #endif
 
@@ -282,6 +285,12 @@ void BufferCacheRuntime::BindVertexBuffers(VideoCommon::HostBindings<Buffer>& bi
 
 void BufferCacheRuntime::BindUniformBuffer(size_t stage, u32 binding_index, Buffer& buffer,
                                            u32 offset, u32 size) {
+#ifdef NXBOX_UWP
+    if (!use_assembly_shaders) {
+        nxbox_record_uniform_binding(static_cast<unsigned>(stage), binding_index, offset, size,
+                                     device.GetUniformBufferAlignment());
+    }
+#endif
     if (use_assembly_shaders) {
         GLuint handle;
         if (offset != 0) {
@@ -302,6 +311,12 @@ void BufferCacheRuntime::BindUniformBuffer(size_t stage, u32 binding_index, Buff
 
 void BufferCacheRuntime::BindComputeUniformBuffer(u32 binding_index, Buffer& buffer, u32 offset,
                                                   u32 size) {
+#ifdef NXBOX_UWP
+    if (!use_assembly_shaders) {
+        nxbox_record_uniform_binding(5, binding_index, offset, size,
+                                     device.GetUniformBufferAlignment());
+    }
+#endif
     if (use_assembly_shaders) {
         GLuint handle;
         if (offset != 0) {

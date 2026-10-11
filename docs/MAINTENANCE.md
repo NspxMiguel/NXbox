@@ -253,6 +253,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
   integration.
 - `tests/port/test_mesa_perf_waits.py` — Checks generated submit policy, fallback flags, counters,
   failure handling and retained completion requirements.
+- `tests/port/test_mesa_geometry_diag.py` — Compiles the generated draw observer and checks UBO
+  alignment/size counters, opt-in gating, first-range retention and report sampling.
 - `tests/port/test_mesa_full_chain.py` — Checks the whole patch chain, including pristine pinned
   sources and CRLF handling.
 - `tests/port/test_mesa_heap_policy.py` — Checks heap properties and feature-gated residency policy.
@@ -297,6 +299,8 @@ and YUZU_UWP_APPCONTAINER are compile definitions, not environment switches.
   commitment and decommit attribution.
 - `src/common/host_memory.h` — Exposes committed guest-backing byte diagnostics.
 - `src/common/nxbox_stall.h` — Owns shared stall/JIT counters and sampler thread IDs.
+- `src/common/nxbox_geometry_diag.h` — Owns opt-in geometry/UBO counters; copied into Mesa as
+  nxbox_geometry_diag.h by patch_geometry_diag.
 - `src/common/settings.cpp` — Disables fastmem in the AppContainer configuration.
 - `src/common/sparse_large_vector.cpp` — Uses the sparse allocator for AppContainer reservations and
   touched-page commitment.
@@ -426,6 +430,7 @@ calls every `patch_*` function in the order below. Helper destinations are under
 | 27    | `patch_view_cast`             | Reinterprets equal-size color SRVs via GPU buffers; guards other invalid views.                       | mesa_view_cast.h → nxbox_view_cast.h; mesa_view_cast_copy.h → nxbox_view_cast_copy.h                          |
 | 28    | `patch_buffer_staging`        | Routes eligible busy-buffer discard writes through upload staging instead of waiting.                | —                                                                                      |
 | 29 | `patch_perf_waits` | Removes diagnostic submission drains and GPU-only SO drains by default; keeps profiler and required completion waits. | mesa_perf_waits.h → nxbox_perf_waits.h |
+| 30 | `patch_geometry_diag` | Observes final IA/CBV state once per issued graphics draw, after vertex and primitive conversion. | src/common/nxbox_geometry_diag.h → nxbox_geometry_diag.h |
 
 `NXBOX_MESA_SKIP` is a **patch-time** comma-separated setting, not a console switch. The code
 supports `query`, `pso`, `dxil` and `fence`; the CI input description advertises only query/fence.
@@ -468,6 +473,7 @@ identifies the generator function and names the generated Mesa reader where usef
 | `NXBOX_FRAME_DUMP`             | Off                                                   | Leading `1` sets FRAME_DUMP_DIR to LocalState\framedump.                                                                                                 | Yes         | src/eden_uwp/mesa_window.cpp:MesaRuntime::Initialize                                                        |
 | `NXBOX_FRAME_DUMP_DIR`         | Unset                                                 | Nonempty directory writes composed-frame PPM probes every 150 frames.                                                                                    | Yes         | src/video_core/renderer_opengl/renderer_opengl.cpp:DumpProbeFrame                                           |
 | `NXBOX_GPU_PROFILE`            | Off                                                   | Exact `1` adds GPU timestamps to journaled main-list commands; needs SYNC_BATCH enabled and JOURNAL=1 for useful command attribution.                    | Yes         | tools/nxbox/mesa_gpu_profile.h:nxbox_profile_on                                                             |
+| `NXBOX_GEOMETRY_DIAG` | Off | Exact `1` counts draws with misaligned VB addresses/strides/element offsets, unknown/emulated formats, misaligned/oversized referenced CBVs and SO. Eden separately counts cached UBO bindings before GL validation and retains the first suspect range. Reports the first 16 observations, then every 4096; read once. | Yes | src/common/nxbox_geometry_diag.h; patch_mesa_uwp.py:patch_geometry_diag; gl_buffer_cache.cpp |
 | `NXBOX_JOURNAL`                | Off in NXbox                                          | `1` requests command journaling; helper disables on exact `0` and requires SYNC_BATCH (standalone helper otherwise defaults on).                         | Yes         | tools/nxbox/mesa_sync_batch.h:nxbox_journal_reset; frontend default in mesa_window.cpp                      |
 | `NXBOX_LANG`                   | System language, then supported fallback              | Case-insensitive `pt`/`en` prefixes force UI language; read directly from nxbox_env.txt before Mesa starts too.                                          | No          | src/eden_uwp/ui/strings.cpp:ForcedLanguage/ResolveLanguage                                                  |
 | `NXBOX_LEAK_RESOURCES`         | Off                                                   | Leading `1` bypasses BO destruction to test premature release; grows memory usage.                                                                       | Yes         | patch_mesa_uwp.py:patch_bo_counters → d3d12_bufmgr.cpp                                                      |
@@ -545,6 +551,7 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_D3D12_FIRST_MESSAGE`
 - `NXBOX_D3D12_GBV_STATUS`
 - `NXBOX_D3D12_GPUPROF`
+- `NXBOX_D3D12_GEOMETRY`
 - `NXBOX_D3D12_HEAP_POLICY`
 - `NXBOX_D3D12_INFOQUEUE`
 - `NXBOX_D3D12_LIST_`
@@ -583,6 +590,8 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_DXIL`
 - `NXBOX_DXIL_ERROR`
 - `NXBOX_DXIL_VALIDATE`
+- `NXBOX_GL_UBO_GEOMETRY`
+- `NXBOX_GL_UBO_FIRST`
 
 ## Build and validation loop
 

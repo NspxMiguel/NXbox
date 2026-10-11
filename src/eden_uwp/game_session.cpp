@@ -1109,6 +1109,12 @@ void RunGame(MesaWindow& window, const std::string& bundled_path, const std::ato
                     collect(extended_names[i], extended_last[i]);
                 }
                 static std::string last_srv_swizzle;
+                static std::string last_geometry;
+                collect("NXBOX_D3D12_GEOMETRY", last_geometry);
+                static std::string last_uniform_geometry;
+                collect("NXBOX_GL_UBO_GEOMETRY", last_uniform_geometry);
+                static std::string first_uniform_geometry;
+                collect("NXBOX_GL_UBO_FIRST", first_uniform_geometry);
                 collect("NXBOX_D3D12_SRV_SWIZZLE", last_srv_swizzle);
                 static std::string last_swizzle_slots;
                 collect("NXBOX_D3D12_SWIZZLE_SLOTS", last_swizzle_slots);

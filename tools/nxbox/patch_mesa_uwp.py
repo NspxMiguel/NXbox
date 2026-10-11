@@ -117,6 +117,7 @@ def patch(root: Path) -> None:
     patch_view_cast(root)
     patch_buffer_staging(root)
     patch_perf_waits(root)
+    patch_geometry_diag(root)
 
 
 def patch_null_pso(root: Path) -> None:
@@ -3288,9 +3289,70 @@ def patch_perf_waits(root: Path) -> None:
     target.write_text(Path(__file__).with_name("mesa_perf_waits.h").read_text())
 
 
+def patch_geometry_diag(root: Path) -> None:
+    """Observe final IA/CBV state after u_vbuf and primitive conversion, without changing draws."""
+    driver = root / "src/gallium/drivers/d3d12"
+    path = driver / "d3d12_draw.cpp"
+    source = path.read_text()
+    helper = """static void
+nxbox_record_geometry_draw(struct d3d12_context *ctx)
+{
+   if (!nxbox_geometry_diag_enabled())
+      return;
+   NxboxGeometrySample sample;
+   const struct d3d12_vertex_elements_state *ves = ctx->gfx_pipeline_state.ves;
+   for (unsigned i = 0; ves && i < ves->num_elements; ++i) {
+      const auto &element = ves->elements[i];
+      const unsigned slot = element.InputSlot;
+      sample.element_offset += element.AlignedByteOffset % 4 != 0;
+      sample.unknown_format += element.Format == DXGI_FORMAT_UNKNOWN;
+      sample.emulated_format += ves->format_conversion[i] != PIPE_FORMAT_NONE;
+      if (slot < ctx->num_vbs && ctx->vbs[slot].buffer.resource) {
+         sample.vertex_offset += ctx->vbvs[slot].BufferLocation % 4 != 0;
+         sample.vertex_stride += ctx->vbvs[slot].StrideInBytes % 4 != 0;
+      }
+   }
+   // Count only shader-referenced CBVs, even if their descriptor table is cached.
+   for (unsigned stage = 0; stage < D3D12_GFX_SHADER_STAGES; ++stage) {
+      const auto *selector = ctx->gfx_stages[stage];
+      if (!selector || !selector->current)
+         continue;
+      const auto *shader = selector->current;
+      for (unsigned i = 0; i < shader->num_cb_bindings; ++i) {
+         const auto &buffer = ctx->cbufs[stage][shader->cb_bindings[i].binding];
+         if (!buffer.buffer)
+            continue;
+         const uint64_t address = d3d12_resource_gpu_virtual_address(
+            d3d12_resource(buffer.buffer)) + buffer.buffer_offset;
+         sample.cbv_offset += address % D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT != 0;
+         sample.cbv_size += buffer.buffer_size > D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16;
+      }
+   }
+   sample.stream_output = ctx->gfx_pipeline_state.num_so_targets != 0;
+   nxbox_record_geometry(sample);
+}
+
+"""
+    replacements = {
+        '#include "nxbox_view_cast.h"\n': '#include "nxbox_view_cast.h"\n#include "nxbox_geometry_diag.h"\n',
+        "static void\nnxbox_refresh_bound_srv_shadows": helper
+        + "static void\nnxbox_refresh_bound_srv_shadows",
+        "   d3d12_apply_resource_states(ctx, false);\n\n   for (unsigned i = 0; i < num_root_descriptors; ++i)": "   nxbox_record_geometry_draw(ctx);\n\n   d3d12_apply_resource_states(ctx, false);\n\n   for (unsigned i = 0; i < num_root_descriptors; ++i)",
+    }
+    for old, new in replacements.items():
+        if source.count(old) != 1:
+            raise RuntimeError(f"Pinned Mesa geometry diagnostic anchor mismatch: {old[:80]}")
+        source = source.replace(old, new, 1)
+    target = driver / "nxbox_geometry_diag.h"
+    if target.exists():
+        raise RuntimeError("Pinned Mesa geometry diagnostic helper already exists")
+    path.write_text(source)
+    target.write_text(
+        (Path(__file__).resolve().parents[2] / "src/common/nxbox_geometry_diag.h").read_text()
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     patch(parser.parse_args().root)
-
-
