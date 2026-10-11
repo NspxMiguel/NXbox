@@ -678,6 +678,18 @@ inline void nxbox_validate_barriers(const char *name, const char *site,
   }
   for (UINT i = 0; i < count && !nxbox_validation_reported().load(); ++i) {
     const auto &b = barriers[i];
+    if (b.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION &&
+        b.Type != D3D12_RESOURCE_BARRIER_TYPE_ALIASING &&
+        b.Type != D3D12_RESOURCE_BARRIER_TYPE_UAV) {
+      nxbox_validation_error(name, site, "invalid-barrier-type", i);
+      continue;
+    }
+    const auto barrier_flags = (unsigned)b.Flags;
+    if ((barrier_flags & ~3u) || barrier_flags == 3u ||
+        (b.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION && barrier_flags)) {
+      nxbox_validation_error(name, site, "invalid-barrier-flags", i);
+      continue;
+    }
     if (b.Type != D3D12_RESOURCE_BARRIER_TYPE_TRANSITION)
       continue;
     if (!b.Transition.pResource) {

@@ -178,3 +178,63 @@ terminal frontend draining and array-layer resolves. The real DirectX-Headers
 syntax test instantiates graphics and video wrappers with clang; set
 `NXBOX_DIRECTX_HEADERS` to their include directory if no local Mesa artifact
 provides them. These checks do not replace a Windows/UWP build or console run.
+
+### BotW full-generation failure: concurrent SRV maintenance recording
+
+`/tmp/botwfail/diag_capture.txt` contains generation 1690 of list
+`00000146A3EA11A0`, context `00000146A1A02040`, batch 2. Reassembly deduplicates
+three repeated capture blocks into **1,622 calls / 1,945 fragments**, matching
+`retained=1945 dropped=0`. Reproduce the static audit with:
+
+```sh
+python3 tools/nxbox/analyze_mesa_capture.py /tmp/botwfail/diag_capture.txt \
+  --json /tmp/botwfail/audited.json
+```
+
+The invalid commands are **ResourceBarrier sequences 759 and 760**, both at
+`d3d12_resource_state.cpp:598` (`d3d12_apply_resource_states`). Both contain
+`barrier[2]={type=1826445160 flags=0x7ff6 }`. Type `0x6cdd5768` is outside
+TRANSITION/ALIASING/UAV (0/1/2), and the flags contain reserved bits. Microsoft's
+[ResourceBarrier runtime-validation contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d12/nf-d3d12-id3d12graphicscommandlist-resourcebarrier)
+explicitly checks the type enum and states that failure makes Close return
+E_INVALIDARG. The old validator skipped every non-transition type, including
+corrupt ones. It now checks type and flags before inspecting the union; legal
+null aliasing/UAV barriers remain accepted.
+
+The patch-induced recording race explains the corruption. `patch_view_cast`
+inserted `nxbox_refresh_srv_shadow` into `d3d12_create_sampler_view`, which the
+pinned `tc_create_sampler_view` calls directly on the frontend without draining
+the driver worker. That refresh calls `copy_texture_region`, mutating the same
+context's resource-state tables, `barrier_scratch` dynarray and command list as
+the worker. The capture shows frontend thread 2672 doing shadow copies at
+750/758 while worker 1900 records draw/dispatch at 747/755. At 759 the worker
+records four barriers; at 760 the frontend records five, preserving the same
+corrupt third entry and preceding transitions. This is concrete unsafe
+concurrent context use, rather than resource creation on another context being
+intrinsically invalid. The [D3D12 threading contract](https://microsoft.github.io/DirectX-Specs/d3d/CPUEfficiency.html)
+prohibits concurrent calls on the same command list. The exact CPU memory
+overwrite cannot be reconstructed from a command capture alone.
+
+The smallest fix removes only the refresh from view creation. Shadow allocation
+and descriptor initialization remain there; queued `set_sampler_views` and
+pre-draw/pre-dispatch refreshes still initialize and update the shadow before
+use. Adding a mutex only around the frontend copy would leave the worker
+unprotected. Zeroing or filtering the corrupted barrier would hide the race.
+
+The script checks all 64 texture copies and seven buffer copies for format
+families/reinterpret pairs, extents, full depth/MSAA copies, identical texture
+subresources, footprint alignment/row size/buffer capacity and buffer overlaps.
+It also checks captured barrier flag/state requirements and read/write unions.
+None adds another static offender. There are no ResolveSubresource or
+ClearUnorderedAccessView calls in this generation. There is no captured UAV
+transition on an RT-only texture; the earlier `nxbox_uav_capable` guard remains
+applicable and unchanged. DEPTH_READ/read-state unions are legal; tracked-state
+mismatches alone are not the runtime validation violation identified here.
+The capture does not expose every descriptor or resource's creating context,
+so it cannot certify all descriptor contents or cross-list synchronization.
+
+Host regression coverage checks reassembly, duplicate/conflicting fragments,
+corrupt barrier type/flags without dereferencing the union, legal null barriers,
+and that patched sampler-view creation cannot record maintenance copies while
+bind/draw/dispatch refreshes remain installed. A fresh Xbox run is still needed
+to verify the corrected patch chain on the runtime.

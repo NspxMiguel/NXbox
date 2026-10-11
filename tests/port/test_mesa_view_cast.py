@@ -473,6 +473,12 @@ int main(int argc,char **argv) {
             self.assertIn(
                 "nxbox_refresh_srv_shadow(ctx, d3d12_resource(new_view->texture)", context
             )
+            # threaded_context creates views directly on the frontend without draining
+            # the worker. Resource creation and descriptors are safe; recording is not.
+            creation = context.split("d3d12_create_sampler_view(", 1)[1].split("static void", 1)[0]
+            self.assertNotIn("nxbox_refresh_srv_shadow(", creation)
+            self.assertNotIn("copy_texture_region(", creation)
+            self.assertNotIn("d3d12_apply_resource_states(", creation)
             self.assertIn("d3d12_transition_subresources_state(ctx, res,", draw)
             for compute in ("false", "true"):
                 self.assertLess(

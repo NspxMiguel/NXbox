@@ -302,6 +302,34 @@ int main() {
 """
         )
 
+    def test_validator_rejects_corrupt_barrier_type_and_flags(self):
+        self.compile_run(
+            self.code()
+            + r"""
+int main() {
+ env["NXBOX_D3D12_VALIDATE"]="1";
+ D3D12_RESOURCE_BARRIER barriers[4] = {};
+ // Reproduce the captured element without dereferencing its corrupt union.
+ barriers[0].Type=1; barriers[1].Type=2; barriers[3].Type=1;
+ barriers[2].Type=1826445160; barriers[2].Flags=0x7ff6;
+ nxbox_validate("ResourceBarrier","d3d12_resource_state.cpp:598",4,barriers);
+ auto first=env["NXBOX_D3D12_VALIDATE_FIRST"];
+ assert(first.find("invalid-barrier-type")!=std::string::npos);
+ assert(first.find("element=2")!=std::string::npos);
+ nxbox_validation_reported().store(false);
+ barriers[2].Type=0;
+ nxbox_validate("ResourceBarrier","flags",4,barriers);
+ assert(env["NXBOX_D3D12_VALIDATE_FIRST"].find("invalid-barrier-flags")!=std::string::npos);
+ for(unsigned flags : {1u,2u,3u}) {
+  nxbox_validation_reported().store(false);
+  barriers[2].Type=2; barriers[2].Flags=flags;
+  nxbox_validate("ResourceBarrier","uav-flags",4,barriers);
+  assert(env["NXBOX_D3D12_VALIDATE_FIRST"].find("invalid-barrier-flags")!=std::string::npos);
+ }
+}
+"""
+        )
+
     def test_validator_opt_in_first_offender_and_sites(self):
         code = (
             self.code()

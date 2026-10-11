@@ -3053,7 +3053,8 @@ def patch_view_cast(root: Path) -> None:
         "       d3d12_get_typeless_format(state->format) != d3d12_get_typeless_format(res->overall_format)) {\n"
         "      sampler_view->nxbox_srv_shadow = nxbox_get_srv_shadow(d3d12_context(pctx), res, state->format);\n"
         "      if (sampler_view->nxbox_srv_shadow) {\n"
-        "         nxbox_refresh_srv_shadow(d3d12_context(pctx), res, sampler_view->nxbox_srv_shadow);\n"
+        "         /* View creation may run on the frontend while the driver thread records. */\n"
+        "         /* Refresh only on queued binds and draws, never from create_sampler_view. */\n"
         "         res = d3d12_resource(nxbox_srv_shadow_texture(sampler_view->nxbox_srv_shadow));\n"
         "      }\n"
         "   }\n",
