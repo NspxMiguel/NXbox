@@ -44,7 +44,9 @@
 #include "core/hle/kernel/k_process.h"
 #include "core/hle/kernel/k_thread.h"
 #include "core/hle/kernel/svc/svc_debug_string.h"
+#include "core/hle/service/acc/profile_manager.h"
 #include "core/hle/service/am/applet_manager.h"
+#include "core/hle/service/mii/mii_manager.h"
 #include "core/hle/service/filesystem/filesystem.h"
 #include "core/loader/loader.h"
 #include "core/perf_stats.h"
@@ -1361,6 +1363,16 @@ void SetProtocolPlayTitle(std::string title_id) {
 
 void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::string& path) {
     using namespace winrt::Windows::UI::Core;
+    // Prepare the NAND before the library or save sync runs, including on a fresh install.
+    ApplyEdenSettingsFile();
+    {
+        const Service::Account::ProfileManager profiles;
+        Service::Mii::MiiManager miis;
+        Service::Mii::DatabaseSessionMetadata metadata{};
+        const auto result = miis.Initialize(metadata);
+        Diagnostic(fmt::format("PREPARED_USER uuid={} mii_result={:#x}",
+                               profiles.GetLastOpenedUser().RawString(), result.raw));
+    }
     const std::string protocol_title = TakeProtocolPlayTitle();
     const bool protocol_launch = !protocol_title.empty();
     std::atomic<bool> closed{false};
@@ -1483,6 +1495,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
                 sync_game.name = choice.sync_name;
                 sync_game.display_name = choice.display_name;
                 ApplyEdenSettingsFile();
+                ApplyEdenSettingsFile(TitleSettings::File(local_state, choice.title_id));
                 if (Ui::RunBootSync(window, local_state, sync_game)) {
                     return; // the window was closed
                 }

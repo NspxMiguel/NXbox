@@ -44,6 +44,7 @@ private:
     MiiEditAppletInputV4 applet_input_v4{};
 
     bool is_complete{false};
+    Result initialization_result{ResultSuccess};
     std::shared_ptr<Mii::MiiManager> manager = nullptr;
     Mii::DatabaseSessionMetadata metadata{};
 };

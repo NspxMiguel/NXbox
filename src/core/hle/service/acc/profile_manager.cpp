@@ -19,7 +19,9 @@
 #include "common/fs/symlink.h"
 #include "common/settings.h"
 #include "common/string_util.h"
+#include "core/constants.h"
 #include "core/file_sys/savedata_factory.h"
+#include "core/hle/service/acc/offline_account.h"
 #include "core/hle/service/acc/profile_manager.h"
 
 namespace Service::Account {
@@ -55,19 +57,28 @@ ProfileManager::ProfileManager() {
 
     // Create an user if none are present
     if (user_count == 0) {
+#ifdef NXBOX_UWP
+        CreateNewUser(UUID::MakeRandom(), "Player");
+        profiles[0].data.icon_id = 1; // A character icon, rather than a missing Mii icon.
+        const auto image_path = FS::GetEdenPath(FS::EdenPath::NANDDir) /
+                                ACC_SAVE_AVATORS_BASE_PATH /
+                                (profiles[0].user_uuid.FormattedString() + ".jpg");
+        if (FS::CreateParentDirs(image_path)) {
+            const FS::IOFile image(image_path, FS::FileAccessMode::Write, FS::FileType::BinaryFile);
+            if (image.Write(Core::Constants::ACCOUNT_BACKUP_JPEG) !=
+                Core::Constants::ACCOUNT_BACKUP_JPEG.size()) {
+                LOG_WARNING(Service_ACC, "Failed to persist the default profile avatar");
+            }
+        }
+#else
         CreateNewUser(UUID::MakeRandom(), "Eden");
+#endif
         WriteUserSaveFile();
     }
 
-    auto current =
-        std::clamp<int>(static_cast<s32>(Settings::values.current_user), 0, MAX_USERS - 1);
-
-    // If user index don't exist. Load the first user and change the active user
-    if (!UserExistsIndex(current)) {
-        current = 0;
-        Settings::values.current_user = 0;
-    }
-
+    const auto current =
+        Offline::SelectProfileIndex(Settings::values.current_user.GetValue(), user_count);
+    Settings::values.current_user = static_cast<s32>(current);
     OpenUser(*GetUser(current));
 }
 

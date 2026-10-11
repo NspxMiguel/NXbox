@@ -43,11 +43,15 @@ Result DatabaseManager::MountSaveData() {
 }
 
 Result DatabaseManager::Initialize(DatabaseSessionMetadata& metadata, bool& is_database_broken) {
-    is_database_broken = false;
     if (!is_save_data_mounted) {
         return ResultInvalidArgument;
     }
 
+    if (is_initialized) {
+        metadata.update_counter = update_counter;
+        return ResultSuccess;
+    }
+    is_database_broken = false;
     database.CleanDatabase();
     update_counter++;
     metadata.update_counter = update_counter;
@@ -56,8 +60,11 @@ Result DatabaseManager::Initialize(DatabaseSessionMetadata& metadata, bool& is_d
                                      Common::FS::FileType::BinaryFile};
 
     if (!db_file.IsOpen()) {
-        return SaveDatabase();
+        const auto result = SaveDatabase();
+        is_initialized = result.IsSuccess();
+        return result;
     }
+    is_initialized = true;
 
     if (Common::FS::GetSize(system_save_dir / DbFileName) != sizeof(NintendoFigurineDatabase)) {
         is_database_broken = true;
@@ -78,13 +85,18 @@ Result DatabaseManager::Initialize(DatabaseSessionMetadata& metadata, bool& is_d
 
     if (result.IsError()) {
         LOG_ERROR(Service_Mii, "Mii database is corrupted {:#0x}", result.raw);
+        is_database_broken = true;
         database.CleanDatabase();
-        return ResultSuccess;
+        return result;
     }
 
     LOG_INFO(Service_Mii, "Successfully loaded mii database. size={}",
              database.GetDatabaseLength());
     return ResultSuccess;
+}
+
+bool DatabaseManager::IsEmptyDatabase() const {
+    return database.GetDatabaseLength() == 0;
 }
 
 bool DatabaseManager::IsFullDatabase() const {

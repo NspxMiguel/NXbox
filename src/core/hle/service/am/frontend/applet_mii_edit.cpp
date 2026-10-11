@@ -67,7 +67,7 @@ void MiiEdit::Initialize() {
     if (manager == nullptr) {
         manager = std::make_shared<Mii::MiiManager>();
     }
-    manager->Initialize(metadata);
+    initialization_result = manager->Initialize(metadata);
 }
 
 Result MiiEdit::GetStatus() const {
@@ -83,9 +83,19 @@ void MiiEdit::Execute() {
         return;
     }
 
+    if (initialization_result.IsError()) {
+        RequestExit();
+        return;
+    }
+
     // This is a default stub for each of the MiiEdit applet modes.
     switch (applet_input_common.applet_mode) {
     case MiiEditAppletMode::ShowMiiEdit:
+        MiiEditOutput(manager->GetCount(metadata, Mii::SourceFlag::Database) > 0
+                          ? MiiEditResult::Success
+                          : MiiEditResult::Cancel,
+                      0);
+        break;
     case MiiEditAppletMode::AppendMiiImage:
     case MiiEditAppletMode::UpdateMiiImage:
         MiiEditOutput(MiiEditResult::Success, 0);
@@ -134,7 +144,7 @@ void MiiEdit::Execute() {
     default:
         UNIMPLEMENTED_MSG("Unknown MiiEditAppletMode={}", applet_input_common.applet_mode);
 
-        MiiEditOutput(MiiEditResult::Success, 0);
+        RequestExit();
         break;
     }
 }
@@ -174,6 +184,14 @@ void MiiEdit::MiiEditOutputForCharInfoEditing(MiiEditResult result,
 
 Result MiiEdit::RequestExit() {
     frontend.Close();
+    if (!is_complete) {
+        if (applet_input_common.applet_mode == MiiEditAppletMode::CreateMii ||
+            applet_input_common.applet_mode == MiiEditAppletMode::EditMii) {
+            MiiEditOutputForCharInfoEditing(MiiEditResult::Cancel, {});
+        } else {
+            MiiEditOutput(MiiEditResult::Cancel, 0);
+        }
+    }
     R_SUCCEED();
 }
 

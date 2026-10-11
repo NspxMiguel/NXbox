@@ -21,9 +21,23 @@ constexpr std::size_t DefaultMiiCount{RawData::DefaultMii.size()};
 MiiManager::MiiManager() {}
 
 Result MiiManager::Initialize(DatabaseSessionMetadata& metadata) {
-    database_manager.MountSaveData();
-    database_manager.Initialize(metadata, is_broken_with_clear_flag);
-    return ResultSuccess;
+    const auto mount_result = database_manager.MountSaveData();
+    if (mount_result.IsError()) {
+        return mount_result;
+    }
+    const auto load_result = database_manager.Initialize(metadata, is_broken_with_clear_flag);
+#ifdef NXBOX_UWP
+    // Database-only selectors do not include RawData::DefaultMii. Persist a regular Mii,
+    // including its creator UUID and checksums, without changing an existing database.
+    if (!is_broken_with_clear_flag && database_manager.IsEmptyDatabase()) {
+        StoreData store_data{};
+        store_data.BuildDefault(0);
+        store_data.SetNickname({u'P', u'l', u'a', u'y', u'e', u'r'});
+        store_data.SetChecksum();
+        return AddOrReplace(metadata, store_data);
+    }
+#endif
+    return load_result;
 }
 
 void MiiManager::BuildDefault(CharInfo& out_char_info, u32 index) const {

@@ -18,6 +18,7 @@ public:
     Result Initialize(DatabaseSessionMetadata& metadata, bool& is_database_broken);
 
     bool IsFullDatabase() const;
+    bool IsEmptyDatabase() const;
     bool IsModified() const;
     u64 GetUpdateCounter() const;
 
@@ -49,6 +50,7 @@ private:
 
     bool is_moddified{};
     bool is_save_data_mounted{};
+    bool is_initialized{};
     u64 update_counter{};
     NintendoFigurineDatabase database{};
 

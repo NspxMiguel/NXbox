@@ -25,6 +25,12 @@ namespace Service::AM {
 namespace {
 
 bool ShouldCreateGuestApplet(AppletId applet_id) {
+#ifdef NXBOX_UWP
+    // UWP has no firmware-applet UI. HLE selects the active user and completes Mii requests.
+    if (applet_id == AppletId::MiiEdit || applet_id == AppletId::ProfileSelect) {
+        return false;
+    }
+#endif
 #define X(Name, name)                                                                              \
     if (applet_id == AppletId::Name &&                                                             \
         Settings::values.name##_applet_mode.GetValue() != Settings::AppletMode::LLE) {             \

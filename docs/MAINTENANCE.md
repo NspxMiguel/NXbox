@@ -600,6 +600,40 @@ Names generated with a numeric suffix are report chunks.
 - `NXBOX_GL_UBO_GEOMETRY`
 - `NXBOX_GL_UBO_FIRST`
 
+## Prepared offline user on Xbox
+
+`RunGameView` prepares the NAND before the library and save sync run. `ProfileManager` creates
+`Player` with Eden's built-in JPEG avatar only if no profiles exist. Existing names, avatars and
+UUIDs are preserved. The resolved `current_user` index is written back to settings; save sync uses
+that manager's last opened UUID, and boot sync applies the title settings before resolving it.
+
+`NXBOX_FAKE_NA_LINK` defaults on for UWP and off for other frontends. Exact `0` disables it;
+other supplied values enable it. Put the override in `LocalState/nxbox_env.txt`. The account
+administrator reports linked, account/resource-cache IDs derive from the requested profile UUID,
+and token/license async contexts complete and signal their events immediately. Offline token loads
+return zero token bytes, resource-cache payloads contain no online data, and the license kind is
+zero (no subscription). This is a local link, not Nintendo authentication or online play. The
+license context uses command 100 as documented in
+[Switchbrew's account interface map](https://switchbrew.org/wiki/NS_services#IAsyncNetworkServiceLicenseKindContext).
+
+On UWP, `MiiManager::Initialize` seeds an empty valid database using `StoreData::BuildDefault(0)`
+and the nickname `Player`, including the creator UUID and checksums. It saves through Eden's existing
+`nand/system/save/8000000000000030/MiiDatabase.dat` path. A nonempty database is never seeded;
+corrupt databases retain the existing broken-database recovery protocol. Opening another service
+session attaches to the loaded database without reloading it or invalidating update counters.
+
+UWP always routes profile selection and Mii editing through HLE, including when a firmware applet
+is installed or a settings file requests LLE. The Mii editor returns the first database entry for
+its default mode; initialization failures and exit requests produce the appropriate cancel output
+and terminate the applet. Games drawing their own Mii selector receive the persisted entry through
+`GetCount`/`Get` with `SourceFlag::Database`.
+
+`tests/port/test_prepared_user.py` compiles the real Mii manager, database, default data and checksum
+code with small filesystem/log/UUID host adapters. It checks fresh and empty NAND, persistence,
+existing custom Miis, source counts, update notifications, buffer limits, mount errors, account IDs,
+profile index normalization, and the environment override. Xbox validation still requires launching
+Mario Kart 8 Deluxe, completing its selector, restarting NXbox and checking the saved identity.
+
 ## Build and validation loop
 
 ### CI and local Windows builds

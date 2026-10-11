@@ -937,18 +937,11 @@ struct Env {
 
 // The user Eden boots games as: Settings::values.current_user indexes the profile list, exactly as
 // the ProfileManager constructor clamps it. Constructing a ProfileManager here creates the default
-// "Eden" profile when none exists yet, which is the same thing Eden's own boot would do.
+// "Player" profile when none exists yet, which is the same thing Eden's own boot would do.
 bool ResolveEdenUser(ActiveUser& out) {
     try {
         const Service::Account::ProfileManager manager;
-        int profile_index = static_cast<int>(Settings::values.current_user.GetValue());
-        profile_index =
-            std::clamp(profile_index, 0, static_cast<int>(Service::Account::MAX_USERS) - 1);
-        if (!manager.UserExistsIndex(static_cast<std::size_t>(profile_index))) {
-            profile_index = 0;
-        }
-        const std::optional<Common::UUID> uuid =
-            manager.GetUser(static_cast<std::size_t>(profile_index));
+        const std::optional<Common::UUID> uuid = manager.GetLastOpenedUser();
         if (!uuid || uuid->IsInvalid()) {
             return false;
         }
