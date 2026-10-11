@@ -1395,7 +1395,7 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
     // The library: the player picks a game on this same window, drawn with Direct2D/DirectWrite
     // before Mesa/OpenGL takes the window over. The screen releases every graphics object before it
     // returns. A chosen game is written to game.txt and booted by the normal path below; leaving
-    // with B boots whatever game.txt names, or the bundled homebrew, exactly as before.
+    // with B returns without booting a game.
     // LocalState\skip_library.txt skips the screen, for unattended runs where nobody can press A.
     //
     // SwitchSaveSync (docs/nxbox-ui.md, Increment 4) hangs off the same flow, and only for a game
@@ -1472,6 +1472,9 @@ void RunGameView(const winrt::Windows::UI::Core::CoreWindow& window, const std::
         Ui::ChosenGame choice;
         std::string chosen;
         chosen = Ui::RunLibrary(window, &choice);
+        if (chosen.empty()) {
+            return; // Leaving the library must not boot the previously remembered game.
+        }
         if (!chosen.empty()) {
             RememberChosenGame(local_state, chosen);
             chosen_in_library = true;

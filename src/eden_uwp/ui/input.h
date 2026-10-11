@@ -9,26 +9,9 @@
 #include <winrt/Windows.UI.Core.h>
 
 #include "eden_uwp/ui/anim.h"
+#include "eden_uwp/ui/input_state.h"
 
 namespace EdenXbox::Ui {
-
-enum class Button {
-    Left,
-    Right,
-    Up,
-    Down,
-    A,
-    B,
-    X,
-    Y,
-    LeftShoulder,
-    RightShoulder,
-    View,
-    Menu,
-    Count,
-};
-
-inline constexpr std::size_t kButtonCount = static_cast<std::size_t>(Button::Count);
 
 // Controller and keyboard input for the screens, polled once per frame on the UI thread.
 //
@@ -49,6 +32,9 @@ public:
     // True on the frame the button went down and, for directions, on each auto-repeat.
     bool Pressed(Button button) const;
 
+    // Clears this frame and suppresses each button until it has been sampled released.
+    void ConsumeUntilRelease();
+
 private:
     void PollGamepads(std::array<bool, kButtonCount>& held) const;
 
@@ -57,9 +43,7 @@ private:
     winrt::event_token key_up_token_;
     winrt::event_token activated_token_;
     std::array<bool, kButtonCount> keys_{};  // held, from the key events
-    std::array<bool, kButtonCount> down_{};  // held, from every source
-    std::array<bool, kButtonCount> fired_{}; // pressed or repeated this frame
-    std::array<Clock::time_point, kButtonCount> repeat_at_{};
+    InputState state_;
 };
 
 } // namespace EdenXbox::Ui

@@ -40,3 +40,8 @@ if(ZLIB_FOUND)
   target_link_libraries(cheats-parse-tests PRIVATE ZLIB::ZLIB)
   add_test(NAME cheats-parse COMMAND cheats-parse-tests)
 endif()
+
+add_executable(input-state-tests input_state.cpp)
+target_compile_features(input-state-tests PRIVATE cxx_std_17)
+target_include_directories(input-state-tests PRIVATE ../../src)
+add_test(NAME input-state-transitions COMMAND input-state-tests)

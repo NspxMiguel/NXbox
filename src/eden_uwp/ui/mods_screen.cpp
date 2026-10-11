@@ -222,6 +222,7 @@ private:
     // The cheats of the game (nx-cheats-db), on this window and this renderer. It runs its own
     // loop and returns when the player leaves with B.
     void OpenCheats() {
+        const InputTransition transition(input_);
         Diagnostic("UI mods open cheats " + game_.title_id);
         if (RunCheatsScreen(renderer_, window_, input_, game_, local_state_)) {
             closed_ = true;

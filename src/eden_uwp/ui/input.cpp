@@ -13,9 +13,6 @@ namespace {
 using winrt::Windows::System::VirtualKey;
 using winrt::Windows::UI::Core::KeyEventArgs;
 
-constexpr auto kRepeatDelay = std::chrono::milliseconds(400);
-constexpr auto kRepeatInterval = std::chrono::milliseconds(120);
-
 // A stick counts as pushed past 0.55 and stays pushed until it falls below 0.35, so a stick
 // resting near the threshold does not flicker.
 constexpr double kStickPress = 0.55;
@@ -45,10 +42,6 @@ constexpr int kGamepadStickLeft = 0xD6;
 
 constexpr std::size_t Index(Button button) {
     return static_cast<std::size_t>(button);
-}
-
-bool IsDirection(std::size_t index) {
-    return index <= Index(Button::Down);
 }
 
 // The button a key stands for, or Button::Count when the UI does not use the key.
@@ -136,7 +129,7 @@ void Input::PollGamepads(std::array<bool, kButtonCount>& held) const {
             return (reading.Buttons & flag) != GamepadButtons::None;
         };
         const auto pushed = [this](Button button, double value) {
-            return value > (down_[Index(button)] ? kStickRelease : kStickPress);
+            return value > (state_.Down(button) ? kStickRelease : kStickPress);
         };
         const auto merge = [&held](Button button, bool value) {
             held[Index(button)] = held[Index(button)] || value;
@@ -163,26 +156,15 @@ void Input::PollGamepads(std::array<bool, kButtonCount>& held) const {
 void Input::Update() {
     std::array<bool, kButtonCount> held = keys_;
     PollGamepads(held);
-    const Clock::time_point now = Clock::now();
-    for (std::size_t index = 0; index < kButtonCount; ++index) {
-        fired_[index] = false;
-        if (!held[index]) {
-            down_[index] = false;
-            continue;
-        }
-        if (!down_[index]) {
-            fired_[index] = true;
-            repeat_at_[index] = now + kRepeatDelay;
-        } else if (IsDirection(index) && now >= repeat_at_[index]) {
-            fired_[index] = true;
-            repeat_at_[index] = now + kRepeatInterval;
-        }
-        down_[index] = true;
-    }
+    state_.Update(held, InputState::Clock::now());
 }
 
 bool Input::Pressed(Button button) const {
-    return fired_[Index(button)];
+    return state_.Pressed(button);
+}
+
+void Input::ConsumeUntilRelease() {
+    state_.ConsumeUntilRelease();
 }
 
 } // namespace EdenXbox::Ui

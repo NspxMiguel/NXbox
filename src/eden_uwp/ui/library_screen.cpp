@@ -489,6 +489,7 @@ private:
         // Input gets first refusal: an A press that starts a game must beat detection.
         if (!launching_ && !leaving_ && !closed_ && !scan_ && !details_open_ && !resolution_open_ &&
             !update_open_ && tab_ == Tab::Library && usb_detection_->Ready()) {
+            const InputTransition transition(input_);
             closed_ = usb_detection_->Run(renderer_, window_, input_);
             usb_mode_ = LoadUsbMode(local_state_);
             if (!closed_)
@@ -502,9 +503,10 @@ private:
         if (update_open_) {
             const auto state = updater_.State();
             if (state == UpdateState::Failed || state == UpdateState::MissingPortal) {
-                if (input_.Pressed(Button::B))
+                if (input_.Pressed(Button::B)) {
                     update_open_ = false;
-                else if (input_.Pressed(Button::A))
+                    input_.ConsumeUntilRelease();
+                } else if (input_.Pressed(Button::A))
                     updater_.StartInstall();
             }
             // Never start a game or another download while replacing the running package.
@@ -513,6 +515,7 @@ private:
         if (resolution_open_) {
             if (input_.Pressed(Button::B)) {
                 resolution_open_ = false;
+                input_.ConsumeUntilRelease();
                 return;
             }
             if (input_.Pressed(Button::Left) || input_.Pressed(Button::Up)) {
@@ -532,6 +535,7 @@ private:
                            (resolution_save_failed_ ? " failed" : " saved"));
                 if (!resolution_save_failed_) {
                     resolution_open_ = false;
+                    input_.ConsumeUntilRelease();
                 }
             }
             return;
@@ -539,6 +543,7 @@ private:
         if (details_open_) {
             if (input_.Pressed(Button::A) || input_.Pressed(Button::B)) {
                 details_open_ = false;
+                input_.ConsumeUntilRelease();
             }
             return;
         }
@@ -563,15 +568,16 @@ private:
         // X and Y are shortcuts for the focused game, from any layer.
         if (input_.Pressed(Button::X) && HasGame() && !update_focused_) {
             OpenMods();
+            return;
         }
         if (input_.Pressed(Button::Y) && HasGame() && !update_focused_) {
             details_open_ = true;
+            input_.ConsumeUntilRelease();
+            return;
         }
         if (input_.Pressed(Button::A)) {
             Activate(now);
-            if (update_open_) {
-                return;
-            }
+            return;
         }
         if (input_.Pressed(Button::B)) {
             Diagnostic("UI library quit");
@@ -652,6 +658,7 @@ private:
     void Activate(Clock::time_point now) {
         if (layer_ == Layer::Nav && update_focused_ && HasUpdate()) {
             update_open_ = true;
+            input_.ConsumeUntilRelease();
             updater_.StartInstall();
             return;
         }
@@ -672,6 +679,7 @@ private:
                 OpenMods();
             } else if (action_ == kActionDetails) {
                 details_open_ = true;
+                input_.ConsumeUntilRelease();
             } else if (action_ == kActionResolution) {
                 OpenResolution();
             }
@@ -706,11 +714,13 @@ private:
         }
         resolution_save_failed_ = false;
         resolution_open_ = true;
+        input_.ConsumeUntilRelease();
     }
 
     // The mod store of the focused game, on this window and this renderer. It runs its own loop
     // and returns when the player leaves with B.
     void OpenMods() {
+        const InputTransition transition(input_);
         if (!HasGame()) {
             return;
         }
@@ -729,6 +739,7 @@ private:
     // The USB import screen, on this window and this renderer. It runs its own loop and returns
     // when the player leaves with B; whatever it copied or moved is picked up by a new scan.
     void OpenUsbImport() {
+        const InputTransition transition(input_);
         Diagnostic("UI library open usb import");
         if (RunUsbImportScreen(renderer_, window_, input_, local_state_)) {
             closed_ = true;
@@ -740,6 +751,7 @@ private:
     // The sources screen, on this window and this renderer. It runs its own loop and returns when
     // the player leaves with B; a download it finished is picked up by a new scan.
     void OpenSources() {
+        const InputTransition transition(input_);
         Diagnostic("UI library open sources");
         if (RunSourcesScreen(renderer_, window_, input_, local_state_)) {
             closed_ = true;
@@ -751,6 +763,7 @@ private:
 
     // Settings > Credits: who made what NXbox builds on (cheats_screen.cpp).
     void OpenCredits() {
+        const InputTransition transition(input_);
         Diagnostic("UI library open credits");
         if (RunCreditsScreen(renderer_, window_, input_)) {
             closed_ = true;
@@ -788,6 +801,7 @@ private:
             break;
         case SyncAccount::SignedOut: {
             bool window_closed = false;
+            const InputTransition transition(input_);
             const SignInOutcome outcome = RunSignIn(renderer_, window_, input_, window_closed);
             Diagnostic("UI settings savesync sign-in outcome " +
                        std::to_string(static_cast<int>(outcome)));
