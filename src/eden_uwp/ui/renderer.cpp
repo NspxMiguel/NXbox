@@ -8,6 +8,7 @@
 
 #include <fmt/format.h>
 
+#include "eden_uwp/crash_logger.h"
 #include "eden_uwp/diagnostic.h"
 #include "eden_uwp/ui/theme.h"
 
@@ -59,6 +60,7 @@ static_assert(std::size(kFontSpecs) == kFontCount, "every Font needs a row in kF
 
 void CheckHr(HRESULT hr, const char* what) {
     if (FAILED(hr)) {
+        CrashGpuError(what, hr, 0);
         Diagnostic(
             fmt::format("UI renderer failed {} hr={:#010x}", what, static_cast<unsigned>(hr)));
         throw winrt::hresult_error(hr);
@@ -290,12 +292,20 @@ void Renderer::BeginFrame() {
 void Renderer::EndFrame(Pixels* capture) {
     context_->SetTransform(D2D1::Matrix3x2F::Identity());
     drawing_ = false;
-    CheckHr(context_->EndDraw(), "EndDraw");
+    const auto draw_result = context_->EndDraw();
+    if (FAILED(draw_result)) {
+        CrashGpuError("UI.EndDraw", draw_result, d3d_device_->GetDeviceRemovedReason());
+    }
+    CheckHr(draw_result, "EndDraw");
     if (capture)
         ReadFrame(*capture);
     const DXGI_PRESENT_PARAMETERS parameters{};
     if (swap_chain_) {
-        CheckHr(swap_chain_->Present1(1, 0, &parameters), "Present1");
+        const auto result = swap_chain_->Present1(1, 0, &parameters);
+        if (FAILED(result)) {
+            CrashGpuError("DXGI.Present1", result, d3d_device_->GetDeviceRemovedReason());
+        }
+        CheckHr(result, "Present1");
     }
 }
 

@@ -269,6 +269,10 @@ nxbox_dred_publish_batch(ID3D12Device *dev, const char *text) {
 
 void
 nxbox_dred_capture(ID3D12Device *dev, HRESULT removed, const char *where, const char *batch_text) {
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+   // Persist removal before DRED/driver queries or journal locks can block.
+   nxbox_crash_gpu_error(where, removed, removed);
+#endif
    if (SUCCEEDED(removed))
       return;
    std::lock_guard<std::mutex> lock(nxbox_dred_mutex);

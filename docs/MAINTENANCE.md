@@ -20,6 +20,9 @@ Eden. Each entry below describes one file; generated caches are identified separ
 - `src/eden_uwp/alloc_track.h` — Declares allocation tracker activation and reporting.
 - `src/eden_uwp/await_bounded.h` — Bounds blocking WinRT worker waits while retaining timed-out
   operations.
+- `src/eden_uwp/crash_logger.cpp` / `crash_logger.h` — Persist native/runtime, lifecycle, memory
+  and immediate GPU failure evidence; see [crash-evidence.md](crash-evidence.md) for UWP limits.
+- `src/eden_uwp/crash_format.h` — Formats bounded, allocation-free module+RVA records on any host.
 - `src/eden_uwp/diagnostic.h` — Writes the LocalState diagnostic log and rotates it past 4 MiB.
 - `src/eden_uwp/diagnostic_report.h` — Collects chunked Mesa reports and prefixes every physical log
   line.
@@ -162,6 +165,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
   counters.
 - `tools/nxbox/mesa_batch_reuse.h` — Guards batch-storage reuse until GPU completion and stops
   poisoned recording.
+- `tools/nxbox/mesa_crash.h` — Calls the frontend crash-file export immediately on GPU API
+  failures/removal, independently of optional diagnostic rings.
 - `tools/nxbox/mesa_dred.h` — Configures DRED and captures the first device-removal
   breadcrumbs/page-fault report.
 - `tools/nxbox/mesa_gpu_profile.h` — Adds per-command GPU timestamps and latency summaries to the
@@ -239,6 +244,8 @@ Eden. Each entry below describes one file; generated caches are identified separ
 - `tests/port/protocol_uri.cpp` — Checks nxbox protocol title parsing.
 - `tests/port/sparse_memory.cpp` — Checks Windows sparse reservation, concurrent first touches and
   committed-byte accounting.
+- `tests/port/test_crash_format.py` — Exercises fixed-storage crash formatting, fatal-code
+  selection, and the Mesa failure callback bridge on the host.
 - `tests/port/test_dxil_inspector.py` — Checks captured DXIL container metadata/signature
   inspection.
 - `tests/port/test_image_slot_patch.py` — Checks shader-image format-emulation indexing at nonzero

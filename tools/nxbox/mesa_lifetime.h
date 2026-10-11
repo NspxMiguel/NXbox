@@ -4,6 +4,9 @@
 #pragma once
 #include <atomic>
 #include <stdint.h>
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+#include "mesa_crash.h"
+#endif
 
 enum NxboxMetric { NxboxDxil, NxboxVariants, NxboxHeaps, NxboxHandles, NxboxCapacity, NxboxMetricCount };
 extern std::atomic<long long> nxbox_metrics[NxboxMetricCount];
@@ -24,6 +27,9 @@ HRESULT nxbox_create_pso(ID3D12Device *dev, const char *kind, Create create, Rep
    const HRESULT before = dev->GetDeviceRemovedReason();
    const HRESULT hr = SUCCEEDED(before) ? create() : before;
    const HRESULT after = dev->GetDeviceRemovedReason();
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+   nxbox_crash_gpu_error(kind, hr, after);
+#endif
    report(before, hr, after);
    nxbox_pso_sample(dev, kind, hr, before, after, call, concurrent);
    --nxbox_pso_active;
@@ -96,6 +102,9 @@ void nxbox_object_ref(ID3D12Object *object, int delta) {
 }
 void nxbox_observe(ID3D12Device *dev, const char *stage, HRESULT api) {
    HRESULT removed = dev->GetDeviceRemovedReason();
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+   nxbox_crash_gpu_error(stage, api, removed);
+#endif
    char text[160];
    snprintf(text, sizeof(text), "stage=%s tid=%lu api=%08x removed=%08x tick=%llu", stage,
             GetCurrentThreadId(), (unsigned)api, (unsigned)removed, GetTickCount64());

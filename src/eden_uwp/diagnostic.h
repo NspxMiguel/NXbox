@@ -2,10 +2,11 @@
 #pragma once
 
 #include <filesystem>
-#include <fstream>
 #include <mutex>
 #include <string>
 #include <windows.h>
+
+#include <fileapifromapp.h>
 #include <winrt/Windows.Storage.h>
 
 namespace EdenXbox {
@@ -27,7 +28,20 @@ inline void Diagnostic(const std::string& message) noexcept {
                 std::filesystem::rename(file, folder / "eden_uwp_diag.old.txt", ec);
             }
         }
-        std::ofstream(file, std::ios::app) << message << '\n';
+        static const HANDLE handle = CreateFile2FromAppW(
+            file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_ALWAYS, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) {
+            DWORD written;
+            OVERLAPPED append{};
+            append.Offset = append.OffsetHigh = MAXDWORD;
+            WriteFile(handle, message.data(), static_cast<DWORD>(message.size()), &written,
+                      &append);
+            WriteFile(handle, "\n", 1, &written, &append);
+            // Closing an ofstream only drains the CRT buffer; persist the OS buffer too.
+            FlushFileBuffers(handle);
+        } else {
+            OutputDebugStringA("NXbox diagnostic file unavailable\n");
+        }
     } catch (...) {
         OutputDebugStringA("NXbox diagnostic file unavailable\n");
     }

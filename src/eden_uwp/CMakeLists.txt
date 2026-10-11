@@ -30,6 +30,9 @@ add_executable(eden-uwp WIN32
     setup_ui.cpp
     setup_ui.h
     diagnostic.h
+    crash_logger.cpp
+    crash_logger.h
+    crash_format.h
     ui/anim.h
     ui/art.cpp
     ui/art.h

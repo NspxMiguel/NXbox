@@ -36,8 +36,10 @@
 #include "core/hle/service/filesystem/filesystem.h"
 #include "video_core/gpu.h"
 
-#include "eden_uwp/headless_emu_window.h"
+#include "eden_uwp/crash_logger.h"
+#include "eden_uwp/diagnostic.h"
 #include "eden_uwp/game_session.h"
+#include "eden_uwp/headless_emu_window.h"
 #include "eden_uwp/protocol_uri.h"
 
 namespace EdenXbox {
@@ -161,16 +163,7 @@ namespace {
 // we see *where* the headless boot fails on-console when no eden_log.txt and no crash dump are
 // produced.
 void WriteDiag(const std::string& msg) {
-    const std::string line = "[eden-uwp] " + msg + "\n";
-    OutputDebugStringA(line.c_str());
-    try {
-        const std::string local =
-            winrt::to_string(Windows::Storage::ApplicationData::Current().LocalFolder().Path());
-        std::ofstream f(local + "\\eden_uwp_diag.txt", std::ios::app);
-        f << line;
-    } catch (...) {
-        OutputDebugStringW(L"[eden-uwp] WriteDiag: could not write diag file\n");
-    }
+    EdenXbox::Diagnostic("[eden-uwp] " + msg);
 }
 
 // Set by the first activation of the process (normal launch or protocol), so Run() knows the
@@ -300,7 +293,11 @@ struct BootView : implements<BootView, IFrameworkViewSource, IFrameworkView> {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
+    EdenXbox::InstallCrashHandlers();
     winrt::init_apartment();
+    EdenXbox::OpenCrashLog();
+    EdenXbox::ObserveCrashLifecycle();
     CoreApplication::Run(winrt::make<BootView>());
+    EdenXbox::CrashEvent("process_exit");
     return 0;
 }

@@ -11,6 +11,9 @@
 #include <cstring>
 #include <type_traits>
 #include <utility>
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+#include "mesa_crash.h"
+#endif
 
 inline bool nxbox_api_enabled() {
   static const bool enabled = [] {
@@ -56,6 +59,9 @@ inline NxboxApiRing &nxbox_api_ring() {
 inline void nxbox_api_record(ID3D12Device *dev, const char *call,
                              const char *site, const char *args, HRESULT result,
                              HRESULT removed, bool command_failure = false) {
+#if defined(_WIN32) && defined(WINAPI_FAMILY)
+  nxbox_crash_gpu_error(call, result, removed);
+#endif
   if (!nxbox_api_enabled())
     return;
   auto &ring = nxbox_api_ring();
@@ -518,7 +524,8 @@ template <typename T> struct NxboxApi {
         else
           ring.custom_bytes.fetch_add(custom_size);
       }
-      if (!enabled && strcmp(name, "Close") && strcmp(name, "Reset"))
+      if (!enabled && SUCCEEDED(result) && strcmp(name, "Close") &&
+          strcmp(name, "Reset"))
         return;
       if (!device.dev)
         return;

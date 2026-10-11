@@ -1471,7 +1471,11 @@ nxbox_trim_{kind}(struct d3d12_context *ctx)
    /* On removal UINT64_MAX is not GPU success; it permits releasing dead-device objects. */
    complete |= nxbox_device_lost.load(std::memory_order_acquire);'''
     replace(file, old, new)
-    helpers = {"nxbox_lifetime.h": "mesa_lifetime.h", "nxbox_pso_first.h": "mesa_pso_first.h"}
+    helpers = {
+        "nxbox_lifetime.h": "mesa_lifetime.h",
+        "nxbox_pso_first.h": "mesa_pso_first.h",
+        "mesa_crash.h": "mesa_crash.h",
+    }
     for target in helpers:
         if (driver / target).exists():
             raise RuntimeError(f"Pinned Mesa lifetime helper already exists: {target}")
@@ -2312,6 +2316,7 @@ def patch_device_api_ring(root: Path) -> None:
 
     driver = root / "src/gallium/drivers/d3d12"
     helper = Path(__file__).with_name("mesa_api_ring.h").read_text()
+    crash_helper = Path(__file__).with_name("mesa_crash.h").read_text()
     methods = re.findall(r"NXBOX_API_METHOD\((\w+)\)", helper)
     methods.remove("name")
     methods.extend(("CopyBufferRegion", "CopyDescriptors"))
@@ -2583,6 +2588,7 @@ def patch_device_api_ring(root: Path) -> None:
     for name, source in sources.items():
         (driver / name).write_text(source)
     (driver / "nxbox_api_ring.h").write_text(helper)
+    (driver / "mesa_crash.h").write_text(crash_helper)
     (driver / "nxbox_list_ring.h").write_text(
         Path(__file__).with_name("mesa_list_ring.h").read_text()
     )

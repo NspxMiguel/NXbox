@@ -13,6 +13,7 @@
 #include <winrt/Windows.Foundation.h>
 #include <winrt/Windows.UI.Core.h>
 
+#include "eden_uwp/crash_logger.h"
 #include "eden_uwp/diagnostic.h"
 
 namespace EdenXbox {
@@ -28,6 +29,7 @@ constexpr D2D1_COLOR_F kText = {0xF2 / 255.0f, 0xF5 / 255.0f, 0xF4 / 255.0f, 1.0
 
 void CheckHr(HRESULT hr, const char* what) {
     if (FAILED(hr)) {
+        CrashGpuError(what, hr, 0);
         Diagnostic(std::string("SETUP_UI_FAILED ") + what + " hr=" + std::to_string(hr));
         throw winrt::hresult_error(hr);
     }
@@ -135,7 +137,11 @@ void ShowSetupScreen(const winrt::Windows::UI::Core::CoreWindow& window,
                                   text_brush.Get());
             CheckHr(d2d_context->EndDraw(), "EndDraw");
             const DXGI_PRESENT_PARAMETERS present_params{};
-            CheckHr(swap_chain->Present1(1, 0, &present_params), "Present1");
+            const auto result = swap_chain->Present1(1, 0, &present_params);
+            if (FAILED(result)) {
+                CrashGpuError("DXGI.Setup.Present1", result, d3d_device->GetDeviceRemovedReason());
+            }
+            CheckHr(result, "Present1");
             std::this_thread::sleep_for(std::chrono::milliseconds(16));
         }
         Diagnostic("SETUP_UI_END");
